@@ -1,0 +1,60 @@
+[project]
+name = "JeffAi"
+version = "0.1.0"
+description = "Deep agent developer assistent"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain_tavily>=0.2.13",
+    "pydantic>=2.0.0",
+    "rich>=14.0.0",
+    "tavily-python>=0.5.0",
+    "deepagents>=0.2.6",
+    "python-dotenv>=1.0.0",
+    "langgraph-cli[inmem]>=0.1.55",
+    "langchain-ollama>=1.0.0",
+    "langchain-core>=0.3.0",
+    "arxiv>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.11.1",
+    "ruff>=0.6.1",
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "debugpy>=1.6.0",
+]
+
+[build-system]
+requires = ["setuptools>=73.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["py.typed"]
+
+[tool.ruff]
+lint.select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "I",    # isort
+    "D",    # pydocstyle
+    "D401", # First line should be in imperative mood
+    "T201",
+    "UP",
+]
+lint.ignore = [
+    "UP006",
+    "UP007",
+    "UP035",
+    "D417",
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D", "UP"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

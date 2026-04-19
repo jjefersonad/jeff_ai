@@ -1,0 +1,10 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "technical_requirements_agent": "src.agents.technical_requirements_agent:agent"
+  },
+  "checkpointer": {
+    "type": "postgres",
+    "url": "${env:POSTGRES_URI}"
+  }
+}

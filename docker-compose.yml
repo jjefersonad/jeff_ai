@@ -1,0 +1,50 @@
+services:
+  jeff_ia_postgres:
+    image: pgvector/pgvector:pg15
+    container_name: jeff_ia_postgres
+    environment:
+      POSTGRES_DB: jeff_ia
+      POSTGRES_USER: jeff_ia
+      POSTGRES_PASSWORD: jeff_ia
+    ports:
+      - "5436:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jeff_ia -d jeff_ia"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jeff_ia-network
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+
+  # PgAdmin for database management (optional)
+  jeff_ia_pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: jeff_ia_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.local
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    depends_on:
+      jeff_ia_postgres:
+        condition: service_healthy
+    networks:
+      - jeff_ia-network
+    profiles:
+      - admin
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  jeff_ia-network:
+    driver: bridge
