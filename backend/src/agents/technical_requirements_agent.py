@@ -34,7 +34,7 @@ pool = ConnectionPool(conninfo=string_conn)
 # Inicialize o PostgresStore
 pg_store = PostgresStore(pool)
 
-DIR = Path("./src")
+PATH_DIR = Path("./src")
 
 delegate_subagent = {
     "name": "delegate_to_research_agent",
@@ -58,7 +58,7 @@ agent = create_deep_agent(
     backend=CompositeBackend(
         default=StateBackend(),
         routes={
-            f"{DIR.resolve()}": FilesystemBackend(root_dir=DIR),
+            f"{PATH_DIR.resolve()}": FilesystemBackend(root_dir=PATH_DIR),
             "/memories/": StoreBackend(
                 store=pg_store,
                 namespace=lambda rt: (
