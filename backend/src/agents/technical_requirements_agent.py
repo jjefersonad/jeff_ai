@@ -29,12 +29,20 @@ load_dotenv()
 # Configure a pool de conexão (recomendado usar variável de ambiente)
 string_conn = os.getenv("POSTGRES_URI", "postgresql://jeff_ia:jeff_ia@localhost:5436/jeff_ia")
 
-pool = ConnectionPool(conninfo=string_conn)
+pool = ConnectionPool(
+    conninfo=string_conn,
+    min_size=2,
+    max_size=10,
+    timeout=30,
+    max_lifetime=1800,
+)
 
 # Inicialize o PostgresStore
 pg_store = PostgresStore(pool)
 
-PATH_DIR = Path("./src")
+PATH_DIR = Path(__file__).parent.parent
+
+print(f"PATH_DIR: {PATH_DIR.resolve()}")
 
 delegate_subagent = {
     "name": "delegate_to_research_agent",
@@ -50,7 +58,7 @@ agent = create_deep_agent(
         analyze_architecture,
         create_database_schema,
         validate_system_design,
-        *context7_tools
+        # *context7_tools
     ],
     system_prompt=TECHNICAL_SPEC_WORKFLOW_INSTRUCTIONS,
     subagents=subagents,
