@@ -1,7 +1,7 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "technical_requirements_agent": "src.agents.technical_requirements_agent:agent"
+    "agent_com_sub": "src.agents.agent_com_sub:agent"
   },
   "checkpointer": {
     "type": "postgres",

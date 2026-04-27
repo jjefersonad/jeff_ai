@@ -8,19 +8,16 @@ from pathlib import Path
 import asyncio
 
 from deepagents import create_deep_agent
-# from deepagents.backends import LocalFileBackend 
 from src.models.ollama_model import ollama_model
-from src.tools.technical_spec_tools import analyze_architecture, create_database_schema, validate_system_design
 from deepagents.backends import CompositeBackend, StateBackend, StoreBackend, FilesystemBackend
-from src.agents.prompts.technical_spec_prompt import TECHNICAL_SPEC_WORKFLOW_INSTRUCTIONS, SUBAGENT_DELEGATION_INSTRUCTIONS
-from src.mcp.context7_mcp import context7_tools
+from src.agents.prompts.technical_spec_prompt import NEW_TECHNICAL_SPEC_WORKFLOW_INSTRUCTIONS
+from src.agents.subagents.architecture_subagent import architecture_subagent
+from src.agents.subagents.database_subagent_subagent import database_subagent
+from src.agents.subagents.validation_subagent import validation_subagent
+from src.agents.subagents.delegate_subagent import delegate_subagent
 
 from langgraph.store.postgres import PostgresStore
 from psycopg_pool import ConnectionPool
-
-from langchain_mcp_adapters.tools import load_mcp_tools
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
 
 # Carrega variáveis do arquivo .env
 load_dotenv()
@@ -31,42 +28,39 @@ string_conn = os.getenv("POSTGRES_URI", "postgresql://jeff_ia:jeff_ia@localhost:
 
 pool = ConnectionPool(
     conninfo=string_conn,
-    min_size=2,
-    max_size=10,
-    timeout=30,
-    max_lifetime=1800,
+    min_size=1,      # Garante pelo menos uma conexão aberta
+    max_size=20,     # Aumente se o agente fizer muitas chamadas paralelas
+    timeout=60.0,    # Tempo máximo de espera por uma conexão do pool (os 30s padrão falharam)
+    max_idle=30,     # Fecha conexões ociosas após 30s
+    check=ConnectionPool.check_connection, # Verifica se a conexão ainda é válida antes de entregar
 )
 
 # Inicialize o PostgresStore
 pg_store = PostgresStore(pool)
 
-PATH_DIR = Path(__file__).parent.parent
+# Diretório base para o backend
+BASE_DIR = Path(__file__).parents[5]
+PATH_DIR = BASE_DIR / "conexaoelite" / "ce-rastreadores"
 
-print(f"PATH_DIR: {PATH_DIR.resolve()}")
+print(f"PATH_DIR: {PATH_DIR}")
 
-delegate_subagent = {
-    "name": "delegate_to_research_agent",
-    "description": "Subagente especializado em realizar pesquisas na internet para coletar informações técnicas relevantes para a criação do contrato de desenvolvimento. Ele pode ser acionado para buscar dados atualizados, tendências tecnológicas, melhores práticas e outras informações que possam enriquecer o conteúdo do contrato.",
-    "system_prompt": SUBAGENT_DELEGATION_INSTRUCTIONS,
-}
-subagents = [delegate_subagent]
+subagents = [
+    architecture_subagent,
+    database_subagent,
+    validation_subagent,
+    # delegate_subagent,
+]
 
 # Create the agent with the specified model, tools, system prompt, and backend configuration.
 agent = create_deep_agent(
     model=ollama_model,
-    tools=[
-        analyze_architecture,
-        create_database_schema,
-        validate_system_design,
-        # *context7_tools
-    ],
-    system_prompt=TECHNICAL_SPEC_WORKFLOW_INSTRUCTIONS,
+    tools=[],
+    system_prompt=NEW_TECHNICAL_SPEC_WORKFLOW_INSTRUCTIONS,
     subagents=subagents,
-    skills=["/skills/"],
     backend=CompositeBackend(
         default=StateBackend(),
         routes={
-            f"{PATH_DIR.resolve()}": FilesystemBackend(root_dir=PATH_DIR),
+            f"{BASE_DIR}": FilesystemBackend(root_dir=BASE_DIR),
             "/memories/": StoreBackend(
                 store=pg_store,
                 namespace=lambda rt: (
@@ -83,5 +77,5 @@ agent = create_deep_agent(
     ),
 
 )
-agent.with_config({"recursion_limit": 100000})
 
+# agent = agent.with_config({"recursion_limit": 50})
