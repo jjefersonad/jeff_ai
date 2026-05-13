@@ -4,19 +4,16 @@ version = "0.1.0"
 description = "Deep agent developer assistent"
 requires-python = ">=3.11"
 dependencies = [
-    "langchain_tavily>=0.2.13",
-    "pydantic>=2.0.0",
-    "rich>=14.0.0",
-    "tavily-python>=0.5.0",
-    "deepagents>=0.2.6",
+    "deepagents>=0.5.8",
+    "langchain>=1.0.0",
+    "langchain-anthropic>=1.0.0",
+    "langchain-core>=1.0.0",
+    "langchain-google-genai>=1.0.0",
+    "langchain-ollama>=0.1.0",
+    "langsmith>=0.0.0",
     "python-dotenv>=1.0.0",
-    "langgraph-cli[inmem]>=0.1.55",
-    "langchain-ollama>=1.0.0",
-    "langchain-core>=0.3.0",
-    "arxiv>=3.0.0",
-    "langchain-mcp-adapters>=0.1.0",
-    "langgraph>=1.0.0",
-    "langgraph-checkpoint-postgres>=1.0.0",
+    "wcmatch>=10.0",
+    "tavily>=1.1.0"
 ]
 
 [project.optional-dependencies]

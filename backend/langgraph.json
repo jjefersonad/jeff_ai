@@ -1,10 +1,19 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "agent_com_sub": "src.agents.agent_com_sub:agent"
+    "agent": "src.agents.requirements_specialist:agent"
   },
   "checkpointer": {
     "type": "postgres",
     "url": "${env:POSTGRES_URI}"
+  },
+  "store": {
+    "type": "postgres",
+    "url": "${env:POSTGRES_URI}"
+  },
+  "env": {
+    "POSTGRES_URI": "postgresql://jeff_ia:jeff_ia@localhost:5436/jeff_ia",
+    "OLLAMA_BASE_URL": "http://10.0.0.214:11434",
+    "OLLAMA_MODEL": "minimax-m2.7:cloud"
   }
 }
