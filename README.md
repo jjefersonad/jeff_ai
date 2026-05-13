@@ -77,7 +77,7 @@ Configure as variáveis no arquivo `backend/.env`:
 | Variável | Descrição | Padrão |
 |----------|-----------|--------|
 | `POSTGRES_URI` | String de conexão PostgreSQL | `postgresql://jeff_ia:jeff_ia@localhost:5436/jeff_ia` |
-| `OLLAMA_BASE_URL` | Endpoint do servidor Ollama | `http://10.0.0.214:11434` |
+| `OLLAMA_BASE_URL` | Endpoint do servidor Ollama | `http://localhost:11434` |
 | `OLLAMA_MODEL` | Modelo Ollama a ser usado | `minimax-m2.7:cloud` |
 
 ### Interface Web
