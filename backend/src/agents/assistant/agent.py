@@ -26,7 +26,7 @@ from src.tools.self_extension import (
     read_project_file,
     save_generated_tool,
 )
-from src.tools.generate_image_tool import create_image_from_prompt
+from src.agents.subagents.image_design import image_design_subagent
 
 load_dotenv()
 
@@ -54,6 +54,7 @@ def backend_factory(_rt):
 
 assistant = create_deep_agent(
     model=ollama_model,
+    subagents=[image_design_subagent],
     tools=[
         save_memory,
         search_memory,
@@ -63,7 +64,6 @@ assistant = create_deep_agent(
         save_generated_tool,
         list_generated_tools,
         install_external_skill,
-        create_image_from_prompt,
         # Ferramentas Python geradas e APROVADAS por um humano (approved.json).
         *load_approved_tools(),
     ],
@@ -91,14 +91,18 @@ Você tem memória PERSISTENTE compartilhada entre TODAS as conversas (threads):
 5. Use `get_date_time_current` quando precisar da data/hora atual.
 
 ## Geração de imagens (MUITO IMPORTANTE)
-Quando você usa a tool `create_image_from_prompt(prompt)`, ela retorna um dicionário Python:
-  {{"path": "/caminho/local/no/servidor", "url": "/api/images/20260705091430.png"}}
+Você NÃO gera imagens diretamente. Para qualquer pedido de imagem, banner, ilustração ou
+design visual, DELEGUE para o subagente de design usando:
+  task(name="image_design_subagent", task="<descrição do que o usuário quer>")
 
-PARA EXIBIR A IMAGEM AO USUÁRIO, você DEVE usar o campo `url` na mensagem markdown:
+O `image_design_subagent` primeiro apresenta um plano de design e EXIGE aprovação explícita
+do usuário (via interrupt) antes de consumir tokens gerando a imagem. Isso evita gastos
+com imagens inadequadas. NUNCA tente contornar essa aprovação.
+
+O subagente retorna um resultado contendo `url` (ex.: `/api/images/20260705091430.png`).
+PARA EXIBIR A IMAGEM AO USUÁRIO, use SEMPRE o campo `url` na mensagem markdown:
   ![descrição da imagem](/api/images/NOMEDOARQUIVO.png)
-
-NUNCA use o campo `path` na mensagem. O campo `path` é apenas para referência interna do servidor.
-Sempre que for mostrar uma imagem, use APENAS o valor do campo `url` retornado pela tool.
+NUNCA use o campo `path` na mensagem — ele é apenas referência interna do servidor.
 
 Você pode LER o código do próprio projeto para analisar sua arquitetura:
 - `list_project_files(subdir)` — navega pastas do repositório (ex.: 'backend/src/agents').

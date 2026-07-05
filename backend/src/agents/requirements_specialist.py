@@ -6,6 +6,7 @@ from langgraph.config import get_config
 
 from src.models.ollama_model import ollama_model
 from src.agents.subagents.fullstack import fullstack_subagent
+from src.agents.subagents.image_design import image_design_subagent
 from src.tools.technical_spec_tools import merge_generated_files
 from src.tools.deep_agent_tools import get_date_time_current
 
@@ -41,7 +42,7 @@ def backend_factory(_rt):
 # Não instancie nem passe o PostgresSaver manualmente aqui.
 agent = create_deep_agent(
     model=ollama_model,
-    subagents=[fullstack_subagent],
+    subagents=[fullstack_subagent, image_design_subagent],
     tools=[merge_generated_files, get_date_time_current],
     system_prompt=f"""
 Você é um agente ORQUESTRADOR.
@@ -67,6 +68,12 @@ Sempre:
 2. Use write_todos para criar tarefas (cada sessão do documento é uma tarefa)
 3. Delegue cada tarefa usando task(name="fullstack_subagent", task="...")
 4. Consolide os resultados
+
+Geração de imagens:
+- Quando o pedido envolver criar imagem, banner, ilustração ou design visual,
+  delegue para o subagente de design usando task(name="image_design_subagent", task="...").
+- O 'image_design_subagent' apresenta um plano de design e EXIGE aprovação explícita do
+  usuário (via interrupt) ANTES de gerar a imagem. NUNCA gere imagens diretamente.
 
 Os arquivos devem ser salvos em: {OUTPUTS_DIR}
 """,

@@ -87,7 +87,9 @@ docker-compose down
 - **main.py**: Entry point for interactive chat with the agent
 - **src/agents/requirements_specialist.py**: Main orchestrator agent using `create_deep_agent` from deepagents
 - **src/agents/subagents/fullstack.py**: SubAgent for creating requirement document sections
-- **src/tools/**: Custom tools (file operations, web search via Tavily, spec tools)
+- **src/agents/subagents/image_design.py**: `image_design_subagent` — plans image designs and enforces mandatory user approval (`interrupt_on`) before calling the image tool
+- **src/agents/assistant/agent.py**: General-purpose `assistant` graph; delegates image requests to `image_design_subagent`
+- **src/tools/**: Custom tools (file operations, web search via Tavily, spec tools, image generation, per-thread style memory)
 - **src/models/**: LLM model configurations (Ollama, Gemini)
 - **langgraph.json**: LangGraph API configuration with Postgres checkpointer/store
 
@@ -102,6 +104,13 @@ docker-compose down
 3. Tasks delegated to `fullstack_subagent` via `task()` function
 4. Results consolidated using `merge_generated_files` tool
 5. Final document saved to `backend/outputs/`
+
+### Image Generation Flow
+1. Image/banner/design requests are delegated to `image_design_subagent` (registered on both the orchestrator and the `assistant`)
+2. The subagent analyzes context and presents a **design plan**
+3. `interrupt_on` pauses the graph before `create_image_from_prompt` runs, requiring explicit user approval (`Command(resume=...)`: `approve` | `edit` | `reject`) — no image is generated without it
+4. On approval, the image is generated via Gemini (`gemini-3.1-flash-image`) and saved to `backend/outputs/images/`; approved styles are stored per-thread (`("styles", thread_id)`) via `save_design_style` for reuse ("na mesma vibe")
+5. `create_image_from_prompt` returns `{path, url, metadata}` — always use `url` in markdown to display the image
 
 ### Persistence
 - **Checkpointer**: Postgres via `POSTGRES_URI` (conversation history)

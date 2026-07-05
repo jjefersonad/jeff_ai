@@ -1,90 +1,114 @@
 ---
 name: image-generation
-description: Documenta e ensina o uso correto da ferramenta create_image_from_prompt para gerar imagens via Google Gemini API a partir de prompts de texto.
+description: Documenta o fluxo de geração de imagens do Jeff AI — o image_design_subagent (planejamento + aprovação obrigatória via interrupt_on), a tool create_image_from_prompt (Union[str, ImageDesignInput] -> dict) e a memória de estilos por thread.
 ---
 
 # Image Generation Skill
 
-Skill de documentação e tutorial para uso da ferramenta de geração de imagens `create_image_from_prompt`, localizada em `backend/src/tools/generate_image_tool.py`.
+Geração de imagens no Jeff AI é feita por um **subagente de design** (`image_design_subagent`)
+que planeja a imagem e **exige aprovação explícita do usuário** antes de gerar (evitando gasto
+de tokens com imagens inadequadas). A geração em si é feita pela tool `create_image_from_prompt`
+(Google Gemini), sob um gate de aprovação (`interrupt_on`).
 
-## Visão Geral
+## Arquitetura do fluxo
 
-A tool `create_image_from_prompt` permite gerar imagens a partir de descrições textuais (prompts) em linguagem natural, utilizando a API Google Gemini com o modelo `gemini-2.5-flash-image`. A imagem gerada é salva automaticamente como arquivo PNG no diretório `backend/outputs/images/`.
+```
+usuário → orquestrador (agent) ─┐
+         assistant ─────────────┴─► task(name="image_design_subagent")
+                                        │  1. analisa contexto
+                                        │  2. monta design plan (concept, paleta, estilo…)
+                                        │  3. apresenta o plano
+                                        │  4. decide chamar create_image_from_prompt
+                                        ▼
+                                 interrupt_on PAUSA o grafo  ← aprovação humana
+                                        │  Command(resume=…): approve | edit | reject
+                                        ▼
+                                 create_image_from_prompt → Gemini → PNG + sidecar JSON
+```
 
-## Assinatura da Tool
+- **Quem delega:** o orquestrador (`requirements_specialist`) e o `assistant` registram o
+  `image_design_subagent` como subagente direto e delegam via `task(...)`. Um SubAgent NÃO
+  chama `task()` nem alcança subagentes irmãos, então o `fullstack_subagent` apenas **defere**
+  tarefas de imagem (não gera).
+- **Aprovação obrigatória:** garantida pelo framework via `interrupt_on`; o subagente NUNCA
+  gera sem que o resume de aprovação seja recebido.
+
+## Regra CRÍTICA de aprovação
+
+NUNCA gere imagem sem aprovação explícita. O `image_design_subagent` apresenta o design plan
+e o `interrupt_on={"create_image_from_prompt": ...}` pausa o grafo antes de executar a tool.
+Decisões válidas (`allowed_decisions`): **`approve`**, **`edit`**, **`reject`**.
+
+## Tool `create_image_from_prompt`
+
+Localização: `backend/src/tools/generate_image_tool.py`. Modelo: `gemini-3.1-flash-image`.
 
 ```python
 @tool
-def create_image_from_prompt(prompt: str) -> str:
-    """
-    Generates an image from a text prompt using the Google Gemini API and saves it to the specified directory.
-    """
+def create_image_from_prompt(design_input: Union[str, ImageDesignInput]) -> dict:
+    ...
 ```
 
-### Parâmetros
+### Entrada — `Union[str, ImageDesignInput]`
 
-| Parâmetro | Tipo | Obrigatório | Descrição |
-|-----------|------|-------------|-----------|
-| `prompt` | `str` | Sim | Descrição textual em linguagem natural da imagem a ser gerada. Quanto mais detalhado e específico, melhor o resultado. |
+- `str` (retrocompatível): tratado como `ImageDesignInput(prompt=<str>)`.
+- `ImageDesignInput` (estruturado): campos abaixo.
 
-### Retorno
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `prompt` | `str` (obrigatório) | Descrição textual da imagem. |
+| `art_style` | `str?` | Ex.: "minimalista", "futurista". |
+| `color_palette` | `str?` | Ex.: "tons quentes", "monocromático azul". |
+| `composition` | `str?` | Ex.: "regra dos terços", "simétrica". |
+| `dimensions` | `str?` | Ex.: "1080x1080", "16:9". |
+| `negative_prompt` | `str?` | O que evitar. |
 
-| Tipo | Descrição |
-|------|-----------|
-| `str` | Caminho absoluto do arquivo PNG salvo (ex: `backend/outputs/images/20260101120000.png`). |
+> **Nota importante:** hoje a tool envia apenas `prompt` ao Gemini; os demais campos vão só
+> para o sidecar de metadados. Para que estilo/paleta/composição afetem a imagem, o
+> `image_design_subagent` deve **fundir** esses parâmetros no texto do `prompt` final.
 
-## Configuração de Ambiente
-
-Antes de usar a tool, certifique-se de que a variável de ambiente `GOOGLE_API_KEY` está configurada com uma chave válida da Google AI (Gemini API).
-
-```bash
-export GOOGLE_API_KEY="sua-chave-aqui"
-```
-
-## Exemplos de Uso
-
-### Exemplo 1: Prompt simples
+### Retorno — `dict`
 
 ```python
-from src.tools.generate_image_tool import create_image_from_prompt
-
-path = create_image_from_prompt.invoke("Um gato astronauta flutuando no espaço")
-print(f"Imagem salva em: {path}")
+{
+  "path": "/app/backend/outputs/images/20260705091430.png",  # uso interno; NÃO mostrar
+  "url": "/api/images/20260705091430.png",                    # usar no markdown
+  "metadata": {"prompt": "...", "art_style": "...", ...},
+}
 ```
 
-### Exemplo 2: Cena detalhada
+Para EXIBIR a imagem ao usuário, use SEMPRE o campo `url`:
 
-```python
-path = create_image_from_prompt.invoke(
-    "Uma paisagem montanhosa ao pôr do sol, com um lago refletindo as cores laranja e roxa do céu, árvores de pinheiro em primeiro plano, estilo fotografia realista, luz dourada suave"
-)
+```markdown
+![descrição](/api/images/20260705091430.png)
 ```
 
-### Exemplo 3: Estilo artístico
+Um sidecar `..._metadata.json` é salvo junto do PNG em `backend/outputs/images/`.
 
-```python
-path = create_image_from_prompt.invoke(
-    "Retrato de uma mulher com óculos de sol, estilo ilustração vetorial minimalista, cores vibrantes, fundo gradiente azul e rosa, linhas limpas"
-)
-```
+## Memória de estilos (por thread)
 
-## Limitações e Comportamentos
+Ferramentas em `backend/src/tools/style_memory_tools.py`, sobre o Store do LangGraph
+(namespace `("styles", <thread_id>)`):
 
-- **Apenas um parâmetro:** A tool aceita apenas o parâmetro `prompt`. Não há controle direto de dimensões, proporção, seed ou estilo via parâmetros adicionais.
-- **Formato fixo:** A saída é sempre um arquivo PNG.
-- **Nome do arquivo:** O nome é gerado automaticamente com base no timestamp no formato `YYYYMMDDHHMMSS.png` (ex: `20260705091430.png`).
-- **Diretório de saída:** As imagens são salvas em `backend/outputs/images/`. O diretório é criado automaticamente se não existir.
-- **Modelo:** Usa o modelo `gemini-2.5-flash-image` da Google Gemini API.
+- `save_design_style(design_plan, final_prompt)` — salva o plano APROVADO como nova versão
+  (nunca sobrescreve). Chamar só após aprovação + geração. Nunca salvar planos rejeitados.
+- `load_design_style(thread_id="")` — recupera o estilo mais recente (thread atual ou, com
+  `thread_id`, de outra conversa → transferência de estilo). Use em "na mesma vibe".
+- `list_design_styles(thread_id="")` — lista as versões salvas.
 
-## Troubleshooting
+## Configuração de ambiente
 
-| Problema | Causa provável | Solução |
-|----------|---------------|---------|
-| Erro de autenticação | `GOOGLE_API_KEY` não configurada ou inválida | Defina a variável de ambiente `GOOGLE_API_KEY` com uma chave válida da Google AI. |
-| Diretório de saída não encontrado | O caminho `backend/outputs/images/` não existe | A tool cria o diretório automaticamente. Se houver permissão negada, verifique as permissões do sistema de arquivos. |
-| Imagem não gerada / retorno vazio | O modelo pode ter falhado em gerar a imagem para o prompt | Tente reformular o prompt com mais detalhes ou um tema diferente. |
+| Variável | Uso |
+|----------|-----|
+| `GOOGLE_API_KEY` | Autenticação com a Gemini API (obrigatória para gerar). |
+| `POSTGRES_URI` | Checkpointer + Store (aprovação/interrupt e memória de estilos). |
+
+Nenhuma variável nova foi introduzida por este fluxo.
 
 ## Referências
 
-- Arquivo da tool: `backend/src/tools/generate_image_tool.py`
-- Documentação Google Gemini API: https://ai.google.dev/gemini-api/docs
+- Subagente: `backend/src/agents/subagents/image_design.py`
+- Tool: `backend/src/tools/generate_image_tool.py`
+- Memória de estilos: `backend/src/tools/style_memory_tools.py`
+- Schema: `backend/src/models/image_design.py`
+- Docs deepagents (human-in-the-loop / subagents): ver `docs/links_uteis.md`

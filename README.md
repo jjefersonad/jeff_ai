@@ -5,6 +5,7 @@ Jeff AI é um assistente de agente profundo para desenvolvedores que gera docume
 ## Funcionalidades
 
 - Geração automática de documentos de especificação de requisitos
+- Geração de imagens com planejamento de design e aprovação obrigatória do usuário (`image_design_subagent`)
 - Orquestração inteligente de tarefas via LangGraph
 - Persistência de estado com PostgreSQL
 - Interface web moderna para interação com o agente

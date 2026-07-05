@@ -30,6 +30,8 @@ services:
       - ./backend/langgraph.json:/deps/backend/langgraph.json
       # Persiste skills criadas/instaladas pelo assistant em runtime.
       - ./backend/skills:/deps/backend/skills
+      # [DEV/teste] monta o código-fonte do host para testar mudanças sem rebuild da imagem.
+      - ./backend/src:/deps/backend/src
       # Persiste tools Python geradas (staging) + approved.json para revisão humana no host.
       - ./backend/src/tools/generated:/deps/backend/src/tools/generated
     networks:

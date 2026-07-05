@@ -18,6 +18,7 @@ import {
   FileIcon,
 } from "lucide-react";
 import { ChatMessage } from "@/app/components/ChatMessage";
+import { ToolApprovalInterrupt } from "@/app/components/ToolApprovalInterrupt";
 import type {
   TodoItem,
   ToolCall,
@@ -281,6 +282,38 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                   />
                 );
               })}
+              {/* Standalone approval panel for interrupts NOT matched to a
+                  visible top-level tool call (e.g. tools called inside a
+                  task() subagent, like create_image_from_prompt). Without this,
+                  a subagent-nested interrupt would never render an approval UI. */}
+              {interrupt &&
+                actionRequestsMap &&
+                actionRequestsMap.size > 0 &&
+                (() => {
+                  const inlineNames = new Set<string>(
+                    (
+                      processedMessages[processedMessages.length - 1]
+                        ?.toolCalls ?? []
+                    ).map((tc: ToolCall) => tc.name)
+                  );
+                  const unmatched = Array.from(
+                    actionRequestsMap.values()
+                  ).filter((ar) => !inlineNames.has(ar.name));
+                  if (unmatched.length === 0) return null;
+                  return (
+                    <div className="mt-4 space-y-4">
+                      {unmatched.map((ar, i) => (
+                        <ToolApprovalInterrupt
+                          key={`${ar.name}-${i}`}
+                          actionRequest={ar}
+                          reviewConfig={reviewConfigsMap?.get(ar.name)}
+                          onResume={resumeInterrupt}
+                          isLoading={isLoading}
+                        />
+                      ))}
+                    </div>
+                  );
+                })()}
             </>
           )}
         </div>
