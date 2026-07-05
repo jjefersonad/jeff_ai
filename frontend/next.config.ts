@@ -1,7 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  async rewrites() {
+    return [
+      {
+        source: "/api/images/:path*",
+        destination: "http://image-server:8080/api/images/:path*",
+      },
+    ];
+  },
 };
 
 export default nextConfig;

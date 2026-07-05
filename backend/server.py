@@ -9,13 +9,15 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from pydantic import BaseModel, Field
 import asyncpg
 import psycopg2.extras
 import yaml
+from pathlib import Path
+from datetime import datetime as dt
 
 import sys
 sys.path.insert(0, '/app')
@@ -495,6 +497,85 @@ async def search_assistants(db=Depends(get_db)):
     if not rows:
         return {"assistants": []}
     return {"assistants": [dict(row) for row in rows]}
+
+
+# Image serving endpoints
+IMAGES_DIR = Path("/app/backend/outputs/images")
+
+
+@app.get("/api/images")
+async def list_images(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0)
+):
+    """List generated images with pagination"""
+    if not IMAGES_DIR.exists():
+        return {"images": [], "total": 0}
+
+    # Get all PNG files sorted by modification time (newest first)
+    png_files = [
+        f for f in IMAGES_DIR.iterdir()
+        if f.is_file() and f.suffix.lower() == ".png"
+    ]
+    png_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+
+    total = len(png_files)
+    paginated_files = png_files[offset:offset + limit]
+
+    images = []
+    for f in paginated_files:
+        filename = f.name
+        # Extract timestamp from filename (YYYYMMDDHHMMSS.png)
+        timestamp_str = filename.replace(".png", "")
+        try:
+            timestamp_dt = dt.strptime(timestamp_str, "%Y%m%d%H%M%S")
+            timestamp_iso = timestamp_dt.isoformat()
+        except ValueError:
+            timestamp_iso = dt.fromtimestamp(f.stat().st_mtime).isoformat()
+
+        images.append({
+            "filename": filename,
+            "url": f"/api/images/{filename}",
+            "timestamp": timestamp_iso
+        })
+
+    return {
+        "images": images,
+        "total": total,
+        "limit": limit,
+        "offset": offset
+    }
+
+
+@app.get("/api/images/{filename}")
+async def serve_image(filename: str):
+    """Serve a generated image file"""
+    # Validate filename to prevent path traversal
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if not filename.lower().endswith(".png"):
+        raise HTTPException(status_code=400, detail="Only PNG files are supported")
+
+    image_path = IMAGES_DIR / filename
+
+    # Resolve path and ensure it's within the allowed directory
+    try:
+        resolved_path = image_path.resolve()
+        resolved_images_dir = IMAGES_DIR.resolve()
+        if not str(resolved_path).startswith(str(resolved_images_dir)):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+    except (OSError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if not image_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    return FileResponse(
+        path=str(image_path),
+        media_type="image/png",
+        headers={"Cache-Control": "max-age=3600"}
+    )
 
 
 # Initialize database on startup

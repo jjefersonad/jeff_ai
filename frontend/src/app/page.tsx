@@ -7,7 +7,7 @@ import { ConfigDialog } from "@/app/components/ConfigDialog";
 import { Button } from "@/components/ui/button";
 import { Assistant } from "@langchain/langgraph-sdk";
 import { ClientProvider, useClient } from "@/providers/ClientProvider";
-import { Settings, MessagesSquare, SquarePen } from "lucide-react";
+import { Settings, MessagesSquare, SquarePen, ImageIcon } from "lucide-react";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -143,6 +143,16 @@ function HomePageInner({
             >
               <Settings className="mr-2 h-4 w-4" />
               Settings
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              asChild
+            >
+              <a href="/images">
+                <ImageIcon className="mr-2 h-4 w-4" />
+                Imagens
+              </a>
             </Button>
             <Button
               variant="outline"

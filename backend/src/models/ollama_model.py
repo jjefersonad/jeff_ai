@@ -11,5 +11,5 @@ ollama_model = ChatOllama(
     base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
     temperature=0.0,
     num_ctx=8192,
-    timeout=30000,
+    timeout=180,  # 180 segundos (excede o timeout do Cloudflare de 120s)
 )

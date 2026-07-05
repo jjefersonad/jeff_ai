@@ -17,7 +17,7 @@ def create_hash_timestamp():
     return now.strftime("%Y%m%d%H%M%S")
 
 @tool
-def create_image_from_prompt(prompt: str) -> str:
+def create_image_from_prompt(prompt: str) -> dict:
     """
     Generates an image from a text prompt using the Google Gemini API and saves it to the specified directory.
 
@@ -25,10 +25,14 @@ def create_image_from_prompt(prompt: str) -> str:
         prompt (str): The text prompt to generate the image.
 
     Returns:
-        str: The path to the saved image file.
+        dict: A dictionary containing:
+            - path: The local filesystem path (internal use only, do NOT show to user).
+            - url: The frontend-accessible URL that should be used in markdown messages to display the image.
+              Example: {"path": "/app/backend/outputs/images/20260705091430.png", "url": "/api/images/20260705091430.png"}
+              IMPORTANT: Always use the "url" field when writing markdown to display images to the user.
     """
     response = client.models.generate_content(
-        model="gemini-2.5-flash-image",
+        model="gemini-3.1-flash-image",
         contents=[prompt],
     )
 
@@ -39,4 +43,7 @@ def create_image_from_prompt(prompt: str) -> str:
             image_path = SPECIFY_DIR / image_name
             os.makedirs(SPECIFY_DIR, exist_ok=True)
             image.save(image_path)
-            return image_path
+            return {
+                "path": str(image_path),
+                "url": f"/api/images/{image_name}",
+            }

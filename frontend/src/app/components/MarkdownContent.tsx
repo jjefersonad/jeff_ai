@@ -12,8 +12,33 @@ interface MarkdownContentProps {
   className?: string;
 }
 
+/**
+ * Converte paths absolutos do filesystem para URLs relativas acessíveis pelo frontend.
+ * Ex: /deps/backend/outputs/images/20260705091430.png → /api/images/20260705091430.png
+ */
+function normalizeImagePaths(markdown: string): string {
+  // Regex para capturar markdown images com paths absolutos que contêm "outputs/images/"
+  // Captura tanto ![alt](path) quanto <img src="path" ...>
+  return markdown
+    .replace(
+      /!\[([^\]]*)\]\(([^)]+\/(?:backend\/)?outputs\/images\/([^\/)]+\.png))\)/gi,
+      (_match, alt, _fullPath, filename) => {
+        return `![${alt}](/api/images/${filename})`;
+      }
+    )
+    .replace(
+      /<img[^>]*src=["']([^"']+\/(?:backend\/)?outputs\/images\/([^"\/]+\.png))["'][^>]*>/gi,
+      (_match, _fullPath, filename) => {
+        return `<img src="/api/images/${filename}" />`;
+      }
+    );
+}
+
 export const MarkdownContent = React.memo<MarkdownContentProps>(
   ({ content, className = "" }) => {
+    // Normaliza paths de imagem antes de renderizar
+    const normalizedContent = normalizeImagePaths(content);
+
     return (
       <div
         className={cn(
@@ -114,6 +139,34 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
                 </ol>
               );
             },
+            img({
+              src,
+              alt,
+            }: {
+              src?: string;
+              alt?: string;
+            }) {
+              const isGeneratedImage = src?.startsWith("/api/images/");
+              return (
+                <img
+                  src={src}
+                  alt={alt || ""}
+                  className={cn(
+                    "max-w-full rounded-lg",
+                    isGeneratedImage && "shadow-md hover:shadow-lg transition-shadow duration-200 cursor-pointer"
+                  )}
+                  loading="lazy"
+                  onError={(e) => {
+                    const target = e.target as HTMLImageElement;
+                    target.style.display = "none";
+                    const fallback = document.createElement("div");
+                    fallback.className = "text-muted-foreground text-sm p-4 border border-dashed border-border rounded-lg";
+                    fallback.textContent = alt ? `[Imagem não carregada: ${alt}]` : "[Imagem não carregada]";
+                    target.parentNode?.appendChild(fallback);
+                  }}
+                />
+              );
+            },
             table({ children }: { children?: React.ReactNode }) {
               return (
                 <div className="my-4 overflow-x-auto">
@@ -125,7 +178,7 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
             },
           }}
         >
-          {content}
+          {normalizedContent}
         </ReactMarkdown>
       </div>
     );
