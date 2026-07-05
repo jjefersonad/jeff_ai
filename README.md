@@ -28,10 +28,36 @@ Jeff AI é um assistente de agente profundo para desenvolvedores que gera docume
 
 ### Prerequisites
 
-- Python 3.11+
-- Node.js 20+
 - Docker Compose
 - Servidor Ollama em execução
+- **LANGSMITH_API_KEY** (obrigatório para LangGraph API)
+
+### Configuração Obrigatória
+
+#### 1. Obter LangSmith API Key
+
+1. Acesse [https://smith.langchain.com](https://smith.langchain.com)
+2. Faça login ou crie uma conta
+3. Vá em **Settings** → **API Keys**
+4. Clique em **Create API Key**
+5. Copie a chave gerada
+
+#### 2. Configurar Variáveis de Ambiente
+
+Edite o arquivo `backend/.env`:
+
+```bash
+# LangSmith API Key (obrigatório para LangGraph API)
+LANGSMITH_API_KEY=sua_chave_aqui
+
+# Ollama - IP do servidor Ollama
+OLLAMA_BASE_URL=http://10.0.0.214:11434
+
+# Modelo Ollama (recomendado: minimax-m2.7:cloud)
+OLLAMA_MODEL=minimax-m2.7:cloud
+```
+
+**Nota**: Se o Ollama estiver rodando localmente, use `http://host.docker.internal:11434` ou `http://localhost:11434`.
 
 ### Configuração do Banco de Dados
 
@@ -68,24 +94,43 @@ yarn dev
 
 Acesse a aplicação em [http://localhost:3000](http://localhost:3000).
 
+### Docker (Alternativo)
+
+Todas as aplicações podem ser executadas via Docker Compose:
+
+```bash
+docker-compose up -d
+```
+
+**Portas expostas:**
+- Frontend: `http://localhost:3000`
+- Backend: `http://localhost:8000`
+- pgAdmin: `http://localhost:5050` (execute `docker-compose --profile admin up`)
+
+**Variáveis necessárias no `backend/.env`:**
+- `LANGSMITH_API_KEY` - Chave do LangSmith (obrigatório)
+- `OLLAMA_BASE_URL` - URL do servidor Ollama
+- `OLLAMA_MODEL` - Modelo a ser usado (`minimax-m2.7:cloud`)
+
 ## Configuração
 
 ### Variáveis de Ambiente (Backend)
 
 Configure as variáveis no arquivo `backend/.env`:
 
-| Variável | Descrição | Padrão |
-|----------|-----------|--------|
-| `POSTGRES_URI` | String de conexão PostgreSQL | `postgresql://jeff_ia:jeff_ia@localhost:5436/jeff_ia` |
+| Variável | Descrição | Exemplo |
+|----------|-----------|---------|
+| `LANGSMITH_API_KEY` | **Obrigatório** - Chave do LangSmith | `lsv2_pt_...` |
 | `OLLAMA_BASE_URL` | Endpoint do servidor Ollama | `http://localhost:11434` |
 | `OLLAMA_MODEL` | Modelo Ollama a ser usado | `minimax-m2.7:cloud` |
+| `POSTGRES_URI` | String de conexão PostgreSQL (automático) | `postgresql://jeff_ia:jeff_ia@jeff_ia_postgres:5432/jeff_ia` |
 
 ### Interface Web
 
-Ao acessar a interface, configure a URL de deployment e o Assistant ID:
+Ao acessar a interface (http://localhost:3000), configure:
 
-- **Deployment URL**: `http://127.0.0.1:2024`
-- **Assistant ID**: `agent`
+- **Deployment URL**: `http://localhost:8000`
+- **Assistant ID**: O ID do assistant criado automaticamente (ex: `fe096781-5601-53d2-b2f6-0d3403f7e9ca`)
 
 ## Arquitetura
 

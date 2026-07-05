@@ -48,6 +48,20 @@ services:
       LANGSERVE_URL: http://localhost:8001
     depends_on:
       - backend
+      - image-server
+    networks:
+      - jeff_ia-network
+
+  image-server:
+    image: python:3.11-slim
+    container_name: jeff_ia_image_server
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend/outputs:/deps/backend/outputs:ro
+      - ./backend/image_server.py:/app/image_server.py:ro
+    working_dir: /app
+    command: ["sh", "-c", "pip install fastapi uvicorn && python image_server.py"]
     networks:
       - jeff_ia-network
 

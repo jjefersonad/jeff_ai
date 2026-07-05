@@ -95,3 +95,11 @@ htmlcov/
 dmypy.json
 
 backend/outputs/*
+ollama_data/*
+
+.claude/
+.agents/
+.opencode/
+.mcp.json
+opensddrag.yaml
+opencode.json
