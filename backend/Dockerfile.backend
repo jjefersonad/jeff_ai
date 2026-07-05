@@ -1,0 +1,25 @@
+FROM langchain/langgraph-api:3.11
+
+COPY backend/ /deps/backend/
+WORKDIR /deps/backend
+
+# Node/npx para instalação de skills externas (npx skills add) pelo assistant
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install project dependencies (versões fixadas para build reproduzível).
+# langgraph-runtime-inmem é reinstalado para satisfazer o langgraph-api 0.10.0 da
+# imagem base (evita o warning de dependência órfã após o upgrade do langgraph).
+RUN pip install --no-cache-dir \
+    "python-dotenv==1.2.2" \
+    "wcmatch==10.2.1" \
+    "tavily==1.1.0" \
+    "deepagents==0.6.12" \
+    "langchain-ollama==1.1.0" \
+    "langgraph-runtime-inmem>=0.30.0,<0.31.0"
+
+ENV PYTHONPATH="/deps/backend:$PYTHONPATH"
+ENV LANGGRAPH_STORE='{"type": "postgres", "url": "\${env:POSTGRES_URI}", "index": {"embed": "./src/models/ollama_embeddings.py:embed_texts", "dims": 1024, "fields": ["content"]}}'
+ENV LANGGRAPH_CHECKPOINTER='{"type": "postgres", "url": "\${env:POSTGRES_URI}"}'
+ENV LANGSERVE_GRAPHS='{"agent": "src.agents.requirements_specialist:agent", "sdd_agent": "src.agents.sdd.orchestrator:sdd_agent", "assistant": "src.agents.assistant:assistant"}'

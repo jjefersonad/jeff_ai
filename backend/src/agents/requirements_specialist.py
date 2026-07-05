@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend, CompositeBackend, StateBackend, StoreBackend
+from langgraph.config import get_config
 
 from src.models.ollama_model import ollama_model
 from src.agents.subagents.fullstack import fullstack_subagent
@@ -15,6 +16,26 @@ load_dotenv()
 PATH_DIR = Path(__file__).parent.parent.parent
 SKILLS_DIR = PATH_DIR.resolve() / "skills/"
 OUTPUTS_DIR = PATH_DIR.resolve() / "outputs/"
+
+def backend_factory(_rt):
+    # Obtém o thread_id com segurança a partir do config do runtime atual.
+    # Nas versões novas do deepagents/langgraph o Runtime não expõe mais `.config`;
+    # o config é obtido via get_config() dentro da execução do grafo.
+    config = get_config().get("configurable", {})
+    thread_id = config.get("thread_id", "default_thread")
+
+    root = OUTPUTS_DIR / thread_id
+    root.mkdir(parents=True, exist_ok=True)
+
+    return CompositeBackend(
+        default=StateBackend(),
+        routes={
+            f"{OUTPUTS_DIR}": FilesystemBackend(root_dir=root, virtual_mode=True),
+            "/skills/": FilesystemBackend(root_dir=SKILLS_DIR, virtual_mode=True),
+            "/memories/": StoreBackend(),
+        },
+    )
+
 
 # O LangGraph API vai gerenciar a persistência automaticamente.
 # Não instancie nem passe o PostgresSaver manualmente aqui.
@@ -50,23 +71,7 @@ Sempre:
 Os arquivos devem ser salvos em: {OUTPUTS_DIR}
 """,
     skills=["/skills/"],
-    backend=lambda rt: CompositeBackend(
-        default=StateBackend(rt),
-        routes={
-            # outputs físicos
-            f"{OUTPUTS_DIR}": FilesystemBackend(
-                root_dir=OUTPUTS_DIR, virtual_mode=True
-            ),
-
-            # skills físicas
-            "/skills/": FilesystemBackend(
-                root_dir=SKILLS_DIR
-            ),
-
-            # memórias no postgres/store runtime
-            "/memories/": StoreBackend(rt),
-        },
-    ),
+    backend=backend_factory
 )
 
 agent = agent.with_config({"recursion_limit": 1000})

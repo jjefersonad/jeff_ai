@@ -1,11 +1,28 @@
 services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: jeff_ia_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama_data:/root/.ollama
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    networks:
+      - jeff_ia-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile.backend
     container_name: jeff_ia_backend
     ports:
-      - "8001:8000"
+      - "8000:8000"
     env_file:
       - backend/.env
     environment:
@@ -14,28 +31,22 @@ services:
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY}
       LANGCHAIN_TRACING_V2: true
       LANGSMITH_PROJECT: jeff_ai_project
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
-      LANGGRAPH_STORE: '{"type": "postgres", "url": "$${env:POSTGRES_URI}", "index": {"embed": "./src/models/ollama_embeddings.py:embed_texts", "dims": 1024, "fields": ["content"]}}'
-      LANGGRAPH_CHECKPOINTER: '{"type": "postgres", "url": "$${env:POSTGRES_URI}"}'
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://jeff_ia_ollama:11434}
+      OLLAMA_MODEL: minimax-m2.7:cloud
+      LANGGRAPH_STORE: '{"type": "postgres", "url": "${POSTGRES_URI}"}'
+      LANGGRAPH_CHECKPOINTER: '{"type": "postgres", "url": "${POSTGRES_URI}"}'
       LANGSERVE_CORS_ALLOW_ORIGINS: '*'
       LANGSERVE_CORS_ALLOW_CREDENTIALS: 'true'
     depends_on:
       jeff_ia_postgres:
         condition: service_healthy
-      jeff_ia_redis:
+      ollama:
         condition: service_started
     volumes:
       - ./backend/outputs:/deps/backend/outputs
       - ./backend/langgraph.json:/deps/backend/langgraph.json
-      # Persiste skills criadas/instaladas pelo assistant em runtime.
-      - ./backend/skills:/deps/backend/skills
-      # Persiste tools Python geradas (staging) + approved.json para revisão humana no host.
-      - ./backend/src/tools/generated:/deps/backend/src/tools/generated
     networks:
       - jeff_ia-network
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   frontend:
     build:
@@ -45,7 +56,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      LANGSERVE_URL: http://localhost:8001
+      LANGSERVE_URL: http://backend:8000
     depends_on:
       - backend
     networks:
@@ -103,6 +114,8 @@ services:
       - admin
 
 volumes:
+  ollama_data:
+    driver: local
   postgres_data:
     driver: local
   redis_data:

@@ -1,7 +1,9 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "agent": "src.agents.requirements_specialist:agent"
+    "agent": "src.agents.requirements_specialist:agent",
+    "sdd_agent": "src.agents.sdd.orchestrator:sdd_agent",
+    "assistant": "src.agents.assistant:assistant"
   },
   "checkpointer": {
     "type": "postgres",
@@ -9,11 +11,14 @@
   },
   "store": {
     "type": "postgres",
-    "url": "${env:POSTGRES_URI}"
+    "url": "${env:POSTGRES_URI}",
+    "index": {
+      "embed": "./src/models/ollama_embeddings.py:embed_texts",
+      "dims": 1024,
+      "fields": ["content"]
+    }
   },
-  "env": {
-    "POSTGRES_URI": "postgresql://jeff_ia:jeff_ia@localhost:5436/jeff_ia",
-    "OLLAMA_BASE_URL": "http://10.0.0.214:11434",
-    "OLLAMA_MODEL": "minimax-m2.7:cloud"
+  "cors": {
+    "allow_origins": ["*"]
   }
 }
