@@ -103,3 +103,10 @@ ollama_data/*
 .mcp.json
 opensddrag.yaml
 opencode.json
+# Conteúdo dinâmico (runtime/volumes): versiona a pasta, não o conteúdo
+backend/skills/*
+!backend/skills/.gitkeep
+!backend/skills/image-generation
+!backend/outputs/.gitkeep
+backend/src/workspace/
+backend/src/outputs/

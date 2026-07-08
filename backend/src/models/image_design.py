@@ -4,7 +4,7 @@ ImageDesignInput Pydantic model for structured image generation requests.
 Used by the image_design_subagent to plan design parameters
 and by create_image_from_prompt tool to receive structured input.
 """
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -39,6 +39,10 @@ class ImageDesignInput(BaseModel):
     negative_prompt: Optional[str] = Field(
         default=None,
         description="Elementos ou características a evitar na imagem (ex: 'sem texto', 'sem logotipos', 'sem elementos realistas demais')."
+    )
+    references: Optional[List[str]] = Field(
+        default=None,
+        description="Caminhos locais de imagens de referência para condicionar a geração e manter consistência visual (ex.: paths retornados por 'fetch_reference_image' ou por upload)."
     )
 
     model_config = ConfigDict(

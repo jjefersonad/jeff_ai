@@ -1,9 +1,9 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "agent": "src.agents.requirements_specialist:agent",
-    "sdd_agent": "src.agents.sdd.orchestrator:sdd_agent",
-    "assistant": "src.agents.assistant:assistant"
+    "agent": "src.composition.graphs:agent",
+    "sdd_agent": "src.composition.graphs:sdd_agent",
+    "assistant": "src.composition.graphs:assistant"
   },
   "checkpointer": {
     "type": "postgres",

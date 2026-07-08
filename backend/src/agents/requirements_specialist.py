@@ -1,14 +1,18 @@
-from dotenv import load_dotenv
 from pathlib import Path
-from deepagents import create_deep_agent
-from deepagents.backends import FilesystemBackend, CompositeBackend, StateBackend, StoreBackend
-from langgraph.config import get_config
 
-from src.models.ollama_model import ollama_model
+from deepagents import create_deep_agent
+from dotenv import load_dotenv
+
 from src.agents.subagents.fullstack import fullstack_subagent
 from src.agents.subagents.image_design import image_design_subagent
-from src.tools.technical_spec_tools import merge_generated_files
+from src.composition.backends import FsRoute, make_backend_factory
+from src.models.ollama_model import ollama_model
 from src.tools.deep_agent_tools import get_date_time_current
+from src.tools.fetch_reference_image_tool import (
+    check_reference_image,
+    fetch_reference_image,
+)
+from src.tools.technical_spec_tools import merge_generated_files
 
 # Carrega variáveis do arquivo .env
 load_dotenv()
@@ -18,24 +22,13 @@ PATH_DIR = Path(__file__).parent.parent.parent
 SKILLS_DIR = PATH_DIR.resolve() / "skills/"
 OUTPUTS_DIR = PATH_DIR.resolve() / "outputs/"
 
-def backend_factory(_rt):
-    # Obtém o thread_id com segurança a partir do config do runtime atual.
-    # Nas versões novas do deepagents/langgraph o Runtime não expõe mais `.config`;
-    # o config é obtido via get_config() dentro da execução do grafo.
-    config = get_config().get("configurable", {})
-    thread_id = config.get("thread_id", "default_thread")
-
-    root = OUTPUTS_DIR / thread_id
-    root.mkdir(parents=True, exist_ok=True)
-
-    return CompositeBackend(
-        default=StateBackend(),
-        routes={
-            f"{OUTPUTS_DIR}": FilesystemBackend(root_dir=root, virtual_mode=True),
-            "/skills/": FilesystemBackend(root_dir=SKILLS_DIR, virtual_mode=True),
-            "/memories/": StoreBackend(),
-        },
-    )
+backend_factory = make_backend_factory(
+    routes=[
+        FsRoute(prefix=f"{OUTPUTS_DIR}", base_dir=OUTPUTS_DIR, per_thread=True),
+        FsRoute(prefix="/skills/", base_dir=SKILLS_DIR),
+    ],
+    include_store=True,
+)
 
 
 # O LangGraph API vai gerenciar a persistência automaticamente.
@@ -43,7 +36,12 @@ def backend_factory(_rt):
 agent = create_deep_agent(
     model=ollama_model,
     subagents=[fullstack_subagent, image_design_subagent],
-    tools=[merge_generated_files, get_date_time_current],
+    tools=[
+        merge_generated_files,
+        get_date_time_current,
+        fetch_reference_image,
+        check_reference_image,
+    ],
     system_prompt=f"""
 Você é um agente ORQUESTRADOR.
 

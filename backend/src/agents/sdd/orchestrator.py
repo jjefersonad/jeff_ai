@@ -1,14 +1,7 @@
 from pathlib import Path
 
 from deepagents import create_deep_agent
-from deepagents.backends import (
-    CompositeBackend,
-    FilesystemBackend,
-    StateBackend,
-    StoreBackend,
-)
 from dotenv import load_dotenv
-from langgraph.config import get_config
 
 from src.agents.sdd.subagents import (
     analyze_subagent,
@@ -19,7 +12,12 @@ from src.agents.sdd.subagents import (
     specify_subagent,
     tasks_subagent,
 )
+from src.composition.backends import FsRoute, make_backend_factory
 from src.models.ollama_model import ollama_model
+from src.tools.fetch_reference_image_tool import (
+    check_reference_image,
+    fetch_reference_image,
+)
 from src.tools.sdd_tools import (
     create_feature_directory,
     get_next_feature_number,
@@ -36,24 +34,15 @@ SPECIFY_DIR = PATH_DIR.resolve() / "outputs" / ".specify"
 TEMPLATES_DIR = PATH_DIR.resolve() / "templates" / "sdd"
 
 
-def backend_factory(_rt):
-    # thread_id via get_config() (Runtime não expõe mais `.config` nas versões novas
-    # do deepagents/langgraph — evita AttributeError no nó `model`).
-    config = get_config().get("configurable", {})
-    thread_id = config.get("thread_id", "default_thread")
-
-    root = SPECIFY_DIR / "specs" / thread_id
-    root.mkdir(parents=True, exist_ok=True)
-
-    return CompositeBackend(
-        default=StateBackend(),
-        routes={
-            f"{SPECIFY_DIR}": FilesystemBackend(root_dir=SPECIFY_DIR, virtual_mode=True),
-            f"{TEMPLATES_DIR}": FilesystemBackend(root_dir=TEMPLATES_DIR, virtual_mode=True),
-            "/skills/": FilesystemBackend(root_dir=SKILLS_DIR, virtual_mode=True),
-            "/memories/": StoreBackend(),
-        },
-    )
+backend_factory = make_backend_factory(
+    routes=[
+        # root_dir permanece o `.specify` inteiro; garante `specs/<thread_id>` por conversa.
+        FsRoute(prefix=f"{SPECIFY_DIR}", base_dir=SPECIFY_DIR, ensure_subpath="specs"),
+        FsRoute(prefix=f"{TEMPLATES_DIR}", base_dir=TEMPLATES_DIR),
+        FsRoute(prefix="/skills/", base_dir=SKILLS_DIR),
+    ],
+    include_store=True,
+)
 
 
 sdd_agent = create_deep_agent(
@@ -73,6 +62,8 @@ sdd_agent = create_deep_agent(
         validate_artifact,
         get_sdd_state,
         get_next_feature_number,
+        fetch_reference_image,
+        check_reference_image,
     ],
     system_prompt=f"""
 You are an SDD (Spec-Driven Development) Orchestrator Agent following the spec-kit methodology.

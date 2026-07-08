@@ -3,11 +3,21 @@ Servidor minimalista para servir imagens geradas.
 Roda em uma porta separada do LangGraph API.
 """
 
-from fastapi import FastAPI, HTTPException, Query
+import os
+import sys
+
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pathlib import Path
 from datetime import datetime as dt
+
+# Torna o pacote `src` importável (montado ao lado deste arquivo no container).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from src.infrastructure.media.reference_store import (  # noqa: E402
+    ReferenceUploadError,
+    store_reference_bytes,
+)
 
 app = FastAPI(title="Jeff AI Image Server", version="1.0.0")
 
@@ -20,6 +30,17 @@ app.add_middleware(
 )
 
 IMAGES_DIR = Path("/deps/backend/outputs/images")
+REFERENCES_DIR = Path("/deps/backend/outputs/references")
+
+# Mime types servidos para imagens de referência (upload aceita vários formatos).
+_REFERENCE_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+    ".webp": "image/webp",
+}
 
 
 @app.get("/health")
@@ -95,6 +116,53 @@ async def serve_image(filename: str):
         path=str(image_path),
         media_type="image/png",
         headers={"Cache-Control": "max-age=3600"}
+    )
+
+
+@app.post("/api/references")
+async def upload_reference(file: UploadFile = File(...)):
+    """Recebe uma imagem de referência (upload), valida e salva localmente.
+
+    Retorna o caminho local (usado como referência na geração), a URL para exibir
+    a imagem e o nome do arquivo. Recusa arquivos vazios, grandes demais ou que
+    não sejam imagens em formato suportado.
+    """
+    data = await file.read()
+    try:
+        path = store_reference_bytes(data, output_dir=REFERENCES_DIR)
+    except ReferenceUploadError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    filename = Path(path).name
+    return {"path": path, "url": f"/api/references/{filename}", "filename": filename}
+
+
+@app.get("/api/references/{filename}")
+async def serve_reference(filename: str):
+    """Serve uma imagem de referência salva por upload."""
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    suffix = Path(filename).suffix.lower()
+    media_type = _REFERENCE_MEDIA_TYPES.get(suffix)
+    if media_type is None:
+        raise HTTPException(status_code=400, detail="Unsupported reference type")
+
+    reference_path = REFERENCES_DIR / filename
+    try:
+        resolved_path = reference_path.resolve()
+        if not str(resolved_path).startswith(str(REFERENCES_DIR.resolve())):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+    except (OSError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    if not reference_path.exists():
+        raise HTTPException(status_code=404, detail="Reference not found")
+
+    return FileResponse(
+        path=str(reference_path),
+        media_type=media_type,
+        headers={"Cache-Control": "max-age=3600"},
     )
 
 

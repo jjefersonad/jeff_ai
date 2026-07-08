@@ -22,4 +22,4 @@ RUN pip install --no-cache-dir \
 ENV PYTHONPATH="/deps/backend:$PYTHONPATH"
 ENV LANGGRAPH_STORE='{"type": "postgres", "url": "\${env:POSTGRES_URI}", "index": {"embed": "./src/models/ollama_embeddings.py:embed_texts", "dims": 1024, "fields": ["content"]}}'
 ENV LANGGRAPH_CHECKPOINTER='{"type": "postgres", "url": "\${env:POSTGRES_URI}"}'
-ENV LANGSERVE_GRAPHS='{"agent": "src.agents.requirements_specialist:agent", "sdd_agent": "src.agents.sdd.orchestrator:sdd_agent", "assistant": "src.agents.assistant:assistant"}'
+ENV LANGSERVE_GRAPHS='{"agent": "src.composition.graphs:agent", "sdd_agent": "src.composition.graphs:sdd_agent", "assistant": "src.composition.graphs:assistant"}'
