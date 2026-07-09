@@ -13,6 +13,9 @@ from dotenv import load_dotenv
 from src.agents.subagents.image_design import image_design_subagent
 from src.composition.backends import FsRoute, make_backend_factory
 from src.models.ollama_model import ollama_model
+from src.tools.create_docx_document_tool import create_docx_document
+from src.tools.create_pptx_presentation_tool import create_pptx_presentation
+from src.tools.create_xlsx_spreadsheet_tool import create_xlsx_spreadsheet
 from src.tools.deep_agent_tools import get_date_time_current
 from src.tools.fetch_reference_image_tool import (
     check_reference_image,
@@ -63,6 +66,11 @@ assistant = create_deep_agent(
         search_arxiv,
         fetch_reference_image,
         check_reference_image,
+        # Geração nativa de documentos Office (.docx/.xlsx/.pptx). Sem
+        # interrupt_on — geração direta, sem gate de aprovação.
+        create_docx_document,
+        create_xlsx_spreadsheet,
+        create_pptx_presentation,
         list_project_files,
         read_project_file,
         save_generated_tool,
@@ -131,6 +139,16 @@ O subagente retorna um resultado contendo `url` (ex.: `/api/images/2026070509143
 PARA EXIBIR A IMAGEM AO USUÁRIO, use SEMPRE o campo `url` na mensagem markdown:
   ![descrição da imagem](/api/images/NOMEDOARQUIVO.png)
 NUNCA use o campo `path` na mensagem — ele é apenas referência interna do servidor.
+
+## Geração de documentos Office (.docx/.xlsx/.pptx)
+Para criar documentos Word, planilhas Excel ou apresentações PowerPoint use
+diretamente as tools nativas (sem subagente, sem aprovação extra):
+- `create_docx_document(payload)` — gera `.docx` com título + blocos estruturados.
+- `create_xlsx_spreadsheet(payload)` — gera `.xlsx` com uma ou mais abas.
+- `create_pptx_presentation(payload)` — gera `.pptx` com slides (título, bullets, imagem, tabela).
+Cada uma devolve `{{path, url, metadata}}` — use SEMPRE o campo `url` para exibir o
+link de download ao usuário (mesmo padrão das imagens). O `path` é interno.
+NÃO chame essas tools quando o usuário quiser editar um arquivo existente (criação apenas).
 
 Você pode LER o código do próprio projeto para analisar sua arquitetura:
 - `list_project_files(subdir)` — navega pastas do repositório (ex.: 'backend/src/agents').

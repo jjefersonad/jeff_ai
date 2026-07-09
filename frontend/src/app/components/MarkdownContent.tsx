@@ -21,23 +21,46 @@ function normalizeImagePaths(markdown: string): string {
   // Captura tanto ![alt](path) quanto <img src="path" ...>
   return markdown
     .replace(
-      /!\[([^\]]*)\]\(([^)]+\/(?:backend\/)?outputs\/images\/([^\/)]+\.png))\)/gi,
+      /!\[([^\]]*)\]\(([^)]+\/(?:backend\/)?outputs\/images\/([^/)]+\.png))\)/gi,
       (_match, alt, _fullPath, filename) => {
         return `![${alt}](/api/images/${filename})`;
       }
     )
     .replace(
-      /<img[^>]*src=["']([^"']+\/(?:backend\/)?outputs\/images\/([^"\/]+\.png))["'][^>]*>/gi,
+      /<img[^>]*src=["']([^"']+\/(?:backend\/)?outputs\/images\/([^"/]+\.png))["'][^>]*>/gi,
       (_match, _fullPath, filename) => {
         return `<img src="/api/images/${filename}" />`;
       }
     );
 }
 
+/**
+ * Converte paths absolutos de documentos Office para a URL servida pelo backend.
+ * Defensivo: as tools já devolvem `/api/files/<kind>/<name>`, mas se o path
+ * absoluto (`.../outputs/documents/docx/arquivo.docx`) vazar para o markdown,
+ * normaliza para o link de download acessível pelo frontend.
+ * Ex: /deps/backend/outputs/documents/docx/2026....docx → /api/files/docx/2026....docx
+ */
+function normalizeDocumentPaths(markdown: string): string {
+  return markdown.replace(
+    /\[([^\]]*)\]\(([^)]*\/(?:backend\/)?outputs\/documents\/(docx|xlsx|pptx)\/([^/)]+\.(?:docx|xlsx|pptx)))\)/gi,
+    (_match, label, _fullPath, kind, filename) => {
+      return `[${label}](/api/files/${kind}/${filename})`;
+    }
+  );
+}
+
+/** Rótulo curto exibido no chip de download por tipo de documento. */
+const DOCUMENT_LABELS: Record<string, string> = {
+  docx: "Word",
+  xlsx: "Excel",
+  pptx: "PowerPoint",
+};
+
 export const MarkdownContent = React.memo<MarkdownContentProps>(
   ({ content, className = "" }) => {
-    // Normaliza paths de imagem antes de renderizar
-    const normalizedContent = normalizeImagePaths(content);
+    // Normaliza paths de imagem e de documentos antes de renderizar
+    const normalizedContent = normalizeDocumentPaths(normalizeImagePaths(content));
 
     return (
       <div
@@ -107,6 +130,38 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
               href?: string;
               children?: React.ReactNode;
             }) {
+              // Documentos Office gerados: renderiza um chip de download.
+              const docMatch = href?.match(/\/api\/files\/(docx|xlsx|pptx)\//);
+              if (docMatch) {
+                const kind = docMatch[1];
+                return (
+                  <a
+                    href={href}
+                    download
+                    className="my-1 inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-primary no-underline transition-colors hover:bg-border/40"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="h-4 w-4 shrink-0 opacity-70"
+                      aria-hidden="true"
+                    >
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    <span className="min-w-0 break-words">{children}</span>
+                    <span className="shrink-0 rounded bg-border/50 px-1.5 py-0.5 text-xs font-medium uppercase text-muted-foreground">
+                      {DOCUMENT_LABELS[kind] ?? kind}
+                    </span>
+                  </a>
+                );
+              }
               return (
                 <a
                   href={href}

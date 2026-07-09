@@ -13,18 +13,21 @@ from pathlib import Path
 
 from langgraph.config import get_store
 
+from src.application.ports.document_writer import DocumentWriterPort
+from src.application.ports.reference_image_fetch import ReferenceImageFetchPort
 from src.application.use_cases import (
+    CreateDocument,
     GenerateRequirementsDocument,
     GetNextFeatureNumber,
     PlanAndCreateImage,
 )
+from src.infrastructure.documents import DocxWriter
 from src.infrastructure.filesystem.filesystem_document_sink import (
     FilesystemDocumentSink,
 )
 from src.infrastructure.filesystem.filesystem_sdd_artifact_store import (
     FilesystemSddArtifactStore,
 )
-from src.application.ports.reference_image_fetch import ReferenceImageFetchPort
 from src.infrastructure.llm.gemini_image_adapter import GeminiImageAdapter
 from src.infrastructure.persistence.store_style_repository import StoreStyleRepository
 from src.infrastructure.web.httpx_reference_image_fetch import HttpxReferenceImageFetch
@@ -53,3 +56,15 @@ def build_generate_requirements_document(
 def build_get_next_feature_number(specify_dir: str | Path) -> GetNextFeatureNumber:
     """Monta GetNextFeatureNumber com o store de artefatos SDD no filesystem."""
     return GetNextFeatureNumber(FilesystemSddArtifactStore(specify_dir))
+
+
+def build_create_document(writer: DocumentWriterPort | None = None) -> CreateDocument:
+    """Monta CreateDocument com um writer de documento.
+
+    Sem argumentos, usa o writer nativo de DOCX (python-docx) — preserva o
+    contrato legado da tool `create_docx_document`. Tools de outros formatos
+    (xlsx/pptx) passam seu próprio writer concreto (XlsxWriter/PptxWriter) por
+    injeção. O destino/URL do writer vivem na infraestrutura; este wiring é o
+    único ponto que escolhe o adapter concreto. A aplicação permanece agnóstica.
+    """
+    return CreateDocument(writer=writer or DocxWriter())

@@ -89,8 +89,8 @@ docker-compose down
 - **src/agents/subagents/fullstack.py**: SubAgent for creating requirement document sections
 - **src/agents/subagents/image_design.py**: `image_design_subagent` — plans image designs and enforces mandatory user approval (`interrupt_on`) before calling the image tool
 - **src/agents/assistant/agent.py**: General-purpose `assistant` graph; delegates image requests to `image_design_subagent`
-- **src/tools/**: Custom tools (file operations, web search via Tavily, spec tools, image generation, per-thread style memory)
-- **src/models/**: LLM model configurations (Ollama, Gemini)
+- **src/tools/**: Custom tools (file operations, web search via Tavily, spec tools, image generation, per-thread style memory, **native Office document generation** — `create_docx_document` / `create_xlsx_spreadsheet` / `create_pptx_presentation`)
+- **src/models/**: LLM model configurations (Ollama, Gemini) + Pydantic schemas for tool inputs (incl. `docx_document.py`, `xlsx_document.py`, `pptx_document.py`)
 - **langgraph.json**: LangGraph API configuration with Postgres checkpointer/store
 
 ### Frontend Structure (Next.js 16 + React 19)
@@ -111,6 +111,16 @@ docker-compose down
 3. `interrupt_on` pauses the graph before `create_image_from_prompt` runs, requiring explicit user approval (`Command(resume=...)`: `approve` | `edit` | `reject`) — no image is generated without it
 4. On approval, the image is generated via Gemini (`gemini-3.1-flash-image`) and saved to `backend/outputs/images/`; approved styles are stored per-thread (`("styles", thread_id)`) via `save_design_style` for reuse ("na mesma vibe")
 5. `create_image_from_prompt` returns `{path, url, metadata}` — always use `url` in markdown to display the image
+
+### Office Document Generation Flow
+1. Requests for `.docx` / `.xlsx` / `.pptx` are handled **directly by the agent** (no subagent, no approval gate) via the native tools:
+   - `create_docx_document(payload)` — `.docx` via **python-docx** (no pandoc/soffice/Node).
+   - `create_xlsx_spreadsheet(payload)` — `.xlsx` via **openpyxl** (no soffice/pandoc/Node).
+   - `create_pptx_presentation(payload)` — `.pptx` via **python-pptx** (no soffice/pptxgenjs/markitdown).
+2. Each tool returns `{path, url, metadata}` — same contract as `create_image_from_prompt`. **Always use `url` in markdown to display the download link** (e.g. `[Relatório](http://host:8080/api/files/docx/...)`). Never expose `path`.
+3. Files persist in `backend/outputs/documents/{kind}/<timestamp>.<ext>` and are served by `image_server.py:8080` at `GET /api/files/{kind}/{name}` with the official OOXML `Content-Type` + `Content-Disposition: attachment`. The serving route is restricted to `kind ∈ {docx, xlsx, pptx}` and rejects path traversal (400) or missing files (404).
+4. **Scope is creation only** — editing existing Office files is out of scope. If the user asks to edit, refuse politely or escalate.
+5. The skills `backend/skills/{docx,xlsx,pptx}/SKILL.md` were rewritten to point to these tools; the legacy `scripts/office/*` (pandoc/soffice/docx-js) and `editing.md` / `pptxgenjs.md` are kept only as historical reference and marked `⚠️ LEGADO`.
 
 ### Persistence
 - **Checkpointer**: Postgres via `POSTGRES_URI` (conversation history)

@@ -1,3 +1,10 @@
+"""Orquestrador de documentos de requisitos (Jeff AI).
+
+Compõe o grafo `agent` do deepagents com tools de I/O, ferramentas nativas
+de geração de documentos Office (.docx/.xlsx/.pptx) e dois subagentes:
+`fullstack_subagent` (escrita técnica) e `image_design_subagent` (geração
+visual com gate de aprovação).
+"""
 from pathlib import Path
 
 from deepagents import create_deep_agent
@@ -7,6 +14,9 @@ from src.agents.subagents.fullstack import fullstack_subagent
 from src.agents.subagents.image_design import image_design_subagent
 from src.composition.backends import FsRoute, make_backend_factory
 from src.models.ollama_model import ollama_model
+from src.tools.create_docx_document_tool import create_docx_document
+from src.tools.create_pptx_presentation_tool import create_pptx_presentation
+from src.tools.create_xlsx_spreadsheet_tool import create_xlsx_spreadsheet
 from src.tools.deep_agent_tools import get_date_time_current
 from src.tools.fetch_reference_image_tool import (
     check_reference_image,
@@ -41,6 +51,11 @@ agent = create_deep_agent(
         get_date_time_current,
         fetch_reference_image,
         check_reference_image,
+        # Geração nativa de documentos Office (.docx/.xlsx/.pptx). Sem
+        # interrupt_on — geração direta, sem gate de aprovação.
+        create_docx_document,
+        create_xlsx_spreadsheet,
+        create_pptx_presentation,
     ],
     system_prompt=f"""
 Você é um agente ORQUESTRADOR.
@@ -72,6 +87,16 @@ Geração de imagens:
   delegue para o subagente de design usando task(name="image_design_subagent", task="...").
 - O 'image_design_subagent' apresenta um plano de design e EXIGE aprovação explícita do
   usuário (via interrupt) ANTES de gerar a imagem. NUNCA gere imagens diretamente.
+
+Geração de documentos Office (.docx/.xlsx/.pptx):
+- Para entregar requisitos em formato Word/Excel/PowerPoint use as tools nativas
+  diretamente: `create_docx_document`, `create_xlsx_spreadsheet`, `create_pptx_presentation`.
+  Cada uma devolve `{{path, url, metadata}}` — apresente o link `url` ao usuário
+  (ex.: [documento.docx](http://host:8080/api/files/docx/...)).
+- NÃO há subagente nem gate de aprovação para documentos Office: a geração é
+  direta e determinística.
+- Crie apenas documentos novos (criação do zero). Edição de arquivos existentes
+  está fora do escopo.
 
 Os arquivos devem ser salvos em: {OUTPUTS_DIR}
 """,
