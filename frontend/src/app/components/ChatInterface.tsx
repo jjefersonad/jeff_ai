@@ -19,14 +19,17 @@ import {
   Paperclip,
   Loader2,
   X,
+  ShieldCheck,
 } from "lucide-react";
 import { ChatMessage } from "@/app/components/ChatMessage";
 import { ToolApprovalInterrupt } from "@/app/components/ToolApprovalInterrupt";
+import { EnvelopeApprovalInterrupt } from "@/app/components/EnvelopeApprovalInterrupt";
 import type {
   TodoItem,
   ToolCall,
   ActionRequest,
   ReviewConfig,
+  EnvelopeProposalInterruptData,
 } from "@/app/types/types";
 import { Assistant, Message } from "@langchain/langgraph-sdk";
 import { extractStringFromMessageContent } from "@/app/utils/utils";
@@ -94,6 +97,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     sendMessage,
     stopStream,
     resumeInterrupt,
+    grantedCapabilities,
   } = useChatContext();
 
   const submitDisabled = isLoading || !assistant;
@@ -240,9 +244,20 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
           if (toolCallIndex === -1) {
             continue;
           }
+          // `message.status === "error"` covers both a tool's own runtime
+          // errors AND envelope blocks (`EnvelopeMiddleware.wrap_tool_call`
+          // returns `ToolMessage(status="error", ...)` when a call is
+          // outside the granted envelope) — both must render as visibly
+          // failed, not disguised as a green "completed" checkmark. Silence
+          // here would hide an agent hitting the envelope wall from the
+          // user (task-scoped-permissions task envelope-6).
+          const toolStatus =
+            (message as { status?: "error" | "success" }).status === "error"
+              ? ("error" as const)
+              : ("completed" as const);
           data.toolCalls[toolCallIndex] = {
             ...data.toolCalls[toolCallIndex],
-            status: "completed" as const,
+            status: toolStatus,
             result: extractStringFromMessageContent(message),
           };
           break;
@@ -288,6 +303,17 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     return new Map(
       reviewConfigs.map((rc: ReviewConfig) => [rc.actionName, rc])
     );
+  }, [interrupt]);
+
+  // The envelope proposal interrupt (`propose_envelope_tool`) is a DIFFERENT
+  // shape from the `action_requests`/`review_configs` HITL protocol above —
+  // it comes from a raw `interrupt()` call and resumes with a
+  // `EnvelopeGrantDecision`, not a `{decisions: [...]}` payload. It is
+  // mutually exclusive with `action_requests` (never both on the same
+  // interrupt), so `actionRequestsMap` above just stays empty for it.
+  const envelopeProposal: EnvelopeProposalInterruptData | null = useMemo(() => {
+    const value = interrupt?.value as any;
+    return value?.type === "envelope_proposal" ? value : null;
   }, [interrupt]);
 
   // Nº de action_requests do interrupt atual. O modelo pode emitir VÁRIAS chamadas
@@ -395,6 +421,18 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                     </div>
                   );
                 })()}
+              {/* Envelope proposal — always standalone, never a top-level
+                  tool call (it IS the interrupt, there's no inline tool
+                  call rendering for `propose_envelope`). */}
+              {envelopeProposal && (
+                <div className="mt-4">
+                  <EnvelopeApprovalInterrupt
+                    envelope={envelopeProposal}
+                    onResume={resumeInterrupt}
+                    isLoading={isLoading}
+                  />
+                </div>
+              )}
             </>
           )}
         </div>
@@ -618,6 +656,26 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
             onSubmit={handleSubmit}
             className="flex flex-col"
           >
+            <div className="flex items-center justify-between gap-2 border-b border-border/60 bg-sidebar/30 px-3 py-1.5">
+              <div className="flex items-center gap-3">
+                {/* Active envelope, visible for the whole task — the user
+                    should always know what the agent can currently do,
+                    not just at grant time. Zeroed at the start of every
+                    turn (task-scoped-permissions REQ-002). */}
+                {grantedCapabilities.length > 0 && (
+                  <span
+                    className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"
+                    title="Capabilities granted for the current task"
+                  >
+                    <ShieldCheck
+                      size={12}
+                      className="text-green-600 dark:text-green-400"
+                    />
+                    {grantedCapabilities.join(", ")}
+                  </span>
+                )}
+              </div>
+            </div>
             <textarea
               ref={textareaRef}
               value={input}

@@ -33,8 +33,11 @@ services:
       LANGSMITH_PROJECT: jeff_ai_project
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://jeff_ia_ollama:11434}
       OLLAMA_MODEL: minimax-m2.7:cloud
-      LANGGRAPH_STORE: '{"type": "postgres", "url": "${POSTGRES_URI}"}'
-      LANGGRAPH_CHECKPOINTER: '{"type": "postgres", "url": "${POSTGRES_URI}"}'
+      # O bloco `index` é o que liga a busca semântica (pgvector). Sem ele,
+      # `search_memory` degrada SILENCIOSAMENTE — sem erro, sem embeddings.
+      # Mantido idêntico ao docker-compose.yml e ao Dockerfile.backend.
+      LANGGRAPH_STORE: '{"type": "postgres", "url": "$${env:POSTGRES_URI}", "index": {"embed": "./src/models/ollama_embeddings.py:embed_texts", "dims": 1024, "fields": ["content"]}}'
+      LANGGRAPH_CHECKPOINTER: '{"type": "postgres", "url": "$${env:POSTGRES_URI}"}'
       LANGSERVE_CORS_ALLOW_ORIGINS: '*'
       LANGSERVE_CORS_ALLOW_CREDENTIALS: 'true'
     depends_on:

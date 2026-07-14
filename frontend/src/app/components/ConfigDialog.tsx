@@ -23,6 +23,11 @@ import { Input } from "@/components/ui/input";
 import { StandaloneConfig } from "@/lib/config";
 import { RefreshCw } from "lucide-react";
 
+// Default graph entrypoint for the unified Jeff AI agent. Falls back to
+// this when the user has no saved config — see `ConfigDialog` first-run
+// state below.
+const DEFAULT_GRAPH_ID = "unified";
+
 interface ConfigDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -45,7 +50,7 @@ export function ConfigDialog({
     initialConfig?.deploymentUrl || ""
   );
   const [assistantId, setAssistantId] = useState(
-    initialConfig?.assistantId || ""
+    initialConfig?.assistantId || DEFAULT_GRAPH_ID
   );
   const [langsmithApiKey, setLangsmithApiKey] = useState(
     initialConfig?.langsmithApiKey || ""

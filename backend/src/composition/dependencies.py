@@ -9,6 +9,7 @@ tempo os use cases (application) e os adapters concretos (infrastructure).
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from langgraph.config import get_store
@@ -66,5 +67,9 @@ def build_create_document(writer: DocumentWriterPort | None = None) -> CreateDoc
     (xlsx/pptx) passam seu próprio writer concreto (XlsxWriter/PptxWriter) por
     injeção. O destino/URL do writer vivem na infraestrutura; este wiring é o
     único ponto que escolhe o adapter concreto. A aplicação permanece agnóstica.
+
+    A `url` retornada precisa ser absoluta para que o agente nunca precise
+    inventar um domínio ao apresentá-la (ver `DOCUMENT_BASE_URL` em `.env.example`).
     """
-    return CreateDocument(writer=writer or DocxWriter())
+    base_url = os.getenv("DOCUMENT_BASE_URL", "http://localhost:8080").rstrip("/")
+    return CreateDocument(writer=writer or DocxWriter(url_prefix=f"{base_url}/api/files"))

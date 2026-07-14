@@ -9,9 +9,11 @@ disco vivem no domínio + writer de infraestrutura.
 """
 from __future__ import annotations
 
+import json
 from typing import Union
 
 from langchain_core.tools import tool
+from pydantic import ValidationError
 
 from src.composition.dependencies import build_create_document
 from src.domain.documents import (
@@ -73,11 +75,22 @@ def _to_blocks(raw_blocks: list[DocxBlockInput]) -> tuple[object, ...]:
 def _to_docx_spec(payload: Union[str, DocxDocumentInput]) -> DocxSpec:
     """Constrói o `DocxSpec` a partir da entrada (string simples ou input estruturado).
 
-    String → documento só com o título. DocxDocumentInput → título + blocos
-    convertidos via `_to_blocks`.
+    String → documento só com o título (modo legado) — a menos que a string
+    seja, na verdade, um `DocxDocumentInput` serializado em JSON pela camada de
+    tool-calling (degradação do argumento estruturado para string). Nesse caso,
+    parseia e valida em vez de gravar o JSON bruto como título.
+    DocxDocumentInput → título + blocos convertidos via `_to_blocks`.
     """
     if isinstance(payload, str):
-        return DocxSpec(title=payload)
+        stripped = payload.strip()
+        if stripped.startswith("{"):
+            try:
+                parsed = json.loads(stripped)
+                payload = DocxDocumentInput.model_validate(parsed)
+            except (json.JSONDecodeError, ValidationError) as exc:
+                raise DomainError(f"payload JSON inválido: {exc}") from exc
+        else:
+            return DocxSpec(title=payload)
     return DocxSpec(title=payload.title, blocks=_to_blocks(payload.blocks))
 
 

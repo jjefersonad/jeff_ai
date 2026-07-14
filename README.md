@@ -117,8 +117,10 @@ docker compose up -d jeff_ia_postgres jeff_ia_redis
 ```bash
 cd backend
 pip install -e ".[dev]"
-langgraph dev
+make dev
 ```
+
+`make dev` valida que o Postgres está acessível antes de subir `langgraph dev` e falha rápido com instrução clara se não estiver (em vez do timeout de 30s do `psycopg_pool`).
 
 **Frontend**:
 

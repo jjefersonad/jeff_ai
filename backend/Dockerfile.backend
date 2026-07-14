@@ -17,12 +17,17 @@ RUN pip install --no-cache-dir \
     "tavily==1.1.0" \
     "deepagents==0.6.12" \
     "langchain-ollama==1.1.0" \
+    "langchain-openrouter==0.2.6" \
     "langgraph-runtime-inmem>=0.30.0,<0.31.0" \
     "python-docx==1.2.0" \
     "openpyxl==3.1.5" \
-    "python-pptx==1.0.2"
+    "python-pptx==1.0.2" \
+    "pypdf==6.14.2" \
+    "langchain-text-splitters==1.1.2" \
+    "langchain-mcp-adapters==0.3.0" \
+    "markitdown[all]==0.0.1"
 
 ENV PYTHONPATH="/deps/backend:$PYTHONPATH"
 ENV LANGGRAPH_STORE='{"type": "postgres", "url": "\${env:POSTGRES_URI}", "index": {"embed": "./src/models/ollama_embeddings.py:embed_texts", "dims": 1024, "fields": ["content"]}}'
 ENV LANGGRAPH_CHECKPOINTER='{"type": "postgres", "url": "\${env:POSTGRES_URI}"}'
-ENV LANGSERVE_GRAPHS='{"agent": "src.composition.graphs:agent", "sdd_agent": "src.composition.graphs:sdd_agent", "assistant": "src.composition.graphs:assistant"}'
+ENV LANGSERVE_GRAPHS='{"unified": "src.composition.graphs:unified", "agent": "src.composition.graphs:agent", "sdd_agent": "src.composition.graphs:sdd_agent", "assistant": "src.composition.graphs:assistant"}'

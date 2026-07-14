@@ -1,6 +1,7 @@
 {
   "dependencies": ["."],
   "graphs": {
+    "unified": "src.composition.graphs:unified",
     "agent": "src.composition.graphs:agent",
     "sdd_agent": "src.composition.graphs:sdd_agent",
     "assistant": "src.composition.graphs:assistant"

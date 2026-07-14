@@ -79,9 +79,15 @@ def make_backend_factory(
 ) -> Callable[[Any], CompositeBackend]:
     """Cria uma `backend_factory(rt)` para `create_deep_agent(backend=...)`.
 
-    `routes` define as rotas de filesystem específicas do grafo. `include_store`
-    adiciona a rota `"/memories/"` -> `StoreBackend()` (Postgres/pgvector), usada
-    pelos grafos `agent` e `sdd_agent` e omitida pelo `assistant`.
+    `routes` define as rotas de filesystem do grafo. `include_store` adiciona a
+    rota `"/memories/"` -> `StoreBackend()`, que dá ao agente acesso *filesystem*
+    à memória de longo prazo (`ls` / `read_file` / `write_file` sobre
+    `/memories/`). Hoje só o grafo `unified` usa este factory, e passa `True`.
+
+    NOTA — não confundir com as tools de memória: `save_memory` / `search_memory`
+    (`src/tools/memory_tools.py`) usam `get_store()`, o Store do LangGraph
+    injetado pelo runtime via `langgraph.json`. Elas funcionam INDEPENDENTEMENTE
+    de `include_store`. São dois caminhos distintos para o mesmo Postgres.
     """
 
     def backend_factory(rt: Any) -> CompositeBackend:

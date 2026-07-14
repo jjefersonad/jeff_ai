@@ -198,13 +198,17 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
               src,
               alt,
             }: {
-              src?: string;
+              // react-markdown repassa os props de `ImgHTMLAttributes`, onde
+              // `src` é `string | Blob`. Declarar só `string` torna o handler
+              // incompatível com o tipo de componente esperado.
+              src?: string | Blob;
               alt?: string;
             }) {
-              const isGeneratedImage = src?.startsWith("/api/images/");
+              const url = typeof src === "string" ? src : undefined;
+              const isGeneratedImage = url?.startsWith("/api/images/");
               return (
                 <img
-                  src={src}
+                  src={url}
                   alt={alt || ""}
                   className={cn(
                     "max-w-full rounded-lg",

@@ -19,6 +19,10 @@ const nextConfig: NextConfig = {
         source: "/api/references/:path*",
         destination: "http://image-server:8080/api/references/:path*",
       },
+      {
+        source: "/api/mcp/:path*",
+        destination: "http://image-server:8080/api/mcp/:path*",
+      },
     ];
   },
 };

@@ -1,15 +1,45 @@
 """Ponto único de exposição dos grafos LangGraph do Jeff AI.
 
-Os `graph_id` expostos aqui — `agent`, `sdd_agent`, `assistant` — são os
-referenciados por `langgraph.json`, `server.py` e `main.py`. A injeção de adapters
+Os `graph_id` expostos aqui são os referenciados por `langgraph.json`,
+`server.py` e pelo frontend (via `assistantId`). A injeção de adapters
 nos casos de uso vive em `composition/dependencies.py`.
 
-A construção de cada grafo (`create_deep_agent`, subagentes e system prompts)
-permanece nos módulos `src.agents.*`, que também pertencem à composição; este
-módulo os agrega num único entrypoint canônico.
-"""
-from src.agents.assistant.agent import assistant
-from src.agents.requirements_specialist import agent
-from src.agents.sdd.orchestrator import sdd_agent
+## Grafo unificado
 
-__all__ = ["agent", "assistant", "sdd_agent"]
+O Jeff AI opera um único grafo real: `unified` (construído em
+`src.agents.unified.agent`, um único system prompt, uma pilha de tools).
+
+## `agent` / `sdd_agent` / `assistant`
+
+Estes três IDs eram, até a task `modes-1`, "shims" que embrulhavam `unified`
+via `with_mode(unified, "<modo>")` — um sistema de modos que nunca teve
+efeito algum em produção (`classify_mode()` tinha zero call sites; ver
+docstring de `src.agents.unified.agent`). `with_mode()` foi removido junto
+com o resto do sistema de modos. Os três IDs agora são **aliases diretos**
+para o mesmo objeto `unified` — o que sempre foi, na prática, o
+comportamento real (todos rodavam o mesmo grafo com o mesmo prompt).
+
+Mantidos por retrocompatibilidade com `assistantId` salvos no frontend;
+`langgraph.json` continua expondo os quatro `graph_id`. **Decisão (Q5 do
+design `unified-agent-realignment`, task `modes-2`): manter os três
+aliases.** Custo de mantê-los é ~zero (três linhas), e removê-los quebraria
+`assistantId` já salvos no `localStorage` de quem configurou o frontend
+para apontar para `agent`/`sdd_agent`/`assistant` em vez de `unified`.
+"""
+from src.agents.unified.agent import unified
+
+# --------------------------------------------------------------------------- #
+# Aliases de retrocompatibilidade
+# --------------------------------------------------------------------------- #
+# Idênticos a `unified` — nunca fixaram um "modo" de verdade (ver docstring
+# do módulo). `modes-2` decide se continuam existindo.
+agent = unified
+sdd_agent = unified
+assistant = unified
+
+__all__ = [
+    "agent",
+    "assistant",
+    "sdd_agent",
+    "unified",
+]

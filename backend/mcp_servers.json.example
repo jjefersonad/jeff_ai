@@ -1,0 +1,12 @@
+{
+  "_comment": "Copie para mcp_servers.json e edite. NAO e o .mcp.json da raiz do repo (aquele e do Claude Code / OpenSddRag, nao tem relacao com isto). So transporte 'stdio' e suportado na v1. Credenciais NUNCA em texto plano aqui -- use ${VAR_NAME}, resolvido de backend/.env.",
+  "mcpServers": {
+    "example-server": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-example"],
+      "env": {
+        "EXAMPLE_API_KEY": "${EXAMPLE_API_KEY}"
+      }
+    }
+  }
+}

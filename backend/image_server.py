@@ -14,6 +14,7 @@ from datetime import datetime as dt
 
 # Torna o pacote `src` importável (montado ao lado deste arquivo no container).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from src.agents.unified.mcp_admin_api import router as mcp_admin_router  # noqa: E402
 from src.infrastructure.media.reference_store import (  # noqa: E402
     ReferenceUploadError,
     store_reference_bytes,
@@ -28,6 +29,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# API administrativa de servidores MCP (task `unified-agent-realignment-task-mcp-3`).
+# Vive neste processo — separado do grafo do agente — para que nenhuma tool do
+# agente possa alcançar estas rotas (REQ-001 do `mcp-client`).
+app.include_router(mcp_admin_router)
 
 IMAGES_DIR = Path("/deps/backend/outputs/images")
 REFERENCES_DIR = Path("/deps/backend/outputs/references")

@@ -16,6 +16,7 @@ services:
       LANGSMITH_PROJECT: jeff_ai_project
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
+      JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
       # Repos de terceiros liberados para install_external_skill (além dos defaults
       # oficiais). Lista separada por vírgula. Liberado por decisão humana (REQ-007).
       SKILLS_ALLOWLIST: ${SKILLS_ALLOWLIST:-usenotra/skills}
@@ -69,7 +70,15 @@ services:
       # `src` é montado para o servidor importar a lógica de validação de upload.
       - ./backend/src:/app/src:ro
     working_dir: /app
-    command: ["sh", "-c", "pip install fastapi uvicorn python-multipart && python image_server.py"]
+    # Pacotes adicionados: `langchain-core` e `langchain-mcp-adapters` são
+    # necessários desde a change `unified-agent-realignment` — o `mcp_admin_api`
+    # (montado em `image_server.py:8080`) importa `mcp_client.py` que importa
+    # `langchain_core.tools` e `langchain_mcp_adapters`. Sem isso, o container
+    # quebra logo no boot.
+    command:
+      - sh
+      - -c
+      - "pip install --no-cache-dir fastapi uvicorn python-multipart langchain-core langchain-mcp-adapters && python image_server.py"
     networks:
       - jeff_ia-network
 

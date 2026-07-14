@@ -12,11 +12,15 @@ BIN := $(shell $(PYTHON) -c 'import sys, os; print(os.path.dirname(sys.executabl
 # import-linter descobre o pacote `src` a partir do PYTHONPATH.
 export PYTHONPATH := .
 
-.PHONY: help arch lint-imports ruff typecheck test lint check
+.PHONY: help arch lint-imports ruff typecheck test lint check dev
 
 help: ## Lista os alvos disponíveis
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  %-14s %s\n", $$1, $$2}'
+
+dev: ## Sobe o backend local: valida Postgres e então executa `langgraph dev`
+	$(BIN)/python scripts/wait_for_postgres.py
+	$(BIN)/langgraph dev
 
 arch: ## Gate de arquitetura: Regra da Dependência via import-linter (usar no CI)
 	$(BIN)/lint-imports
