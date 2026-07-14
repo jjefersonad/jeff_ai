@@ -45,6 +45,12 @@ build-backend = "setuptools.build_meta"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    # Testes pesados de integração (build de imagem Docker etc.). Não rodam
+    # no CI padrão; execute manualmente com
+    # `pytest -m docker_integration`.
+    "docker_integration: tests that build/run docker images",
+]
 
 [tool.setuptools]
 packages = ["src"]

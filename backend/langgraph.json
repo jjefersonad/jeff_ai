@@ -6,6 +6,9 @@
     "sdd_agent": "src.composition.graphs:sdd_agent",
     "assistant": "src.composition.graphs:assistant"
   },
+  "http": {
+    "app": "./src/infrastructure/web/webapp.py:app"
+  },
   "checkpointer": {
     "type": "postgres",
     "url": "${env:POSTGRES_URI}"
