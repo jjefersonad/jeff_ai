@@ -12,8 +12,12 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Ancoradas na raiz: sem a barra inicial, `lib/` casa em QUALQUER profundidade e
+# engolia `frontend/src/lib/` (o helper `cn`, importado por 21 arquivos) e
+# `frontend/src/app/lib/` — o frontend não compilava num clone limpo.
+# Os `lib/` de virtualenv já são cobertos por `.venv/` e `venv/` abaixo.
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -63,6 +67,11 @@ logs/
 .env.test
 .env.production
 
+# MCP servers config for the Jeff AI product agent (user-local; NOT the
+# root .mcp.json, which is Claude Code's own OpenSddRag connection and is
+# tracked). See backend/mcp_servers.json.example.
+backend/mcp_servers.json
+
 # OS Files
 .DS_Store
 .DS_Store?
@@ -103,3 +112,10 @@ ollama_data/*
 .mcp.json
 opensddrag.yaml
 opencode.json
+# Conteúdo dinâmico (runtime/volumes): versiona a pasta, não o conteúdo
+backend/skills/*
+!backend/skills/.gitkeep
+!backend/skills/image-generation
+!backend/outputs/.gitkeep
+backend/src/workspace/
+backend/src/outputs/

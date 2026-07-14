@@ -23,6 +23,10 @@ export type StateType = {
     page_content?: string;
   };
   ui?: any;
+  // Capabilities granted to the current turn's envelope (mirrors backend
+  // `GRANTED_STATE_KEY` in `src/agents/unified/envelope_middleware.py`).
+  // Zeroed at the start of every turn — see task-scoped-permissions REQ-002.
+  granted_capabilities?: string[];
 };
 
 export function useChat({
@@ -36,6 +40,15 @@ export function useChat({
 }) {
   const [threadId, setThreadId] = useQueryState("threadId");
   const client = useClient();
+
+  const buildConfig = useCallback(
+    (base?: Record<string, unknown>) => ({
+      ...(base ?? {}),
+      ...(activeAssistant?.config ?? {}),
+      recursion_limit: 100,
+    }),
+    [activeAssistant?.config]
+  );
 
   const stream = useStream<StateType>({
     assistantId: activeAssistant?.assistant_id || "",
@@ -62,13 +75,13 @@ export function useChat({
           optimisticValues: (prev) => ({
             messages: [...(prev.messages ?? []), newMessage],
           }),
-          config: { ...(activeAssistant?.config ?? {}), recursion_limit: 100 },
+          config: buildConfig(),
         }
       );
       // Update thread list immediately when sending a message
       onHistoryRevalidate?.();
     },
-    [stream, activeAssistant?.config, onHistoryRevalidate]
+    [stream, buildConfig, onHistoryRevalidate]
   );
 
   const runSingleStep = useCallback(
@@ -83,7 +96,7 @@ export function useChat({
           ...(optimisticMessages
             ? { optimisticValues: { messages: optimisticMessages } }
             : {}),
-          config: activeAssistant?.config,
+          config: buildConfig(activeAssistant?.config),
           checkpoint: checkpoint,
           ...(isRerunningSubagent
             ? { interruptAfter: ["tools"] }
@@ -92,11 +105,11 @@ export function useChat({
       } else {
         stream.submit(
           { messages },
-          { config: activeAssistant?.config, interruptBefore: ["tools"] }
+          { config: buildConfig(activeAssistant?.config), interruptBefore: ["tools"] }
         );
       }
     },
-    [stream, activeAssistant?.config]
+    [stream, buildConfig, activeAssistant?.config]
   );
 
   const setFiles = useCallback(
@@ -112,10 +125,7 @@ export function useChat({
   const continueStream = useCallback(
     (hasTaskToolCall?: boolean) => {
       stream.submit(undefined, {
-        config: {
-          ...(activeAssistant?.config || {}),
-          recursion_limit: 100,
-        },
+        config: buildConfig(activeAssistant?.config),
         ...(hasTaskToolCall
           ? { interruptAfter: ["tools"] }
           : { interruptBefore: ["tools"] }),
@@ -123,7 +133,7 @@ export function useChat({
       // Update thread list when continuing stream
       onHistoryRevalidate?.();
     },
-    [stream, activeAssistant?.config, onHistoryRevalidate]
+    [stream, buildConfig, activeAssistant?.config, onHistoryRevalidate]
   );
 
   const markCurrentThreadAsResolved = useCallback(() => {
@@ -149,6 +159,7 @@ export function useChat({
     stream,
     todos: stream.values.todos ?? [],
     files: stream.values.files ?? {},
+    grantedCapabilities: stream.values.granted_capabilities ?? [],
     email: stream.values.email,
     ui: stream.values.ui,
     setFiles,

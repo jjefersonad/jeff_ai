@@ -55,3 +55,33 @@ export interface ToolApprovalInterruptData {
   action_requests: ActionRequest[];
   review_configs?: ReviewConfig[];
 }
+
+// ---------------------------------------------------------------------------
+// Envelope proposal interrupt (mirrors backend
+// `src/agents/unified/envelope_proposal.py:propose_envelope_tool`). This is
+// a DIFFERENT interrupt shape from `ToolApprovalInterruptData` above — it
+// comes from a raw `interrupt()` call, not the `HumanInTheLoopMiddleware`'s
+// `action_requests`/`decisions` protocol, so it resumes with a
+// `EnvelopeGrantDecision`, not a `{decisions: [...]}` payload.
+// ---------------------------------------------------------------------------
+export interface EnvelopeCapabilityProposal {
+  capability: string;
+  justification: string;
+}
+
+export interface EnvelopeProposal {
+  required_capabilities: EnvelopeCapabilityProposal[];
+  excluded_capabilities: string[];
+}
+
+export interface EnvelopeProposalInterruptData {
+  type: "envelope_proposal";
+  proposal: EnvelopeProposal;
+  contradiction_warning?: string;
+}
+
+export interface EnvelopeGrantDecision {
+  granted_capabilities: string[];
+  edited: boolean;
+  rejected: boolean;
+}

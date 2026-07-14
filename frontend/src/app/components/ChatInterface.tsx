@@ -16,13 +16,20 @@ import {
   Clock,
   Circle,
   FileIcon,
+  Paperclip,
+  Loader2,
+  X,
+  ShieldCheck,
 } from "lucide-react";
 import { ChatMessage } from "@/app/components/ChatMessage";
+import { ToolApprovalInterrupt } from "@/app/components/ToolApprovalInterrupt";
+import { EnvelopeApprovalInterrupt } from "@/app/components/EnvelopeApprovalInterrupt";
 import type {
   TodoItem,
   ToolCall,
   ActionRequest,
   ReviewConfig,
+  EnvelopeProposalInterruptData,
 } from "@/app/types/types";
 import { Assistant, Message } from "@langchain/langgraph-sdk";
 import { extractStringFromMessageContent } from "@/app/utils/utils";
@@ -67,6 +74,14 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const [input, setInput] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [reference, setReference] = useState<{
+    path: string;
+    url: string;
+    filename: string;
+  } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const { scrollRef, contentRef } = useStickToBottom();
 
   const {
@@ -82,6 +97,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     sendMessage,
     stopStream,
     resumeInterrupt,
+    grantedCapabilities,
   } = useChatContext();
 
   const submitDisabled = isLoading || !assistant;
@@ -93,10 +109,47 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
       }
       const messageText = input.trim();
       if (!messageText || isLoading || submitDisabled) return;
-      sendMessage(messageText);
+      // Anexa a imagem de referência (upload) com instrução explícita — o texto da
+      // mensagem é o sinal mais forte para o modelo rotear o path para `references`
+      // e NÃO tentar abrir/ler o arquivo.
+      const messageWithReference = reference
+        ? `${messageText}\n\n---\nIMAGEM DE REFERÊNCIA JÁ ENVIADA (upload). Caminho no servidor: ${reference.path}\n` +
+          `Instruções: delegue ao image_design_subagent e passe este caminho em "references" na geração da imagem. ` +
+          `NÃO use read_file, ls ou glob neste caminho — ele NÃO está no seu workspace; a imagem só é lida pela tool de geração. ` +
+          `Não peça a imagem novamente: ela já está disponível no servidor.`
+        : messageText;
+      sendMessage(messageWithReference);
       setInput("");
+      setReference(null);
+      setUploadError(null);
     },
-    [input, isLoading, sendMessage, setInput, submitDisabled]
+    [input, isLoading, reference, sendMessage, setInput, submitDisabled]
+  );
+
+  const handleFileChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = ""; // permite reenviar o mesmo arquivo
+      if (!file) return;
+      setUploadError(null);
+      setUploading(true);
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch("/api/references", { method: "POST", body: form });
+        if (!res.ok) {
+          const detail = await res.json().catch(() => null);
+          throw new Error(detail?.detail || `Falha no upload (${res.status})`);
+        }
+        const data = await res.json();
+        setReference({ path: data.path, url: data.url, filename: data.filename });
+      } catch (err) {
+        setUploadError(err instanceof Error ? err.message : "Falha no upload");
+      } finally {
+        setUploading(false);
+      }
+    },
+    []
   );
 
   const handleKeyDown = useCallback(
@@ -191,9 +244,20 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
           if (toolCallIndex === -1) {
             continue;
           }
+          // `message.status === "error"` covers both a tool's own runtime
+          // errors AND envelope blocks (`EnvelopeMiddleware.wrap_tool_call`
+          // returns `ToolMessage(status="error", ...)` when a call is
+          // outside the granted envelope) — both must render as visibly
+          // failed, not disguised as a green "completed" checkmark. Silence
+          // here would hide an agent hitting the envelope wall from the
+          // user (task-scoped-permissions task envelope-6).
+          const toolStatus =
+            (message as { status?: "error" | "success" }).status === "error"
+              ? ("error" as const)
+              : ("completed" as const);
           data.toolCalls[toolCallIndex] = {
             ...data.toolCalls[toolCallIndex],
-            status: "completed" as const,
+            status: toolStatus,
             result: extractStringFromMessageContent(message),
           };
           break;
@@ -241,6 +305,50 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     );
   }, [interrupt]);
 
+  // The envelope proposal interrupt (`propose_envelope_tool`) is a DIFFERENT
+  // shape from the `action_requests`/`review_configs` HITL protocol above —
+  // it comes from a raw `interrupt()` call and resumes with a
+  // `EnvelopeGrantDecision`, not a `{decisions: [...]}` payload. It is
+  // mutually exclusive with `action_requests` (never both on the same
+  // interrupt), so `actionRequestsMap` above just stays empty for it.
+  const envelopeProposal: EnvelopeProposalInterruptData | null = useMemo(() => {
+    const value = interrupt?.value as any;
+    return value?.type === "envelope_proposal" ? value : null;
+  }, [interrupt]);
+
+  // Nº de action_requests do interrupt atual. O modelo pode emitir VÁRIAS chamadas
+  // da mesma tool (ex.: create_image_from_prompt) numa só resposta; o HITL exige uma
+  // decisão por action_request, na mesma ordem. Como só há uma tool interrompível e
+  // as chamadas são equivalentes, o painel envia UMA decisão que replicamos para
+  // casar com o total pendente (evita "human decisions != hanging tool calls").
+  const interruptActionCount: number = useMemo(() => {
+    const ars =
+      interrupt?.value && (interrupt.value as any)["action_requests"];
+    return Array.isArray(ars) ? ars.length : 0;
+  }, [interrupt]);
+
+  const resumeInterruptAll = useCallback(
+    (value: any) => {
+      const decisions = value?.decisions;
+      if (
+        Array.isArray(decisions) &&
+        decisions.length === 1 &&
+        interruptActionCount > 1
+      ) {
+        resumeInterrupt({
+          ...value,
+          decisions: Array.from(
+            { length: interruptActionCount },
+            () => decisions[0]
+          ),
+        });
+        return;
+      }
+      resumeInterrupt(value);
+    },
+    [resumeInterrupt, interruptActionCount]
+  );
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       <div
@@ -276,11 +384,55 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                     }
                     ui={messageUi}
                     stream={stream}
-                    onResumeInterrupt={resumeInterrupt}
+                    onResumeInterrupt={resumeInterruptAll}
                     graphId={assistant?.graph_id}
                   />
                 );
               })}
+              {/* Standalone approval panel for interrupts NOT matched to a
+                  visible top-level tool call (e.g. tools called inside a
+                  task() subagent, like create_image_from_prompt). Without this,
+                  a subagent-nested interrupt would never render an approval UI. */}
+              {interrupt &&
+                actionRequestsMap &&
+                actionRequestsMap.size > 0 &&
+                (() => {
+                  const inlineNames = new Set<string>(
+                    (
+                      processedMessages[processedMessages.length - 1]
+                        ?.toolCalls ?? []
+                    ).map((tc: ToolCall) => tc.name)
+                  );
+                  const unmatched = Array.from(
+                    actionRequestsMap.values()
+                  ).filter((ar) => !inlineNames.has(ar.name));
+                  if (unmatched.length === 0) return null;
+                  return (
+                    <div className="mt-4 space-y-4">
+                      {unmatched.map((ar, i) => (
+                        <ToolApprovalInterrupt
+                          key={`${ar.name}-${i}`}
+                          actionRequest={ar}
+                          reviewConfig={reviewConfigsMap?.get(ar.name)}
+                          onResume={resumeInterruptAll}
+                          isLoading={isLoading}
+                        />
+                      ))}
+                    </div>
+                  );
+                })()}
+              {/* Envelope proposal — always standalone, never a top-level
+                  tool call (it IS the interrupt, there's no inline tool
+                  call rendering for `propose_envelope`). */}
+              {envelopeProposal && (
+                <div className="mt-4">
+                  <EnvelopeApprovalInterrupt
+                    envelope={envelopeProposal}
+                    onResume={resumeInterrupt}
+                    isLoading={isLoading}
+                  />
+                </div>
+              )}
             </>
           )}
         </div>
@@ -504,6 +656,26 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
             onSubmit={handleSubmit}
             className="flex flex-col"
           >
+            <div className="flex items-center justify-between gap-2 border-b border-border/60 bg-sidebar/30 px-3 py-1.5">
+              <div className="flex items-center gap-3">
+                {/* Active envelope, visible for the whole task — the user
+                    should always know what the agent can currently do,
+                    not just at grant time. Zeroed at the start of every
+                    turn (task-scoped-permissions REQ-002). */}
+                {grantedCapabilities.length > 0 && (
+                  <span
+                    className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"
+                    title="Capabilities granted for the current task"
+                  >
+                    <ShieldCheck
+                      size={12}
+                      className="text-green-600 dark:text-green-400"
+                    />
+                    {grantedCapabilities.join(", ")}
+                  </span>
+                )}
+              </div>
+            </div>
             <textarea
               ref={textareaRef}
               value={input}
@@ -513,7 +685,57 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
               className="font-inherit field-sizing-content flex-1 resize-none border-0 bg-transparent px-[18px] pb-[13px] pt-[14px] text-sm leading-7 text-primary outline-none placeholder:text-tertiary"
               rows={1}
             />
+            {(reference || uploadError) && (
+              <div className="px-3 pt-1">
+                {reference && (
+                  <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 p-1.5 text-xs">
+                    <img
+                      src={reference.url}
+                      alt={reference.filename}
+                      className="h-8 w-8 rounded object-cover"
+                    />
+                    <span className="max-w-[180px] truncate text-secondary">
+                      {reference.filename}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setReference(null)}
+                      className="ml-auto text-tertiary hover:text-primary"
+                      aria-label="Remover imagem de referência"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
+                {uploadError && (
+                  <p className="mt-1 text-xs text-destructive">{uploadError}</p>
+                )}
+              </div>
+            )}
             <div className="flex justify-between gap-2 p-3">
+              <div className="flex items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading || submitDisabled}
+                  title="Anexar imagem de referência"
+                  aria-label="Anexar imagem de referência"
+                >
+                  {uploading ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Paperclip size={16} />
+                  )}
+                </Button>
+              </div>
               <div className="flex justify-end gap-2">
                 <Button
                   type={isLoading ? "button" : "submit"}

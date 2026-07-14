@@ -16,6 +16,7 @@ escrita na rota `/skills/` e as skills são carregadas em runtime pelo deepagent
 """
 import importlib.util
 import json
+import logging
 import os
 import re
 import shutil
@@ -24,6 +25,10 @@ import tempfile
 from pathlib import Path
 
 from langchain_core.tools import BaseTool, tool
+
+# Logger de auditoria de comandos de shell (REQ-005). Cai nos logs do backend
+# (docker logs / LangSmith). Cada execução aprovada registra command/cwd/exit.
+_audit_log = logging.getLogger("jeff_ai.shell_audit")
 
 _THIS = Path(__file__).resolve()
 BACKEND_DIR = _THIS.parents[2]
@@ -34,9 +39,16 @@ SKILLS_DIR = BACKEND_DIR / "skills"
 
 # Repositórios permitidos para instalação de skills externas (`npx skills add`).
 # Pode ser estendida via env SKILLS_ALLOWLIST (lista separada por vírgula).
+# Inclui os repos oficiais/confiáveis onde vivem as skills mais usadas (design,
+# frontend, etc.). A DESCOBERTA (`find_external_skills`) NÃO é restrita — só a
+# INSTALAÇÃO é limitada por esta allowlist.
 _DEFAULT_SKILL_REPOS = {
     "vercel-labs/skills",
     "https://github.com/vercel-labs/skills",
+    "vercel-labs/agent-skills",
+    "https://github.com/vercel-labs/agent-skills",
+    "anthropics/skills",
+    "https://github.com/anthropics/skills",
 }
 
 # Diretórios pesados/irrelevantes que não devem ser listados/lidos.
@@ -256,3 +268,221 @@ def install_external_skill(repo: str, skill: str) -> str:
         f"[OK] Skill '{skill}' instalada em backend/skills/{skill}/ (de {repo}). "
         "Ficará disponível para o assistant nas próximas interações."
     )
+
+
+# --------------------------------------------------------------------------- #
+# 4. Descoberta de skills externas (busca REAL na CLI, não na web)
+# --------------------------------------------------------------------------- #
+# Remove códigos de escape ANSI (cores/spinners) da saída da CLI `skills`.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+# `find`: linhas no formato "owner/repo@skill  <N> installs".
+_FIND_RE = re.compile(r"^([\w.-]+/[\w.-]+@[\w.-]+)\s+([\d.]+[KM]?)\s+installs\b")
+
+
+def _run_skills_cli(args: list[str], timeout: int = 120) -> tuple[bool, str]:
+    """Roda `npx -y skills <args>` de forma NÃO-INTERATIVA e retorna (ok, saída limpa).
+
+    stdout/stderr são capturados (logo, não há TTY → a CLI imprime resultados em vez
+    de abrir o seletor interativo). Retorna `ok=False` com mensagem amigável se o
+    `npx` não existir ou a execução falhar.
+    """
+    if shutil.which("npx") is None:
+        return False, "npx não está disponível no ambiente (Node não instalado na imagem)."
+    try:
+        proc = subprocess.run(
+            ["npx", "-y", "skills", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"Timeout ({timeout}s) ao executar `skills {' '.join(args)}`."
+    except OSError as exc:
+        return False, f"Falha ao executar npx: {exc}"
+    clean = _ANSI_RE.sub("", (proc.stdout or "") + (proc.stderr or ""))
+    return True, clean
+
+
+@tool
+def find_external_skills(query: str, owner: str = "") -> str:
+    """Busca skills externas REAIS pela CLI `skills find` (NÃO use web/internet_search).
+
+    Retorna skills existentes no ecossistema (nome no formato `owner/repo@skill` e
+    número de instalações), rankeadas por popularidade. Use isto para descobrir o
+    NOME e o REPO corretos ANTES de instalar — evita inventar nomes que não existem.
+    `owner` (opcional) restringe a um dono do GitHub (ex.: 'anthropics').
+
+    Depois de escolher, instale com `install_external_skill(repo=owner/repo, skill=skill)`
+    — lembrando que a instalação só aceita repos da allowlist.
+    """
+    q = (query or "").strip()
+    if not q:
+        return "Informe um termo de busca (ex.: 'design', 'react testing')."
+    args = ["find", q]
+    if owner.strip():
+        args += ["--owner", owner.strip()]
+    ok, out = _run_skills_cli(args)
+    if not ok:
+        return out
+
+    results: list[str] = []
+    lines = out.splitlines()
+    for i, line in enumerate(lines):
+        m = _FIND_RE.match(line.strip())
+        if not m:
+            continue
+        pkg, installs = m.group(1), m.group(2)
+        url = ""
+        if i + 1 < len(lines):
+            nxt = lines[i + 1].strip().lstrip("└").strip()
+            if nxt.startswith("http"):
+                url = nxt
+        results.append(f"- {pkg}  ({installs} installs)" + (f"\n  {url}" if url else ""))
+
+    if not results:
+        return f"Nenhuma skill encontrada para '{q}'.\n\nSaída bruta:\n{out[-1200:]}"
+    header = (
+        f"Skills encontradas para '{q}'"
+        + (f" (owner={owner.strip()})" if owner.strip() else "")
+        + " — nome no formato owner/repo@skill:\n"
+    )
+    return header + "\n".join(results[:20])
+
+
+@tool
+def list_skills_in_repo(repo: str) -> str:
+    """Lista as skills REAIS de um repositório via `skills add <repo> --list` (sem instalar).
+
+    Use para confirmar os nomes exatos das skills de um repo ANTES de instalar
+    (ex.: `list_skills_in_repo('vercel-labs/agent-skills')`). Evita erros de
+    "No matching skills found" por nome inventado.
+    """
+    r = (repo or "").strip()
+    if not re.fullmatch(r"(https?://[\w./-]+|[\w.-]+/[\w.-]+)", r):
+        return "Repo inválido. Use 'owner/repo' (ex.: 'anthropics/skills')."
+    ok, out = _run_skills_cli(["add", r, "--list"])
+    if not ok:
+        return out
+
+    # Após "Available Skills", os NOMES são slugs isolados (sem espaço); as linhas
+    # seguintes são descrições (frases com espaços). Filtramos os slugs.
+    names: list[str] = []
+    seen_header = False
+    for raw in out.splitlines():
+        line = raw.lstrip("│").strip()
+        if "Available Skills" in line or "Available skills" in line:
+            seen_header = True
+            continue
+        if not seen_header or not line:
+            continue
+        token = line.lstrip("-").strip()
+        if re.fullmatch(r"[a-z0-9][a-z0-9._-]+", token):
+            names.append(token)
+
+    if not names:
+        return f"Não consegui listar skills de '{r}'.\n\nSaída bruta:\n{out[-1200:]}"
+    body = "\n".join(f"- {n}" for n in names)
+    return (
+        f"Skills disponíveis em '{r}':\n{body}\n\n"
+        f"Para instalar: install_external_skill(repo='{r}', skill='<nome-acima>')."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 5. Execução de shell com GATE humano obrigatório (interrupt_on)
+# --------------------------------------------------------------------------- #
+_SHELL_TIMEOUT = int(os.getenv("SHELL_COMMAND_TIMEOUT", "180"))
+
+# Denylist de padrões destrutivos (defesa em PROFUNDIDADE, best-effort). NÃO
+# substitui a aprovação humana do `interrupt_on`: é uma segunda camada que impede
+# a EXECUÇÃO de comandos obviamente perigosos mesmo que aprovados por engano.
+# Extensível via env SHELL_DENYLIST (regexes separados por ';').
+_DEFAULT_SHELL_DENYLIST = [
+    r"\brm\s+-[a-z]*r[a-z]*f[a-z]*\s+(/|/\*|~|\$HOME)(\s|$|/)",  # rm -rf / (e variações)
+    r"\brm\s+-[a-z]*f[a-z]*r[a-z]*\s+(/|/\*|~|\$HOME)(\s|$|/)",  # rm -fr /
+    r"\bmkfs(\.\w+)?\b",                                         # formatar filesystem
+    r"\bdd\b[^\n]*\bof=/dev/",                                   # dd of=/dev/...
+    r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:",                # fork bomb :(){ :|:& };:
+    r"\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(ba)?sh\b",            # curl|sh / wget|sh
+    r">\s*/dev/(sd[a-z]|nvme\d|vd[a-z])\b",                     # sobrescrever disco
+]
+
+
+def _shell_denylist() -> list[str]:
+    """Padrões da denylist (default embutido + env SHELL_DENYLIST, separada por ';')."""
+    pats = list(_DEFAULT_SHELL_DENYLIST)
+    pats += [p.strip() for p in os.getenv("SHELL_DENYLIST", "").split(";") if p.strip()]
+    return pats
+
+
+def _denylisted(command: str) -> str | None:
+    """Retorna o padrão casado se `command` for destrutivo, senão None."""
+    for pat in _shell_denylist():
+        try:
+            if re.search(pat, command):
+                return pat
+        except re.error:
+            continue
+    return None
+
+
+@tool
+def run_shell_command(command: str, workdir: str = "") -> str:
+    """Executa um comando de shell arbitrário. REQUER APROVAÇÃO HUMANA antes de rodar.
+
+    NADA é executado sem o usuário aprovar: o framework PAUSA no gate `interrupt_on`
+    e mostra os botões aprovar / editar / reprovar. Só depois de "approve" o comando roda.
+
+    - `command`: o comando a executar (rodado via `bash -lc`).
+    - `workdir`: diretório de trabalho (padrão: raiz do backend). Não é sandbox — o
+      comando roda com as permissões do processo do servidor.
+
+    Retorna o código de saída e a saída combinada (stdout+stderr), truncada se longa.
+    Use com responsabilidade: prefira comandos idempotentes e evite ações destrutivas.
+    """
+    cmd = (command or "").strip()
+    if not cmd:
+        return "Comando vazio — nada a executar."
+
+    # Defesa em profundidade: recusa a EXECUÇÃO de padrões destrutivos, mesmo que
+    # o comando tenha sido aprovado no gate. Best-effort — não substitui o gate.
+    hit = _denylisted(cmd)
+    if hit is not None:
+        return (
+            "[RECUSADO pela denylist de segurança] O comando casa um padrão destrutivo "
+            f"({hit!r}) e NÃO foi executado. Ajuste o comando se a intenção for legítima.\n"
+            "Nota: a denylist é best-effort e é uma 2ª camada — não substitui a aprovação humana."
+        )
+
+    cwd = str(BACKEND_DIR)
+    if workdir.strip():
+        target = Path(workdir).expanduser()
+        if not target.is_dir():
+            return f"workdir inválido (não é um diretório): {workdir}"
+        cwd = str(target)
+
+    try:
+        proc = subprocess.run(
+            ["bash", "-lc", cmd],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=_SHELL_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return f"Timeout ({_SHELL_TIMEOUT}s) ao executar o comando."
+    except OSError as exc:
+        return f"Falha ao executar o comando: {exc}"
+
+    # Auditoria (REQ-005): registra toda execução aprovada — sucesso E falha.
+    # Não é alcançado para comandos vazios, denylisted ou rejeitados no gate.
+    # Dados no próprio texto para garantir visibilidade nos logs (independe do formatter).
+    _audit_log.info(
+        "shell_audit command=%r cwd=%r exit=%s", cmd, cwd, proc.returncode
+    )
+
+    out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    if len(out) > _MAX_READ_CHARS:
+        out = out[:_MAX_READ_CHARS] + "\n\n[...truncado...]"
+    header = f"$ {cmd}\n(cwd={cwd}, exit={proc.returncode})"
+    return f"{header}\n{out}" if out else f"{header}\n(sem saída)"

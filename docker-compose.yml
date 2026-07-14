@@ -9,13 +9,17 @@ services:
     env_file:
       - backend/.env
     environment:
-      POSTGRES_URI: postgresql://jeff_ia:jeff_ia@jeff_ia_postgres:5432/jeff_ia
-      REDIS_URI: redis://jeff_ia_redis:6379/0
+      POSTGRES_URI: ${POSTGRES_URI:-postgresql://jeff_ia:jeff_ia@jeff_ia_postgres:5432/jeff_ia}
+      REDIS_URI: ${REDIS_URI:-redis://jeff_ia_redis:6379/0}
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY}
       LANGCHAIN_TRACING_V2: true
       LANGSMITH_PROJECT: jeff_ai_project
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
+      JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
+      # Repos de terceiros liberados para install_external_skill (além dos defaults
+      # oficiais). Lista separada por vírgula. Liberado por decisão humana (REQ-007).
+      SKILLS_ALLOWLIST: ${SKILLS_ALLOWLIST:-usenotra/skills}
       LANGGRAPH_STORE: '{"type": "postgres", "url": "$${env:POSTGRES_URI}", "index": {"embed": "./src/models/ollama_embeddings.py:embed_texts", "dims": 1024, "fields": ["content"]}}'
       LANGGRAPH_CHECKPOINTER: '{"type": "postgres", "url": "$${env:POSTGRES_URI}"}'
       LANGSERVE_CORS_ALLOW_ORIGINS: '*'
@@ -30,6 +34,8 @@ services:
       - ./backend/langgraph.json:/deps/backend/langgraph.json
       # Persiste skills criadas/instaladas pelo assistant em runtime.
       - ./backend/skills:/deps/backend/skills
+      # [DEV/teste] monta o código-fonte do host para testar mudanças sem rebuild da imagem.
+      - ./backend/src:/deps/backend/src
       # Persiste tools Python geradas (staging) + approved.json para revisão humana no host.
       - ./backend/src/tools/generated:/deps/backend/src/tools/generated
     networks:
@@ -58,10 +64,21 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./backend/outputs:/deps/backend/outputs:ro
+      # Leitura/escrita: além de servir imagens, recebe uploads de referência.
+      - ./backend/outputs:/deps/backend/outputs
       - ./backend/image_server.py:/app/image_server.py:ro
+      # `src` é montado para o servidor importar a lógica de validação de upload.
+      - ./backend/src:/app/src:ro
     working_dir: /app
-    command: ["sh", "-c", "pip install fastapi uvicorn && python image_server.py"]
+    # Pacotes adicionados: `langchain-core` e `langchain-mcp-adapters` são
+    # necessários desde a change `unified-agent-realignment` — o `mcp_admin_api`
+    # (montado em `image_server.py:8080`) importa `mcp_client.py` que importa
+    # `langchain_core.tools` e `langchain_mcp_adapters`. Sem isso, o container
+    # quebra logo no boot.
+    command:
+      - sh
+      - -c
+      - "pip install --no-cache-dir fastapi uvicorn python-multipart langchain-core langchain-mcp-adapters && python image_server.py"
     networks:
       - jeff_ia-network
 

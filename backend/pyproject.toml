@@ -10,12 +10,21 @@ dependencies = [
     "langchain-core>=1.0.0",
     "langchain-google-genai>=1.0.0",
     "langchain-ollama>=0.1.0",
+    "langchain-openrouter>=0.2.6",
     "langsmith>=0.0.0",
     "python-dotenv>=1.0.0",
     "wcmatch>=10.0",
     "tavily>=1.1.0",
+    "httpx>=0.27.0",
     "fastapi>=0.100.0",
-    "uvicorn>=0.23.0"
+    "uvicorn>=0.23.0",
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.0",
+    "python-pptx>=1.0.0",
+    "pypdf>=5.0.0",
+    "langchain-text-splitters>=0.3.0",
+    "langchain-mcp-adapters>=0.3.0",
+    "markitdown[all]>=0.0.1"
 ]
 
 [project.optional-dependencies]
@@ -25,11 +34,17 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "debugpy>=1.6.0",
+    "import-linter>=2.0",
 ]
 
 [build-system]
 requires = ["setuptools>=73.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.setuptools]
 packages = ["src"]
@@ -57,6 +72,53 @@ lint.ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["D", "UP"]
+# `benchmarks/baseline.py` é um script de CLI: `print` é a saída dele, não um
+# debug esquecido (T201). O `sys.path` insert antes dos imports é o que permite
+# rodá-lo direto (`python benchmarks/baseline.py`) sem instalar o pacote (E402).
+"benchmarks/*" = ["T201", "D401", "E402"]
+# `scripts/wait_for_postgres.py` é um script de CLI (pre-flight de `make dev`):
+# `print` é a saída dele, não um debug esquecido.
+"scripts/*" = ["T201"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
+
+# --- Clean Architecture / DDD: Regra da Dependência (enforçada por import-linter) ---
+# Rodar com: `lint-imports` (a partir de backend/, com `src` no PYTHONPATH).
+# As dependências apontam para dentro: composition -> infrastructure -> application -> domain.
+# Camadas ainda em migração (agents/tools/models seguem fora dos contratos por ora).
+[tool.importlinter]
+root_package = "src"
+# Necessário porque o contrato `forbidden` referencia pacotes externos (langgraph, deepagents, ...).
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Regra da Dependencia (camadas Clean Architecture)"
+type = "layers"
+# Ordem do mais externo (topo, pode importar tudo abaixo) ao mais interno (base).
+layers = [
+    "src.composition",
+    "src.infrastructure",
+    "src.application",
+    "src.domain",
+]
+# Módulos ainda não migrados para as camadas; ignorados até a migração concluir.
+exhaustive = false
+
+[[tool.importlinter.contracts]]
+name = "Nucleo (dominio + aplicacao) livre de frameworks e I/O"
+type = "forbidden"
+# O núcleo puro (domínio + casos de uso/ports) não pode depender de frameworks
+# ou drivers — só do domínio e de abstrações (ports).
+source_modules = ["src.domain", "src.application"]
+forbidden_modules = [
+    "langgraph",
+    "deepagents",
+    "langchain",
+    "langchain_core",
+    "langchain_ollama",
+    "langchain_google_genai",
+    "langchain_anthropic",
+    "psycopg",
+    "psycopg2",
+]

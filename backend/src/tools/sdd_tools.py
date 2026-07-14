@@ -1,32 +1,27 @@
-from pathlib import Path
-from langchain_core.tools import tool
+"""Ferramentas SDD — adapters finos sobre o domínio/casos de uso SDD.
+
+As regras de negócio (numeração de feature, próxima fase do pipeline, validação
+estrutural de artefatos) vivem no domínio (`src.domain.sdd`); estas tools cuidam
+apenas do I/O de filesystem e da formatação das respostas para o agente.
+"""
+from __future__ import annotations
+
 import json
+from pathlib import Path
+
+from langchain_core.tools import tool
+
+from src.composition.dependencies import build_get_next_feature_number
+from src.domain.sdd import (
+    PhaseStatus,
+    SddPhase,
+    known_artifact_types,
+    next_phase,
+    validate_sections,
+)
 
 TEMPLATES_DIR = Path(__file__).parent.parent.parent / "templates" / "sdd"
 SPECIFY_DIR = Path(__file__).parent.parent.parent / "outputs" / ".specify"
-
-VALID_ARTIFACTS = {
-    "constitution": {
-        "file": "constitution.md",
-        "required_sections": ["Core Principles", "Technology Constraints", "Development Workflow", "Quality Gates"],
-    },
-    "spec": {
-        "file": "spec.md",
-        "required_sections": ["Overview", "User Scenarios", "Functional Requirements", "Non-Functional Requirements", "Key Entities"],
-    },
-    "plan": {
-        "file": "plan.md",
-        "required_sections": ["Architecture Overview", "Technology Stack", "Component Design", "API Design", "Implementation Phases"],
-    },
-    "tasks": {
-        "file": "tasks.md",
-        "required_sections": ["Dependency Graph", "Phase 1:", "Checkpoint"],
-    },
-    "data-model": {
-        "file": "data-model.md",
-        "required_sections": ["Entity Relationship Overview", "Entities", "Validation Rules"],
-    },
-}
 
 
 @tool
@@ -130,48 +125,56 @@ def validate_artifact(file_path: str, artifact_type: str) -> str:
     Returns:
         Relatorio de validacao JSON com status PASS/FAIL/WARN por secao.
     """
-    if artifact_type not in VALID_ARTIFACTS:
-        return json.dumps({
-            "status": "ERROR",
-            "message": f"Tipo de artefato invalido: '{artifact_type}'. Validos: {', '.join(VALID_ARTIFACTS.keys())}",
-        }, indent=2, ensure_ascii=False)
+    if artifact_type not in known_artifact_types():
+        return json.dumps(
+            {
+                "status": "ERROR",
+                "message": f"Tipo de artefato invalido: '{artifact_type}'. Validos: {', '.join(known_artifact_types())}",
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
 
     artifact_path = Path(file_path)
     if not artifact_path.exists():
-        return json.dumps({
-            "status": "FAIL",
-            "file": str(artifact_path),
-            "message": "Arquivo nao encontrado",
-            "checks": [],
-        }, indent=2, ensure_ascii=False)
+        return json.dumps(
+            {
+                "status": "FAIL",
+                "file": str(artifact_path),
+                "message": "Arquivo nao encontrado",
+                "checks": [],
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
 
     content = artifact_path.read_text(encoding="utf-8")
-    expected = VALID_ARTIFACTS[artifact_type]
+    validation = validate_sections(artifact_type, content)
+
     checks = []
-
-    for section in expected["required_sections"]:
-        if section.lower() in content.lower():
-            checks.append({"section": section, "status": "PASS"})
+    for check in validation.checks:
+        if check.passed:
+            checks.append({"section": check.section, "status": "PASS"})
         else:
-            checks.append({"section": section, "status": "FAIL", "message": f"Secao '{section}' nao encontrada"})
+            checks.append(
+                {
+                    "section": check.section,
+                    "status": "FAIL",
+                    "message": f"Secao '{check.section}' nao encontrada",
+                }
+            )
 
-    pass_count = sum(1 for c in checks if c["status"] == "PASS")
-    fail_count = sum(1 for c in checks if c["status"] == "FAIL")
-
-    if fail_count == 0:
-        overall = "PASS"
-    elif pass_count == 0:
-        overall = "FAIL"
-    else:
-        overall = "WARN"
-
-    return json.dumps({
-        "status": overall,
-        "file": str(artifact_path),
-        "artifact_type": artifact_type,
-        "checks": checks,
-        "summary": f"{pass_count}/{len(checks)} secoes presentes, {fail_count} ausentes",
-    }, indent=2, ensure_ascii=False)
+    return json.dumps(
+        {
+            "status": validation.verdict,
+            "file": str(artifact_path),
+            "artifact_type": artifact_type,
+            "checks": checks,
+            "summary": f"{validation.pass_count}/{len(validation.checks)} secoes presentes, {validation.fail_count} ausentes",
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
 
 
 @tool
@@ -182,10 +185,14 @@ def get_sdd_state(feature_dir: str) -> str:
     """
     feature_path = Path(feature_dir)
     if not feature_path.exists():
-        return json.dumps({
-            "status": "ERROR",
-            "message": f"Diretorio da feature nao encontrado: {feature_dir}",
-        }, indent=2, ensure_ascii=False)
+        return json.dumps(
+            {
+                "status": "ERROR",
+                "message": f"Diretorio da feature nao encontrado: {feature_dir}",
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
 
     base_path = SPECIFY_DIR.resolve()
     memory_dir = base_path / "memory"
@@ -228,17 +235,21 @@ def get_sdd_state(feature_dir: str) -> str:
         else:
             state["phases"][phase] = {"status": "missing", "file": str(artifact_path)}
 
-    # Determine next phase
-    phase_order = ["constitution", "specify", "clarify", "plan", "analyze", "tasks", "implement"]
-    next_phase = None
-    for phase in phase_order:
-        phase_state = state["phases"].get(phase, {})
-        if phase_state.get("status") in ("missing", "placeholder"):
-            next_phase = phase
-            break
+    # Determine next phase — regra de ordenação do pipeline no domínio.
+    statuses = {}
+    for phase_key, phase_state in state["phases"].items():
+        try:
+            phase_enum = SddPhase(phase_key)
+        except ValueError:
+            continue  # ex.: "data-model" não faz parte da ordem canônica do pipeline
+        try:
+            statuses[phase_enum] = PhaseStatus(phase_state.get("status"))
+        except ValueError:
+            continue
 
-    state["next_phase"] = next_phase
-    state["pipeline_complete"] = next_phase is None
+    upcoming = next_phase(statuses)
+    state["next_phase"] = upcoming.value if upcoming else None
+    state["pipeline_complete"] = upcoming is None
 
     return json.dumps(state, indent=2, ensure_ascii=False)
 
@@ -246,14 +257,5 @@ def get_sdd_state(feature_dir: str) -> str:
 @tool
 def get_next_feature_number() -> str:
     """Escaneia o diretorio .specify/specs/ e retorna o proximo numero de feature disponivel (3 digitos)."""
-    base_path = SPECIFY_DIR.resolve()
-    specs_dir = base_path / "specs"
-    specs_dir.mkdir(parents=True, exist_ok=True)
-
-    existing = []
-    for entry in specs_dir.iterdir():
-        if entry.is_dir() and entry.name[:3].isdigit():
-            existing.append(int(entry.name[:3]))
-
-    next_num = max(existing) + 1 if existing else 1
-    return f"{next_num:03d}"
+    use_case = build_get_next_feature_number(SPECIFY_DIR)
+    return str(use_case.execute())

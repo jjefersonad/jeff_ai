@@ -1,49 +1,86 @@
-import os
-import datetime
-from dotenv import load_dotenv
-from google import genai
+"""Tool `create_image_from_prompt` — adapter fino sobre o caso de uso PlanAndCreateImage.
+
+Esta tool é apenas a borda deepagents: traduz a entrada (string ou
+`ImageDesignInput`) para o domínio, injeta os adapters de infraestrutura e
+delega a geração ao caso de uso. NÃO contém regra de negócio.
+"""
+from __future__ import annotations
+
+from typing import Union
+
 from langchain_core.tools import tool
-from pathlib import Path
 
-SPECIFY_DIR = Path(__file__).parent.parent.parent / "outputs" / "images"
+from src.composition.dependencies import build_plan_and_create_image
+from src.domain.imaging import DesignStyle, ImageDesign, ImageReference
+from src.domain.shared.errors import DomainError
+from src.models.image_design import ImageDesignInput
 
-load_dotenv()
 
-api_key = os.getenv("GOOGLE_API_KEY")
-client = genai.Client(api_key=api_key)
+def _clean(value: str | None) -> str | None:
+    """Normaliza strings de entrada: vazio/whitespace vira None."""
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
-def create_hash_timestamp():
-    now = datetime.datetime.now()
-    return now.strftime("%Y%m%d%H%M%S")
 
-@tool
-def create_image_from_prompt(prompt: str) -> dict:
+def _to_image_design(design_input: Union[str, ImageDesignInput]) -> ImageDesign:
+    """Constrói o `ImageDesign` a partir da entrada da tool (string ou ImageDesignInput).
+
+    Mantém o contrato tolerante da tool: campos vazios viram None e dimensões em
+    formato livre (não `WxH`/`W:H`) são descartadas para não bloquear a geração.
     """
-    Generates an image from a text prompt using the Google Gemini API and saves it to the specified directory.
+    if isinstance(design_input, str):
+        return ImageDesign(prompt=design_input)
 
-    Args:
-        prompt (str): The text prompt to generate the image.
+    common = {
+        "art_style": _clean(design_input.art_style),
+        "color_palette": _clean(design_input.color_palette),
+        "composition": _clean(design_input.composition),
+    }
+    try:
+        style = DesignStyle(**common, dimensions=_clean(design_input.dimensions))
+    except DomainError:
+        # Dimensões em formato livre: preserva a geração, descartando só esse campo.
+        style = DesignStyle(**common)
 
-    Returns:
-        dict: A dictionary containing:
-            - path: The local filesystem path (internal use only, do NOT show to user).
-            - url: The frontend-accessible URL that should be used in markdown messages to display the image.
-              Example: {"path": "/app/backend/outputs/images/20260705091430.png", "url": "/api/images/20260705091430.png"}
-              IMPORTANT: Always use the "url" field when writing markdown to display images to the user.
-    """
-    response = client.models.generate_content(
-        model="gemini-3.1-flash-image",
-        contents=[prompt],
+    return ImageDesign(
+        prompt=design_input.prompt,
+        style=style,
+        negative_prompt=_clean(design_input.negative_prompt),
+        references=_to_references(design_input.references),
     )
 
-    for part in response.parts:
-        if part.inline_data is not None:
-            image = part.as_image()
-            image_name = create_hash_timestamp() + ".png"
-            image_path = SPECIFY_DIR / image_name
-            os.makedirs(SPECIFY_DIR, exist_ok=True)
-            image.save(image_path)
-            return {
-                "path": str(image_path),
-                "url": f"/api/images/{image_name}",
-            }
+
+def _to_references(paths: list[str] | None) -> tuple[ImageReference, ...]:
+    """Converte caminhos livres em `ImageReference`, ignorando entradas vazias."""
+    if not paths:
+        return ()
+    return tuple(ImageReference(path=cleaned) for p in paths if (cleaned := _clean(p)))
+
+
+@tool
+async def create_image_from_prompt(
+    design_input: Union[str, ImageDesignInput]
+) -> dict:
+    """Generate an image from a prompt (or ImageDesignInput) via the Google Gemini API.
+
+    Saves the image and a sidecar JSON with design metadata. Accepts either a plain
+    prompt string (legacy mode) or an ImageDesignInput with optional design params
+    (art_style, color_palette, composition, dimensions, negative_prompt).
+
+    Returns a dict with:
+    - path: local filesystem path (internal use only, do NOT show to the user).
+    - url: frontend-accessible URL — ALWAYS use this in markdown to display the image.
+    - metadata: the design metadata used for generation.
+
+    Example return:
+    {"path": "/app/backend/outputs/images/20260705091430.png",
+     "url": "/api/images/20260705091430.png",
+     "metadata": {"prompt": "Um gato astronauta no espaço", "art_style": "realista",
+                  "color_palette": "tons frios", "composition": "centralizada",
+                  "dimensions": "1024x1024", "negative_prompt": null}}
+    """
+    design = _to_image_design(design_input)
+
+    use_case = build_plan_and_create_image()
+    result = await use_case.execute(design)
+
+    return {"path": result.path, "url": result.url, "metadata": result.metadata}
