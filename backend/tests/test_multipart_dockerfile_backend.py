@@ -177,6 +177,15 @@ ir.REFERENCES_DIR = ref_dir
 
 from src.infrastructure.web.webapp import app  # noqa: E402
 
+# `require_auth` (task-rest-3) agora protege /api/references por padrão;
+# este teste cobre python-multipart, não auth, então faz override direto.
+from src.infrastructure.auth.dependencies import require_auth  # noqa: E402
+from src.infrastructure.auth.users import User  # noqa: E402
+
+app.dependency_overrides[require_auth] = lambda: User(
+    id="test", username="test", password_hash="x", role="admin", is_active=True
+)
+
 _PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
 )

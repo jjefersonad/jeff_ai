@@ -39,6 +39,8 @@ from src.domain.documents import (
     TitleSlide,
     XlsxSpec,
 )
+from src.infrastructure.auth.dependencies import require_auth
+from src.infrastructure.auth.users import User
 from src.infrastructure.documents.docx_writer import DocxWriter
 from src.infrastructure.documents.pptx_writer import PptxWriter
 from src.infrastructure.documents.xlsx_writer import XlsxWriter
@@ -64,10 +66,22 @@ def fake_documents_root(
     return root
 
 
+_FAKE_USER = User(id="test-user", username="tester", password_hash="x", role="admin", is_active=True)
+
+
 @pytest.fixture
-def client() -> TestClient:
-    """Cliente FastAPI para o `webapp.app` (sem subir o servidor real)."""
-    return TestClient(webapp.app)
+def client():
+    """Cliente FastAPI para o `webapp.app` (sem subir o servidor real).
+
+    Faz override de `require_auth` (dependency global aplicada em `webapp.py`,
+    task-rest-3) para um usuário fake — estas rotas passaram a exigir sessão
+    e este teste cobre apenas o comportamento de `documents_router`, não auth.
+    """
+    webapp.app.dependency_overrides[require_auth] = lambda: _FAKE_USER
+    try:
+        yield TestClient(webapp.app)
+    finally:
+        webapp.app.dependency_overrides.pop(require_auth, None)
 
 
 # --- helper ---------------------------------------------------------------
@@ -240,6 +254,7 @@ def test_documents_dir_override_via_env_var(
 
     monkeypatch.setenv("DOCUMENTS_DIR", str(root))
     reloaded = importlib.reload(documents_router)
+    webapp.app.dependency_overrides[require_auth] = lambda: _FAKE_USER
     try:
         assert reloaded.DOCUMENTS_DIR == root
         # Cliente novo para garantir que o módulo recarregado está montado.
@@ -252,3 +267,4 @@ def test_documents_dir_override_via_env_var(
         # o tmp_path em outros testes que importem `documents_router`.
         monkeypatch.delenv("DOCUMENTS_DIR", raising=False)
         importlib.reload(documents_router)
+        webapp.app.dependency_overrides.pop(require_auth, None)

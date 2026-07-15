@@ -28,6 +28,10 @@ from fastapi.testclient import TestClient
 
 import src.infrastructure.web.images_router as images_router
 import src.infrastructure.web.webapp as webapp
+from src.infrastructure.auth.dependencies import require_auth
+from src.infrastructure.auth.users import User
+
+_FAKE_USER = User(id="test-user", username="tester", password_hash="x", role="admin", is_active=True)
 
 # 1x1 PNG transparente — passa no `sniff_image_mime` do `reference_store`.
 _PNG_1X1 = base64.b64decode(
@@ -54,9 +58,18 @@ def images_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def client(images_root: Path) -> TestClient:
-    """Cliente FastAPI para o `webapp.app` (sem subir servidor real)."""
-    return TestClient(webapp.app)
+def client(images_root: Path):
+    """Cliente FastAPI para o `webapp.app` (sem subir servidor real).
+
+    Faz override de `require_auth` (dependency global aplicada em `webapp.py`,
+    task-rest-3) para um usuário fake — estas rotas passaram a exigir sessão
+    e este teste cobre apenas o comportamento de `images_router`, não auth.
+    """
+    webapp.app.dependency_overrides[require_auth] = lambda: _FAKE_USER
+    try:
+        yield TestClient(webapp.app)
+    finally:
+        webapp.app.dependency_overrides.pop(require_auth, None)
 
 
 # ---------- GET /api/images ----------

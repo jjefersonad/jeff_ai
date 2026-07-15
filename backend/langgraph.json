@@ -9,6 +9,9 @@
   "http": {
     "app": "./src/infrastructure/web/webapp.py:app"
   },
+  "auth": {
+    "path": "./src/infrastructure/web/auth.py:auth"
+  },
   "checkpointer": {
     "type": "postgres",
     "url": "${env:POSTGRES_URI}"

@@ -37,7 +37,14 @@ RUN pip install --no-cache-dir \
     # `langchain/langgraph-api:3.11` traz `starlette` e `uvicorn`, mas NÃO
     # `fastapi` — sem essa linha, o container não consegue carregar o
     # `http.app` registrado em `langgraph.json`.
-    "fastapi==0.139.0"
+    "fastapi==0.139.0" \
+    # Necessário para `src/infrastructure/auth/security.py` (hash/verificação
+    # de senha via bcrypt), importado por `auth_router.py` no carregamento de
+    # `webapp.py` (change `autenticacao-jwt-rotas-protegidas`, task-rest-1).
+    # `psycopg`/`psycopg-pool` (usados por `auth/db.py`) já vêm transitivos do
+    # checkpointer Postgres do LangGraph; `passlib`/`bcrypt` não.
+    "passlib[bcrypt]==1.7.4" \
+    "bcrypt==4.0.1"
 
 ENV PYTHONPATH="/deps/backend:$PYTHONPATH"
 ENV LANGGRAPH_STORE='{"type": "postgres", "url": "\${env:POSTGRES_URI}", "index": {"embed": "./src/models/ollama_embeddings.py:embed_texts", "dims": 1024, "fields": ["content"]}}'
