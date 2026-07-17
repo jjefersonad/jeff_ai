@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback, Suspense } from "react";
 import { useQueryState } from "nuqs";
 import { getConfig, saveConfig, StandaloneConfig } from "@/lib/config";
 import { ConfigDialog } from "@/app/components/ConfigDialog";
+import { LogoutButton } from "@/components/LogoutButton";
 import { Button } from "@/components/ui/button";
 import { Assistant } from "@langchain/langgraph-sdk";
 import { ClientProvider, useClient } from "@/providers/ClientProvider";
@@ -144,6 +145,7 @@ function HomePageInner({
               <Settings className="mr-2 h-4 w-4" />
               Settings
             </Button>
+            <LogoutButton />
             <Button
               variant="outline"
               size="sm"

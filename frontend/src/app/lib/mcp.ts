@@ -7,6 +7,13 @@
  * separate from the agent graph — the admin API it exposes is never
  * reachable by any agent tool (REQ-001 of `mcp-client`: the agent cannot
  * self-configure servers).
+ *
+ * Note: these calls do NOT go through the `AuthProvider`'s 401 interceptor
+ * (the MCP admin server is intentionally a separate process, outside the
+ * Jeff AI backend's auth surface — see Open Question in the design doc).
+ * We still set `credentials: 'include'` so the httpOnly session cookie
+ * travels if the MCP admin process ever needs it in the future; the cookie
+ * is just ignored today.
  */
 
 export interface McpServerSummary {
@@ -36,22 +43,29 @@ async function parseErrorDetail(res: Response): Promise<string> {
   }
 }
 
+const MCP_FETCH_INIT: RequestInit = {
+  credentials: "include",
+};
+
 export async function fetchServers(): Promise<McpServerSummary[]> {
-  const res = await fetch("/api/mcp/servers");
+  const res = await fetch("/api/mcp/servers", MCP_FETCH_INIT);
   if (!res.ok) throw new Error(await parseErrorDetail(res));
   const data = await res.json();
   return data.servers;
 }
 
 export async function fetchServerTools(name: string): Promise<McpToolInfo[]> {
-  const res = await fetch(`/api/mcp/servers/${encodeURIComponent(name)}/tools`);
+  const res = await fetch(
+    `/api/mcp/servers/${encodeURIComponent(name)}/tools`,
+    MCP_FETCH_INIT
+  );
   if (!res.ok) throw new Error(await parseErrorDetail(res));
   const data = await res.json();
   return data.tools;
 }
 
 export async function fetchCapabilities(): Promise<string[]> {
-  const res = await fetch("/api/mcp/capabilities");
+  const res = await fetch("/api/mcp/capabilities", MCP_FETCH_INIT);
   if (!res.ok) throw new Error(await parseErrorDetail(res));
   const data = await res.json();
   return data.capabilities;
@@ -68,6 +82,7 @@ export async function createServer(
   payload: ServerWritePayload
 ): Promise<void> {
   const res = await fetch("/api/mcp/servers", {
+    ...MCP_FETCH_INIT,
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, ...payload }),
@@ -80,6 +95,7 @@ export async function updateServer(
   payload: ServerWritePayload
 ): Promise<void> {
   const res = await fetch(`/api/mcp/servers/${encodeURIComponent(name)}`, {
+    ...MCP_FETCH_INIT,
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -89,6 +105,7 @@ export async function updateServer(
 
 export async function deleteServer(name: string): Promise<void> {
   const res = await fetch(`/api/mcp/servers/${encodeURIComponent(name)}`, {
+    ...MCP_FETCH_INIT,
     method: "DELETE",
   });
   if (!res.ok && res.status !== 204) throw new Error(await parseErrorDetail(res));
@@ -99,6 +116,7 @@ export async function setToolCapability(
   capability: string
 ): Promise<void> {
   const res = await fetch("/api/mcp/tools/capability", {
+    ...MCP_FETCH_INIT,
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ tool_name: toolName, capability }),
@@ -109,7 +127,7 @@ export async function setToolCapability(
 export async function clearToolCapability(toolName: string): Promise<void> {
   const res = await fetch(
     `/api/mcp/tools/capability/${encodeURIComponent(toolName)}`,
-    { method: "DELETE" }
+    { ...MCP_FETCH_INIT, method: "DELETE" }
   );
   if (!res.ok) throw new Error(await parseErrorDetail(res));
 }

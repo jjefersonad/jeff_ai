@@ -66,6 +66,17 @@ Environment variables in `backend/.env`:
 | `POSTGRES_URI` | PostgreSQL connection string | — |
 | `OLLAMA_BASE_URL` | Ollama server endpoint | `http://10.0.0.214:11434` |
 | `OLLAMA_MODEL` | Ollama model name | `minimax-m2.7:cloud` |
+| `ADMIN_USERNAME` | Username for the first admin user, created once on startup if the `users` table is empty | `admin` |
+| `ADMIN_PASSWORD_HASH` | Bcrypt hash for that admin's password (never the plain password) | — |
+
+### Default login
+
+On first startup with an empty `users` table, the backend bootstraps one admin account from `ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH`. The local dev database currently ships with:
+
+- **Username:** `admin`
+- **Password:** `admin123!`
+
+This is a **dev-only default** — change it before any real deployment. Since the bootstrap only runs once (it's a no-op once `users` has any row), rotating the password afterwards means generating a new bcrypt hash (`security.get_password_hash`) and running `UPDATE users SET password_hash = ...` directly in Postgres — updating `.env` alone has no effect on an existing row.
 
 **Optional**
 
