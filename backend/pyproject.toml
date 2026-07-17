@@ -24,7 +24,11 @@ dependencies = [
     "pypdf>=5.0.0",
     "langchain-text-splitters>=0.3.0",
     "langchain-mcp-adapters>=0.3.0",
-    "markitdown[all]>=0.0.1"
+    "markitdown[all]>=0.0.1",
+    "psycopg[binary]>=3.1.0",
+    "psycopg-pool>=3.2.0",
+    "passlib[bcrypt]>=1.7.4",
+    "bcrypt>=3.2.0,<4.1"
 ]
 
 [project.optional-dependencies]
@@ -34,6 +38,7 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "debugpy>=1.6.0",
+    "types-passlib>=1.7.7",
     "import-linter>=2.0",
 ]
 
@@ -45,6 +50,12 @@ build-backend = "setuptools.build_meta"
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    # Testes pesados de integração (build de imagem Docker etc.). Não rodam
+    # no CI padrão; execute manualmente com
+    # `pytest -m docker_integration`.
+    "docker_integration: tests that build/run docker images",
+]
 
 [tool.setuptools]
 packages = ["src"]

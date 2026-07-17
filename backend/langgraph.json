@@ -6,6 +6,18 @@
     "sdd_agent": "src.composition.graphs:sdd_agent",
     "assistant": "src.composition.graphs:assistant"
   },
+  "http": {
+    "app": "./src/infrastructure/web/webapp.py:app",
+    "cors": {
+      "allow_origins": ["http://localhost:3000"],
+      "allow_credentials": true,
+      "allow_methods": ["*"],
+      "allow_headers": ["*"]
+    }
+  },
+  "auth": {
+    "path": "./src/infrastructure/web/auth.py:auth"
+  },
   "checkpointer": {
     "type": "postgres",
     "url": "${env:POSTGRES_URI}"
@@ -18,8 +30,5 @@
       "dims": 1024,
       "fields": ["content"]
     }
-  },
-  "cors": {
-    "allow_origins": ["*"]
   }
 }

@@ -22,8 +22,20 @@ services:
       SKILLS_ALLOWLIST: ${SKILLS_ALLOWLIST:-usenotra/skills}
       LANGGRAPH_STORE: '{"type": "postgres", "url": "$${env:POSTGRES_URI}", "index": {"embed": "./src/models/ollama_embeddings.py:embed_texts", "dims": 1024, "fields": ["content"]}}'
       LANGGRAPH_CHECKPOINTER: '{"type": "postgres", "url": "$${env:POSTGRES_URI}"}'
-      LANGSERVE_CORS_ALLOW_ORIGINS: '*'
-      LANGSERVE_CORS_ALLOW_CREDENTIALS: 'true'
+      # Espelha a seção "http" do langgraph.json: a imagem langchain/langgraph-api
+      # não lê langgraph.json em runtime, só as env vars LANGGRAPH_*. Sem esta var,
+      # HTTP_CONFIG fica None e o app customizado (webapp.py: /public/login,
+      # /public/logout, rotas de imagens/documentos) nunca é montado (achado
+      # empírico 2026-07-16, change autenticacao-jwt-rotas-protegidas).
+      LANGGRAPH_HTTP: '{"app": "./src/infrastructure/web/webapp.py:app", "cors": {"allow_origins": ["${FRONTEND_ORIGIN:-http://localhost:3000}"], "allow_credentials": true, "allow_methods": ["*"], "allow_headers": ["*"]}}'
+      # LANGSERVE_CORS_ALLOW_ORIGINS/LANGSERVE_CORS_ALLOW_CREDENTIALS não são lidas
+      # por `langgraph_api` (nenhum env var com esse prefixo existe para cors no
+      # pacote instalado, achado empírico 2026-07-16) — eram config morta desde
+      # sempre, e o servidor caía no default allow_origins="*" com
+      # allow_credentials=True hardcoded. A variável real é `CORS_ALLOW_ORIGINS`
+      # (sem prefixo, lista separada por vírgula); `allow_credentials=True` já é
+      # hardcoded no fallback do servidor quando CORS_CONFIG não está setado.
+      CORS_ALLOW_ORIGINS: ${FRONTEND_ORIGIN:-http://localhost:3000}
     depends_on:
       jeff_ia_postgres:
         condition: service_healthy

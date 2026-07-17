@@ -25,7 +25,26 @@ RUN pip install --no-cache-dir \
     "pypdf==6.14.2" \
     "langchain-text-splitters==1.1.2" \
     "langchain-mcp-adapters==0.3.0" \
-    "markitdown[all]==0.0.1"
+    "markitdown[all]==0.0.1" \
+    # Necessário para `POST /api/references` (`UploadFile`/`File(...)`) funcionar
+    # dentro da imagem `langchain/langgraph-api:3.11`, que não inclui essa
+    # dependência. Sem esta linha o upload de referência quebra em runtime no
+    # container real (apenas o `.venv` local tem a dep transitiva).
+    "python-multipart==0.0.20" \
+    # Necessário para o `http.app` (`webapp.py`) montar `FastAPI()` e os
+    # routers usarem `APIRouter`/`UploadFile`/`File`. Achado empírico do
+    # test-3 (`consolidate-http-routes-langgraph-task-test-3`): a imagem
+    # `langchain/langgraph-api:3.11` traz `starlette` e `uvicorn`, mas NÃO
+    # `fastapi` — sem essa linha, o container não consegue carregar o
+    # `http.app` registrado em `langgraph.json`.
+    "fastapi==0.139.0" \
+    # Necessário para `src/infrastructure/auth/security.py` (hash/verificação
+    # de senha via bcrypt), importado por `auth_router.py` no carregamento de
+    # `webapp.py` (change `autenticacao-jwt-rotas-protegidas`, task-rest-1).
+    # `psycopg`/`psycopg-pool` (usados por `auth/db.py`) já vêm transitivos do
+    # checkpointer Postgres do LangGraph; `passlib`/`bcrypt` não.
+    "passlib[bcrypt]==1.7.4" \
+    "bcrypt==4.0.1"
 
 ENV PYTHONPATH="/deps/backend:$PYTHONPATH"
 ENV LANGGRAPH_STORE='{"type": "postgres", "url": "\${env:POSTGRES_URI}", "index": {"embed": "./src/models/ollama_embeddings.py:embed_texts", "dims": 1024, "fields": ["content"]}}'
