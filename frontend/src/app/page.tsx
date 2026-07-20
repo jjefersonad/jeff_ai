@@ -2,7 +2,12 @@
 
 import React, { useState, useEffect, useCallback, Suspense } from "react";
 import { useQueryState } from "nuqs";
-import { getConfig, saveConfig, StandaloneConfig } from "@/lib/config";
+import {
+  getConfig,
+  saveConfig,
+  StandaloneConfig,
+  DEFAULT_ASSISTANT_ID,
+} from "@/lib/config";
 import { ConfigDialog } from "@/app/components/ConfigDialog";
 import { LogoutButton } from "@/components/LogoutButton";
 import { Button } from "@/components/ui/button";
@@ -114,7 +119,7 @@ function HomePageInner({
       <div className="flex h-screen flex-col">
         <header className="flex h-16 items-center justify-between border-b border-border px-6">
           <div className="flex items-center gap-4">
-            <h1 className="text-xl font-semibold">Deep Agent UI</h1>
+            <h1 className="text-xl font-semibold">JEFF AI</h1>
             {!sidebar && (
               <Button
                 variant="ghost"
@@ -123,7 +128,7 @@ function HomePageInner({
                 className="rounded-md border border-border bg-card p-3 text-foreground hover:bg-accent"
               >
                 <MessagesSquare className="mr-2 h-4 w-4" />
-                Threads
+                Conversas
                 {interruptCount > 0 && (
                   <span className="ml-2 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] text-destructive-foreground">
                     {interruptCount}
@@ -230,7 +235,11 @@ function HomePageContent() {
   const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [assistantId, setAssistantId] = useQueryState("assistantId");
 
-  // On mount, check for saved config, otherwise show config dialog
+  // On mount, check for saved config; otherwise auto-provision a default.
+  // The backend URL is fixed via NEXT_PUBLIC_API_URL (see lib/api.ts) — Jeff
+  // AI is self-hosted with exactly one deployment, so there's no first-run
+  // Settings step required anymore. Settings now only covers which
+  // assistant graph to use and an optional LangSmith key.
   useEffect(() => {
     const savedConfig = getConfig();
     if (savedConfig) {
@@ -239,7 +248,11 @@ function HomePageContent() {
         setAssistantId(savedConfig.assistantId);
       }
     } else {
-      setConfigDialogOpen(true);
+      const defaultConfig: StandaloneConfig = {
+        assistantId: DEFAULT_ASSISTANT_ID,
+      };
+      saveConfig(defaultConfig);
+      setConfig(defaultConfig);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -261,35 +274,14 @@ function HomePageContent() {
 
   if (!config) {
     return (
-      <>
-        <ConfigDialog
-          open={configDialogOpen}
-          onOpenChange={setConfigDialogOpen}
-          onSave={handleSaveConfig}
-        />
-        <div className="flex h-screen items-center justify-center">
-          <div className="text-center">
-            <h1 className="text-2xl font-bold">Welcome to Standalone Chat</h1>
-            <p className="mt-2 text-muted-foreground">
-              Configure your deployment to get started
-            </p>
-            <Button
-              onClick={() => setConfigDialogOpen(true)}
-              className="mt-4"
-            >
-              Open Configuration
-            </Button>
-          </div>
-        </div>
-      </>
+      <div className="flex h-screen items-center justify-center">
+        <p className="text-muted-foreground">Loading...</p>
+      </div>
     );
   }
 
   return (
-    <ClientProvider
-      deploymentUrl={config.deploymentUrl}
-      apiKey={langsmithApiKey}
-    >
+    <ClientProvider apiKey={langsmithApiKey}>
       <HomePageInner
         config={config}
         configDialogOpen={configDialogOpen}

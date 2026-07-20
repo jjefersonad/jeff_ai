@@ -127,8 +127,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
         }
         return { ok: false, error: await parseErrorMessage(response) };
       } catch (error) {
-        // apiFetch throws ApiError(0, "Backend URL not configured…") when no
-        // deployment URL has been saved. Surface the message verbatim.
+        // apiFetch throws ApiError(0, "API URL not configured…") when
+        // NEXT_PUBLIC_API_URL is missing from the frontend environment.
+        // Surface the message verbatim.
         if (error instanceof ApiError) {
           return { ok: false, error: error.message };
         }

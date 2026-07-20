@@ -7,10 +7,12 @@ Cobre a task `unified-agent-realignment-task-mcp-3` (Q3 do design da
 
 `effects.TOOL_EFFECTS` é um registry estático em código — auditável, mas
 não pode conter tools de servidores MCP de terceiros, que só existem em
-runtime. Toda tool MCP cai em `Capability.UNKNOWN` (Tier 3+ fail-safe) por
-padrão. Isso é seguro, mas caro: uma tool de leitura pura de um servidor
-MCP confiável fica presa a aprovação humana para sempre, a menos que o
-usuário classifique-a manualmente.
+runtime. Por padrão, toda tool MCP sem classificação aqui cai em
+`Capability.NETWORK` (piso, sem gate — decisão explícita do usuário na
+change `remove-mcp-unknown-failsafe`). Este módulo existe para quem quiser
+o oposto: restringir manualmente uma tool MCP específica a uma capability
+mais estrita (`write_existing`, `vcs`, `shell`), quando o piso `NETWORK`
+sub-representa o efeito real dela.
 
 ## A classificação é um ato HUMANO
 

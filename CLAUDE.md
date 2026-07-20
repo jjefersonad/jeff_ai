@@ -123,7 +123,7 @@ Image requests go to `image_design_subagent`, which presents a design plan; `int
 
 ### Office documents
 
-`create_docx_document` (python-docx), `create_xlsx_spreadsheet` (openpyxl), `create_pptx_presentation` (python-pptx). No subagent, no approval gate. Each returns `{path, url, metadata}` — **always use `url`**. Files land in `backend/outputs/documents/{kind}/` and are served by `image_server.py:8080` at `GET /api/files/{kind}/{name}` (restricted to `kind ∈ {docx,xlsx,pptx}`; rejects traversal with 400, missing files with 404).
+`create_docx_document` (python-docx), `create_xlsx_spreadsheet` (openpyxl), `create_pptx_presentation` (python-pptx). No subagent, no approval gate. Each returns `{path, url, metadata}` — **always use `url`**. Files land in `backend/outputs/documents/{kind}/` and are served by the backend's own `http.app` (`src/infrastructure/web/webapp.py`, mounted via the `LANGGRAPH_HTTP` env var — see `docker-compose.yml`) at `GET /api/files/{kind}/{name}` (restricted to `kind ∈ {docx,xlsx,pptx}`; rejects traversal with 400, missing files with 404). **`image_server.py:8080` no longer serves this route** (migrated in `consolidate-http-routes-langgraph`) — reach it via the frontend origin (`http://localhost:3000`, rewritten server-side per `next.config.ts`) or the backend's docker-exposed port directly.
 
 **Creation only** — editing existing Office files is out of scope. The skills in `backend/skills/{docx,xlsx,pptx}/SKILL.md` point at these tools; anything under `scripts/office/*` is marked `⚠️ LEGADO` and kept only for reference.
 

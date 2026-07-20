@@ -99,9 +99,12 @@ def test_classify_uses_override_for_unqualified_mcp_tool(
     assert classify("mcp__meu_servidor__read_status") == (Capability.READ,)
 
 
-def test_classify_defaults_to_unknown_without_override(
+def test_classify_defaults_to_network_for_mcp_tool_without_override(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Desde `remove-mcp-unknown-failsafe`: tool MCP sem override cai em
+    `NETWORK` (piso), não mais `UNKNOWN` — decisão explícita do usuário,
+    escopada só a tools MCP (prefixo `mcp__`)."""
     import functools
 
     import src.agents.unified.mcp_tool_overrides as overrides_module
@@ -112,7 +115,32 @@ def test_classify_defaults_to_unknown_without_override(
         "get_override",
         functools.partial(overrides_module.get_override, path=override_path),
     )
-    assert classify("mcp__meu_servidor__unclassified_tool") == (Capability.UNKNOWN,)
+    assert classify("mcp__meu_servidor__unclassified_tool") == (Capability.NETWORK,)
+
+
+def test_classify_manual_override_still_wins_over_network_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O default `NETWORK` só se aplica na AUSÊNCIA de override — uma
+    classificação manual explícita (ex.: `write_existing`, mais restrita)
+    continua tendo precedência."""
+    import functools
+
+    import src.agents.unified.mcp_tool_overrides as overrides_module
+
+    override_path = tmp_path / "mcp_tool_overrides.json"
+    monkeypatch.setattr(
+        overrides_module,
+        "get_override",
+        functools.partial(overrides_module.get_override, path=override_path),
+    )
+    set_override(
+        "mcp__meu_servidor__delete_records",
+        "write_existing",
+        valid_capabilities=CAPABILITY_NAMES,
+        path=override_path,
+    )
+    assert classify("mcp__meu_servidor__delete_records") == (Capability.WRITE_EXISTING,)
 
 
 def test_classify_ignores_override_for_non_mcp_tool_name(

@@ -125,8 +125,10 @@ class CapabilityProposal(BaseModel):
 
     capability: Literal[*CAPABILITY_NAMES]  # type: ignore[valid-type]
     """A capability pedida. Limitada aos valores do enum `Capability`
-    (e `UNKNOWN`, que o agente pode pedir para ferramentas MCP
-    de terceiro)."""
+    (e `UNKNOWN`, que o agente pode pedir para tools desconhecidas de
+    origem NÃO-MCP, ex.: geradas via `save_generated_tool` — tools MCP
+    sem override caem em `NETWORK` desde `remove-mcp-unknown-failsafe`,
+    não em `UNKNOWN`)."""
 
     justification: str = Field(..., min_length=1, max_length=200)
     """Justificativa de 1 linha (até 200 chars)."""

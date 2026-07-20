@@ -1,7 +1,7 @@
 import useSWRInfinite from "swr/infinite";
 import type { Thread } from "@langchain/langgraph-sdk";
-import { Client } from "@langchain/langgraph-sdk";
 import { getConfig } from "@/lib/config";
+import { useClient } from "@/providers/ClientProvider";
 
 export interface ThreadItem {
   id: string;
@@ -19,14 +19,14 @@ export function useThreads(props: {
   limit?: number;
 }) {
   const pageSize = props.limit || DEFAULT_PAGE_SIZE;
+  // Reuses the shared, credentialed client from ClientProvider (forces
+  // credentials: 'include' — see its docstring) instead of building a bare
+  // Client here, which would silently drop the session cookie cross-origin.
+  const client = useClient();
 
   return useSWRInfinite(
     (pageIndex: number, previousPageData: ThreadItem[] | null) => {
       const config = getConfig();
-      const apiKey =
-        config?.langsmithApiKey ||
-        process.env.NEXT_PUBLIC_LANGSMITH_API_KEY ||
-        "";
 
       if (!config) {
         return null;
@@ -41,16 +41,12 @@ export function useThreads(props: {
         kind: "threads" as const,
         pageIndex,
         pageSize,
-        deploymentUrl: config.deploymentUrl,
         assistantId: config.assistantId,
-        apiKey,
         status: props?.status,
       };
     },
     async ({
-      deploymentUrl,
       assistantId,
-      apiKey,
       status,
       pageIndex,
       pageSize,
@@ -58,16 +54,9 @@ export function useThreads(props: {
       kind: "threads";
       pageIndex: number;
       pageSize: number;
-      deploymentUrl: string;
       assistantId: string;
-      apiKey: string;
       status?: Thread["status"];
     }) => {
-      const client = new Client({
-        apiUrl: deploymentUrl,
-        defaultHeaders: apiKey ? { "X-Api-Key": apiKey } : {},
-      });
-
       // Check if assistantId is a UUID (deployed) or graph name (local)
       const isUUID =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(

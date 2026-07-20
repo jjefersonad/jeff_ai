@@ -1,8 +1,12 @@
 export interface StandaloneConfig {
-  deploymentUrl: string;
   assistantId: string;
   langsmithApiKey?: string;
 }
+
+// Graph entrypoint used when no config has been saved yet. `unified` is the
+// real graph — `agent`/`sdd_agent`/`assistant` are back-compat shims that run
+// the same code (see CLAUDE.md).
+export const DEFAULT_ASSISTANT_ID = "unified";
 
 const CONFIG_KEY = "deep-agent-config";
 
