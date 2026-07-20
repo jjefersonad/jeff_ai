@@ -1,0 +1,16 @@
+{
+  "mcp__opensddrag__get_harness_checklist": "read",
+  "mcp__opensddrag__get_relationships": "read",
+  "mcp__opensddrag__get_skill": "read",
+  "mcp__opensddrag__get_working_context": "read",
+  "mcp__opensddrag__list_artifacts": "read",
+  "mcp__opensddrag__list_projects": "read",
+  "mcp__opensddrag__list_rules": "read",
+  "mcp__opensddrag__list_skills": "read",
+  "mcp__opensddrag__read_artifact": "read",
+  "mcp__opensddrag__read_change_bundle": "read",
+  "mcp__opensddrag__recall_episodes": "read",
+  "mcp__opensddrag__search_semantic": "read",
+  "mcp__opensddrag__suggest_skill": "read",
+  "mcp__opensddrag__validate_artifact": "read"
+}

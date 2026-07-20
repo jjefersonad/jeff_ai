@@ -12,7 +12,7 @@ import pytest
 from langchain.agents.middleware.types import ModelRequest
 from langchain_core.tools import BaseTool, tool
 
-from src.agents.unified.effects import Capability
+from src.agents.unified.effects import CAPABILITY_NAMES, Capability
 from src.agents.unified.envelope_middleware import EnvelopeMiddleware
 from src.agents.unified.mcp_client import McpServerConnectionError
 from src.agents.unified.mcp_tools_middleware import (
@@ -131,58 +131,83 @@ async def test_server_offline_graceful_degradation():
 
 
 @pytest.mark.asyncio
-async def test_mcp_tools_subject_to_envelope():
-    """REQ-003 + REQ-008: Tools MCP filtradas pelo envelope."""
+async def test_mcp_tools_subject_to_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQ-003 + REQ-008 (revisto por `remove-mcp-unknown-failsafe`): uma tool
+    MCP sem override classifica como `NETWORK` (piso) e passa sem concessão
+    explícita; uma tool MCP com override manual mais restrito continua
+    exigindo concessão do envelope como qualquer outra capability fora do
+    piso."""
     config = {"mcpServers": {"hostile": {"command": "python", "args": ["hostile.py"]}}}
     config_path = "/tmp/test_mcp_hostile.json"
     Path(config_path).write_text(json.dumps(config))
 
-    # Tool MCP desconhecida → UNKNOWN
+    # Tool MCP desconhecida, sem override → NETWORK (piso)
     hostile_tool = _mock_mcp_tool("hostile/delete_everything")
+
+    request = ModelRequest(
+        model=None,  # type: ignore[arg-type]
+        tools=[],
+        messages=[],
+        state={},
+    )
+
+    async def handler(req: ModelRequest) -> ModelRequest:
+        return req
 
     with patch(
         "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
         new=AsyncMock(return_value=([hostile_tool], [])),
     ):
         mcp_middleware = McpToolsMiddleware(config_path=config_path)
-        # Envelope SEM `UNKNOWN` concedido
+        # Envelope sem nenhuma concessão além do piso
         envelope_middleware = EnvelopeMiddleware(granted={Capability.READ})
-
-        request = ModelRequest(
-            model=None,  # type: ignore[arg-type]
-            tools=[],
-            messages=[],
-            state={},
-        )
-
-        async def handler(req: ModelRequest) -> ModelRequest:
-            return req
 
         # MCP adiciona a tool
         after_mcp = await mcp_middleware.awrap_model_call(request, handler)
         assert len(after_mcp.tools) == 1
 
-        # Envelope remove (UNKNOWN negado)
+        # NETWORK está no piso — passa sem concessão explícita
         after_envelope = await envelope_middleware.awrap_model_call(after_mcp, handler)
-        assert len(after_envelope.tools) == 0  # tool bloqueada
+        assert len(after_envelope.tools) == 1
+        assert after_envelope.tools[0].name == "mcp__hostile__delete_everything"
 
-    # Agora concede UNKNOWN
+    # Override manual mais restrito (fora do piso) ainda gateia normalmente.
+    import functools
+
+    import src.agents.unified.mcp_tool_overrides as overrides_module
+
+    override_path = tmp_path / "mcp_tool_overrides.json"
+    monkeypatch.setattr(
+        overrides_module,
+        "get_override",
+        functools.partial(overrides_module.get_override, path=override_path),
+    )
+    overrides_module.set_override(
+        "mcp__hostile__delete_everything",
+        "write_existing",
+        valid_capabilities=CAPABILITY_NAMES,
+        path=override_path,
+    )
+
     with patch(
         "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
         new=AsyncMock(return_value=([hostile_tool], [])),
     ):
-        envelope_with_unknown = EnvelopeMiddleware(
-            granted={Capability.READ, Capability.UNKNOWN}
-        )
-
         after_mcp2 = await mcp_middleware.awrap_model_call(request, handler)
-        after_envelope2 = await envelope_with_unknown.awrap_model_call(
-            after_mcp2, handler
-        )
 
-        # Agora passa
-        assert len(after_envelope2.tools) == 1
-        assert after_envelope2.tools[0].name == "mcp__hostile__delete_everything"
+        # write_existing não está no piso nem em granted={READ} — bloqueada
+        after_envelope2 = await envelope_middleware.awrap_model_call(after_mcp2, handler)
+        assert len(after_envelope2.tools) == 0
+
+        # Concedendo write_existing explicitamente, passa
+        envelope_with_write = EnvelopeMiddleware(
+            granted={Capability.READ, Capability.WRITE_EXISTING}
+        )
+        after_envelope3 = await envelope_with_write.awrap_model_call(after_mcp2, handler)
+        assert len(after_envelope3.tools) == 1
+        assert after_envelope3.tools[0].name == "mcp__hostile__delete_everything"
 
 
 @pytest.mark.asyncio

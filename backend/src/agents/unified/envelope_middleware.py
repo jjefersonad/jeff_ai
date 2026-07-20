@@ -142,10 +142,11 @@ def _capability_required(tool_name: str) -> Capability:
     """Devolve a capability mais característica de uma tool para a mensagem de bloqueio.
 
     Para tools com múltiplas capabilities, pegamos a primeira não-`UNKNOWN`.
-    Ferramentas desconhecidas caem em `UNKNOWN` — que já é Tier 3+ no
-    `tier_config`, então o `wrap_tool_call` não costuma ser atingido
-    para elas (HITL pausa antes). Mas a defesa em profundidade
-    também existe aqui.
+    Ferramentas desconhecidas de origem NÃO-MCP caem em `UNKNOWN` — que já é
+    Tier 3+ no `tier_config`, então o `wrap_tool_call` não costuma ser
+    atingido para elas (HITL pausa antes). Mas a defesa em profundidade
+    também existe aqui. Tools MCP desconhecidas caem em `NETWORK`, não
+    `UNKNOWN`, desde `remove-mcp-unknown-failsafe`.
     """
     caps = classify(tool_name)
     non_unknown = [c for c in caps if c is not Capability.UNKNOWN]
@@ -300,15 +301,23 @@ class EnvelopeMiddleware(AgentMiddleware[Any, Any, Any]):
         estiver no set de tools exposto).
 
         **Defesa em profundidade:** se uma skill/subagente
-        expuser uma tool NÃO catalogada em `TOOL_EFFECTS`, o
-        `classify()` devolve `UNKNOWN`. Pelo contrato desta
-        capability (`task-scoped-permissions` REQ-008), uma
-        tool desconhecida SÓ executa se a capability `UNKNOWN`
-        estiver no envelope. Aqui, `UNKNOWN` é uma capability
-        "larga" — concedê-la efetivamente diz "rode qualquer
-        tool MCP de terceiro". O default seguro é NEGAR —
-        a menos que o envelope explicitamente conceda `UNKNOWN`,
-        a tool não passa do filtro.
+        expuser uma tool NÃO catalogada em `TOOL_EFFECTS` e sem
+        origem MCP (prefixo `mcp__`) — ex.: gerada via
+        `save_generated_tool` — o `classify()` devolve `UNKNOWN`.
+        Pelo contrato desta capability (`task-scoped-permissions`
+        REQ-008), essa tool SÓ executa se a capability `UNKNOWN`
+        estiver no envelope. `UNKNOWN` é uma capability "larga" —
+        concedê-la efetivamente diz "rode qualquer tool não
+        catalogada dessa origem". O default seguro é NEGAR — a
+        menos que o envelope explicitamente conceda `UNKNOWN`, a
+        tool não passa do filtro.
+
+        Tools MCP (prefixo `mcp__`) NÃO catalogadas seguem um
+        caminho diferente desde `remove-mcp-unknown-failsafe`:
+        `classify()` devolve `NETWORK` (piso) por default, não
+        `UNKNOWN` — passam no filtro sem exigir concessão de
+        envelope. Ver `effects._mcp_manual_override` e a Decision 1
+        do design dessa change.
         """
         granted = self._resolve_granted(request.state)
         filtered = _filter_tools_by_envelope(request.tools, granted)
@@ -444,9 +453,15 @@ def _filter_tools_by_envelope(
     Regras:
     - Tool com capability no envelope → MANTÉM.
     - Tool com capability FORA do envelope → REMOVE.
-    - Tool desconhecida (não está no `TOOL_EFFECTS`) → capability
-      `UNKNOWN`. Permanece no set SOMENTE se `UNKNOWN` está no
-      envelope; do contrário, é filtrada (REQ-008).
+    - Tool desconhecida não-MCP (não está no `TOOL_EFFECTS`, sem
+      prefixo `mcp__`) → capability `UNKNOWN`. Permanece no set
+      SOMENTE se `UNKNOWN` está no envelope; do contrário, é
+      filtrada (REQ-008).
+    - Tool MCP desconhecida (prefixo `mcp__`, sem override em
+      `mcp_tool_overrides.json`) → capability `NETWORK` (piso),
+      desde `remove-mcp-unknown-failsafe`. Permanece no set sempre
+      — `NETWORK` está em `FLOOR_CAPABILITIES`, não depende do
+      envelope concedido.
     - Tool com NOME vazio (não conseguimos extrair) → REMOVE
       por segurança. Não há como classificar uma tool sem nome.
     """

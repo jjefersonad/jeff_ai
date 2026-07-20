@@ -178,8 +178,9 @@ def test_get_server_tools_lists_name_description_and_capability(client: TestClie
     assert names == {"echo", "add"}
     for tool in tools:
         assert tool["qualified_name"] == f"mcp__jeff_ai_test_server__{tool['name']}"
-        # Não classificada manualmente ainda -> fail-safe.
-        assert tool["capability"] == "unknown"
+        # Não classificada manualmente ainda -> default `network` (piso),
+        # desde `remove-mcp-unknown-failsafe`. Não é mais `unknown`.
+        assert tool["capability"] == "network"
 
 
 def test_get_tools_for_unknown_server_returns_404(client: TestClient) -> None:

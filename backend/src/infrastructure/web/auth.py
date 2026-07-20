@@ -24,9 +24,12 @@ INDEPENDENTES e ambos necessários: este cobre as rotas nativas do LangGraph
 a Open Question do design ("`@auth.authenticate` cobre rotas de `http.app`?")
 com resposta definitiva: não.
 
-Nenhum `@auth.on` é registrado: sem handler de autorização por recurso, o
-comportamento default do LangGraph é aceitar a requisição após a autenticação
-bem-sucedida (ver docstring de `Auth._On`).
+Um único handler `@auth.on` (sem qualificador de recurso) aplica autorização
+por dono a `threads`/`runs`/`crons` — os únicos recursos nativos escopados
+neste change (ver `user-data-isolation-design`, decisão "Ownership de
+threads/runs/crons via @auth.on global + metadata.owner"). `assistants` e o
+`store` nativo ficam fora de escopo (handler devolve filtro vazio para eles) —
+ver Open Questions do design.
 """
 
 from __future__ import annotations
@@ -60,3 +63,29 @@ async def authenticate(request: Request) -> Auth.types.MinimalUserDict:
         "permissions": [user.role],
         "is_authenticated": True,
     }
+
+
+_OWNER_SCOPED_RESOURCES = ("threads", "runs", "crons")
+
+
+@auth.on
+async def authorize_by_owner(
+    ctx: Auth.types.AuthContext, value: dict
+) -> Auth.types.FilterType:
+    """Escopa `threads`/`runs`/`crons` por `metadata.owner`; `admin` vê tudo.
+
+    Handler global (sem qualificador de resource) — chamado também para
+    `assistants`/`store`, que ficam fora de escopo deste change e recebem
+    filtro vazio (nem stamping, nem restrição). `role admin` é o único sinal
+    de bypass (REQ-009 de `backend-session-auth`), lido de
+    `ctx.user.permissions` — o mesmo valor que `authenticate()` populou a
+    partir de `user.role`, sem reimplementar a resolução de sessão (REQ-008).
+    """
+    if "admin" in ctx.user.permissions or ctx.resource not in _OWNER_SCOPED_RESOURCES:
+        return {}
+
+    if ctx.action == "create":
+        metadata = value.setdefault("metadata", {})
+        metadata["owner"] = ctx.user.identity
+
+    return {"owner": ctx.user.identity}

@@ -135,7 +135,7 @@ flowchart TB
             G3["assistant"]
         end
         PG[("jeff_ia_postgres<br/>pgvector:pg15<br/>:5436→5432")]
-        RD[("jeff_ia_redis<br/>:6379")]
+        RD[("jeff_ia_redis<br/>:6381→6379 (--requirepass)")]
     end
     OLL["Ollama (externo)"]
     GEM["Gemini (externo, opcional)"]

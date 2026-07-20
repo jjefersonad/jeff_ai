@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { cn } from "@/lib/utils";
+import { DownloadError, downloadAuthenticatedFile } from "@/lib/api";
 
 interface MarkdownContentProps {
   content: string;
@@ -56,6 +57,76 @@ const DOCUMENT_LABELS: Record<string, string> = {
   xlsx: "Excel",
   pptx: "PowerPoint",
 };
+
+/**
+ * Chip de download de um documento Office gerado (docx/xlsx/pptx).
+ *
+ * O download é disparado via fetch autenticado + blob (`downloadAuthenticatedFile`),
+ * não por navegação nativa do `<a>` — ver `fix-document-download-session-auth-design`:
+ * uma navegação nativa a uma rota protegida por sessão não dá à aplicação nenhuma
+ * chance de tratar um 401 (sessão ausente/expirada, ou qualquer outra causa), e o
+ * navegador acaba mostrando seu próprio erro genérico de download. Reproduzido ao
+ * vivo durante `/opsr:apply`: a causa concreta foi uma sessão expirada (TTL de 1h),
+ * não necessariamente o cross-origin cookie drop (`SameSite=Strict`) cogitado no
+ * design — mas o fetch-as-blob cobre os dois casos igualmente. Em caso de erro,
+ * mostra uma mensagem distinta para sessão expirada (401) versus qualquer outra falha.
+ */
+function DocumentDownloadChip({
+  href,
+  kind,
+  filename,
+  children,
+}: {
+  href: string;
+  kind: string;
+  filename: string;
+  children?: React.ReactNode;
+}) {
+  const [downloadError, setDownloadError] = React.useState<string | null>(null);
+
+  return (
+    <span className="my-1 inline-flex flex-col items-start gap-1">
+      <a
+        href={href}
+        onClick={(event) => {
+          event.preventDefault();
+          setDownloadError(null);
+          downloadAuthenticatedFile(href, filename).catch((error: unknown) => {
+            const message =
+              error instanceof DownloadError && error.kind === "unauthorized"
+                ? "Sessão expirada. Faça login novamente para baixar o arquivo."
+                : "Não foi possível baixar o arquivo. Tente novamente.";
+            setDownloadError(message);
+          });
+        }}
+        className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-primary no-underline transition-colors hover:bg-border/40"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="h-4 w-4 shrink-0 opacity-70"
+          aria-hidden="true"
+        >
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="7 10 12 15 17 10" />
+          <line x1="12" y1="15" x2="12" y2="3" />
+        </svg>
+        <span className="min-w-0 break-words">{children}</span>
+        <span className="shrink-0 rounded bg-border/50 px-1.5 py-0.5 text-xs font-medium uppercase text-muted-foreground">
+          {DOCUMENT_LABELS[kind] ?? kind}
+        </span>
+      </a>
+      {downloadError && (
+        <span className="text-xs text-destructive">{downloadError}</span>
+      )}
+    </span>
+  );
+}
 
 export const MarkdownContent = React.memo<MarkdownContentProps>(
   ({ content, className = "" }) => {
@@ -130,36 +201,15 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
               href?: string;
               children?: React.ReactNode;
             }) {
-              // Documentos Office gerados: renderiza um chip de download.
-              const docMatch = href?.match(/\/api\/files\/(docx|xlsx|pptx)\//);
-              if (docMatch) {
+              // Documentos Office gerados: renderiza um chip de download (DocumentDownloadChip).
+              const docMatch = href?.match(/\/api\/files\/(docx|xlsx|pptx)\/([^/?#]+)/);
+              if (docMatch && href) {
                 const kind = docMatch[1];
+                const filename = docMatch[2];
                 return (
-                  <a
-                    href={href}
-                    download
-                    className="my-1 inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-primary no-underline transition-colors hover:bg-border/40"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="h-4 w-4 shrink-0 opacity-70"
-                      aria-hidden="true"
-                    >
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="7 10 12 15 17 10" />
-                      <line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                    <span className="min-w-0 break-words">{children}</span>
-                    <span className="shrink-0 rounded bg-border/50 px-1.5 py-0.5 text-xs font-medium uppercase text-muted-foreground">
-                      {DOCUMENT_LABELS[kind] ?? kind}
-                    </span>
-                  </a>
+                  <DocumentDownloadChip href={href} kind={kind} filename={filename}>
+                    {children}
+                  </DocumentDownloadChip>
                 );
               }
               return (

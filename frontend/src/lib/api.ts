@@ -23,8 +23,6 @@
  * will then gate).
  */
 
-import { getConfig } from "@/lib/config";
-
 export class ApiError extends Error {
   readonly status: number;
 
@@ -43,19 +41,19 @@ export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): voi
 }
 
 /**
- * Resolve the backend base URL from the user-saved `deploymentUrl` (the same
- * source used by `ClientProvider` for the langgraph-sdk Client). Returns
- * `null` if no config has been saved yet — callers should treat this as
- * "backend not configured" and surface a helpful error to the user.
+ * Resolve the backend base URL from `NEXT_PUBLIC_API_URL` (the same source
+ * used by `ClientProvider` for the langgraph-sdk Client). Jeff AI is
+ * self-hosted with exactly one backend deployment, so this is fixed at
+ * build/container-start time — not something the user configures per browser.
+ * Returns `""` if the env var is missing — callers should treat that as a
+ * deployment misconfiguration.
  */
-export function getApiBaseUrl(): string | null {
-  const config = getConfig();
-  if (!config) return null;
-  return config.deploymentUrl.replace(/\/+$/, "");
+export function getApiBaseUrl(): string {
+  return (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/+$/, "");
 }
 
 export interface ApiFetchOptions extends Omit<RequestInit, "credentials"> {
-  /** Override the backend base URL (e.g. for tests). Defaults to the user-saved deploymentUrl. */
+  /** Override the backend base URL (e.g. for tests). Defaults to NEXT_PUBLIC_API_URL. */
   baseUrl?: string;
 }
 
@@ -72,7 +70,7 @@ export async function apiFetch(
         if (!resolved) {
           throw new ApiError(
             0,
-            "Backend URL not configured. Open Settings to set the deployment URL."
+            "API URL not configured. Set NEXT_PUBLIC_API_URL in the frontend environment."
           );
         }
         return `${resolved}${path}`;
@@ -110,4 +108,70 @@ export async function parseErrorMessage(response: Response): Promise<string> {
     // body wasn't JSON
   }
   return response.statusText || "Request failed";
+}
+
+export type DownloadErrorKind = "unauthorized" | "not_found" | "server_error";
+
+/**
+ * Thrown by `downloadAuthenticatedFile` so callers can distinguish an expired/missing
+ * session from a genuinely missing file or a server error, instead of treating every
+ * failure the same way.
+ */
+export class DownloadError extends ApiError {
+  readonly kind: DownloadErrorKind;
+
+  constructor(status: number, message: string, kind: DownloadErrorKind) {
+    super(status, message);
+    this.name = "DownloadError";
+    this.kind = kind;
+  }
+}
+
+function downloadErrorKind(status: number): DownloadErrorKind {
+  if (status === 401) return "unauthorized";
+  if (status === 404) return "not_found";
+  return "server_error";
+}
+
+/** Resolves `url` (relative or absolute) to a path, against the current page origin. */
+function toPath(url: string): string {
+  const parsed = new URL(url, window.location.origin);
+  return `${parsed.pathname}${parsed.search}`;
+}
+
+/**
+ * Downloads a session-protected file (e.g. a generated `/api/files/docx/...` document)
+ * by fetching it with credentials attached and saving the response as a blob, instead of
+ * letting the browser navigate directly to the URL.
+ *
+ * A bare `<a href download>` pointed at an absolute document URL can silently drop the
+ * `SameSite=Strict` session cookie when the browser's current origin doesn't match the
+ * URL's origin, surfacing the browser's own generic download-failure UI instead of an
+ * app-controlled 401. Fetching through `apiFetch` (credentials always included, resolved
+ * against the backend's own origin) and building the download from the resulting blob
+ * sidesteps that regardless of the exact cross-origin mechanism at play.
+ */
+export async function downloadAuthenticatedFile(
+  url: string,
+  filename: string
+): Promise<void> {
+  const response = await apiFetch(toPath(url));
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new DownloadError(response.status, message, downloadErrorKind(response.status));
+  }
+
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
