@@ -218,9 +218,12 @@ def _classify_write_file(tool_call: dict[str, Any]) -> Capability:
 # imutável. Para tools dinâmicas, é uma tupla cujo ÚNICO elemento é um
 # callable. A função `classify` lida com ambos.
 #
-# IMPORTANTE: para ferramentas de terceiros (MCP) que não estão aqui, o
-# `classify()` devolve `UNKNOWN`. Isso é o que torna o envelope seguro
-# por construção (REQ-008 do `task-scoped-permissions`).
+# IMPORTANTE: para ferramentas de terceiros (MCP, prefixo `mcp__`) que não
+# estão aqui nem em `mcp_tool_overrides.json`, `classify()` devolve `NETWORK`
+# (piso) — decisão revista pela change `remove-mcp-unknown-failsafe`, REQ-008
+# do `task-scoped-permissions`. Para tools NÃO-MCP fora deste registry (ex.:
+# geradas via `save_generated_tool`), `classify()` continua devolvendo
+# `UNKNOWN` — o fail-safe original permanece intacto para essa origem.
 
 
 def _read_only() -> tuple[Capability, ...]:
@@ -451,16 +454,27 @@ def classify(
 
     Returns:
         Tupla de capabilities. Tools MCP com classificação manual (task
-        `mcp-3`) recebem a capability escolhida pelo humano. Tools
-        desconhecidas sem override (MCP de terceiro não classificado, ou
-        geradas em runtime) recebem `(UNKNOWN,)`. Tupla vazia é
-        impossível — sempre há pelo menos um elemento.
+        `mcp-3`) recebem a capability escolhida pelo humano. Tools MCP
+        (prefixo `mcp__`) sem override recebem `(NETWORK,)` — piso, sem
+        gate (`remove-mcp-unknown-failsafe`). Tools desconhecidas de
+        outras origens (ex.: geradas em runtime via `save_generated_tool`)
+        continuam recebendo `(UNKNOWN,)`. Tupla vazia é impossível —
+        sempre há pelo menos um elemento.
     """
     entry = TOOL_EFFECTS.get(tool_name)
     if entry is None:
         override = _mcp_manual_override(tool_name)
         if override is not None:
             return (override,)
+        if tool_name.startswith("mcp__"):
+            # `remove-mcp-unknown-failsafe`: tool MCP não catalogada e sem
+            # override manual usa `NETWORK` (piso) por default, não mais
+            # `UNKNOWN`. Toda tool MCP faz uma ida real à rede/IPC pro
+            # servidor externo — `NETWORK` reconhece esse efeito garantido,
+            # sem inventar uma capability que ela não tem. Decisão explícita
+            # do usuário, escopada só a tools MCP: origens não-MCP de
+            # `UNKNOWN` (ex.: `save_generated_tool`) NÃO mudam, ver abaixo.
+            return (Capability.NETWORK,)
         return (Capability.UNKNOWN,)
 
     if not _is_dynamic_entry(entry):

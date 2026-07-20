@@ -20,13 +20,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { StandaloneConfig } from "@/lib/config";
+import { StandaloneConfig, DEFAULT_ASSISTANT_ID } from "@/lib/config";
+import { getApiBaseUrl } from "@/lib/api";
 import { RefreshCw } from "lucide-react";
-
-// Default graph entrypoint for the unified Jeff AI agent. Falls back to
-// this when the user has no saved config — see `ConfigDialog` first-run
-// state below.
-const DEFAULT_GRAPH_ID = "unified";
 
 interface ConfigDialogProps {
   open: boolean;
@@ -46,11 +42,8 @@ export function ConfigDialog({
   onSave,
   initialConfig,
 }: ConfigDialogProps) {
-  const [deploymentUrl, setDeploymentUrl] = useState(
-    initialConfig?.deploymentUrl || ""
-  );
   const [assistantId, setAssistantId] = useState(
-    initialConfig?.assistantId || DEFAULT_GRAPH_ID
+    initialConfig?.assistantId || DEFAULT_ASSISTANT_ID
   );
   const [langsmithApiKey, setLangsmithApiKey] = useState(
     initialConfig?.langsmithApiKey || ""
@@ -64,7 +57,6 @@ export function ConfigDialog({
 
   useEffect(() => {
     if (open && initialConfig) {
-      setDeploymentUrl(initialConfig.deploymentUrl);
       setAssistantId(initialConfig.assistantId);
       setLangsmithApiKey(initialConfig.langsmithApiKey || "");
       setManualEntry(false);
@@ -72,8 +64,12 @@ export function ConfigDialog({
   }, [open, initialConfig]);
 
   const fetchAssistants = useCallback(async () => {
-    if (!deploymentUrl) {
+    const apiUrl = getApiBaseUrl();
+    if (!apiUrl) {
       setAssistants([]);
+      setAssistantsError(
+        "NEXT_PUBLIC_API_URL not configured — set it in the frontend environment."
+      );
       return;
     }
 
@@ -82,7 +78,7 @@ export function ConfigDialog({
 
     try {
       const client = new Client({
-        apiUrl: deploymentUrl,
+        apiUrl,
         defaultHeaders: {
           "Content-Type": "application/json",
           "X-Api-Key": langsmithApiKey,
@@ -126,9 +122,9 @@ export function ConfigDialog({
     } finally {
       setLoadingAssistants(false);
     }
-  }, [deploymentUrl, langsmithApiKey, assistantId]);
+  }, [langsmithApiKey, assistantId]);
 
-  // Busca a lista quando o modal abre e quando a URL/API key mudam (com debounce).
+  // Busca a lista quando o modal abre e quando a API key muda (com debounce).
   useEffect(() => {
     if (!open) return;
     const timer = setTimeout(() => {
@@ -136,16 +132,15 @@ export function ConfigDialog({
     }, 400);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, deploymentUrl, langsmithApiKey]);
+  }, [open, langsmithApiKey]);
 
   const handleSave = () => {
-    if (!deploymentUrl || !assistantId) {
+    if (!assistantId) {
       alert("Please fill in all required fields");
       return;
     }
 
     onSave({
-      deploymentUrl,
       assistantId,
       langsmithApiKey: langsmithApiKey || undefined,
     });
@@ -161,27 +156,18 @@ export function ConfigDialog({
         <DialogHeader>
           <DialogTitle>Configuration</DialogTitle>
           <DialogDescription>
-            Configure your LangGraph deployment settings. These settings are
-            saved in your browser&apos;s local storage.
+            Choose which assistant graph to use and optionally set a
+            LangSmith API key. Saved in your browser&apos;s local storage.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-4">
-          <div className="grid gap-2">
-            <Label htmlFor="deploymentUrl">Deployment URL</Label>
-            <Input
-              id="deploymentUrl"
-              placeholder="https://<deployment-url>"
-              value={deploymentUrl}
-              onChange={(e) => setDeploymentUrl(e.target.value)}
-            />
-          </div>
           <div className="grid gap-2">
             <div className="flex items-center justify-between">
               <Label htmlFor="assistantId">Assistant</Label>
               <button
                 type="button"
                 onClick={() => fetchAssistants()}
-                disabled={!deploymentUrl || loadingAssistants}
+                disabled={loadingAssistants}
                 className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
               >
                 <RefreshCw
@@ -209,9 +195,7 @@ export function ConfigDialog({
                     placeholder={
                       loadingAssistants
                         ? "Loading assistants..."
-                        : !deploymentUrl
-                          ? "Enter a deployment URL first"
-                          : "Select an assistant"
+                        : "Select an assistant"
                     }
                   />
                 </SelectTrigger>

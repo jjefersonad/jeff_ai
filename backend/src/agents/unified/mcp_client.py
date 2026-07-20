@@ -1,4 +1,4 @@
-"""Cliente MCP básico: conecta a servidores stdio declarados pelo usuário e lista as tools.
+"""Cliente MCP básico: conecta a servidores (stdio ou http) declarados pelo usuário e lista as tools.
 
 Cobre a task `unified-agent-realignment-task-mcp-1` (REQ-001, REQ-004, REQ-006,
 REQ-007 do `mcp-client`). Escopo desta task: conectar e LISTAR. Injetar as
@@ -17,6 +17,8 @@ os dois nunca se confundam.
 
 ## Formato de `mcp_servers.json`
 
+Servidor local (`stdio`, default quando `transport` é omitido):
+
 ```json
 {
   "mcpServers": {
@@ -29,10 +31,25 @@ os dois nunca se confundam.
 }
 ```
 
-`env` aceita `${VAR}` — substituído por `os.environ["VAR"]` em runtime (lido
-de `backend/.env` via `python-dotenv`, mesmo padrão do resto do código).
-NUNCA coloque o valor do segredo diretamente no JSON — REQ-007 exige que
-credenciais não apareçam em texto plano fora de `.env`.
+Servidor remoto (`http`, streamable HTTP — REQ-010, change `mcp-remote-http-transport`):
+
+```json
+{
+  "mcpServers": {
+    "nome-do-servidor-remoto": {
+      "transport": "http",
+      "url": "https://exemplo.com/mcp",
+      "headers": {"Authorization": "${ALGUM_TOKEN}"}
+    }
+  }
+}
+```
+
+`env` (stdio) e `headers` (http) aceitam `${VAR}` — substituído por
+`os.environ["VAR"]` em runtime (lido de `backend/.env` via `python-dotenv`,
+mesmo padrão do resto do código). NUNCA coloque o valor do segredo
+diretamente no JSON — REQ-007/REQ-010 exigem que credenciais não apareçam
+em texto plano fora de `.env`.
 
 ## Q1 do design (RESPONDIDA pelo usuário, 2026-07-13)
 
@@ -41,11 +58,13 @@ Config em arquivo (`mcp_servers.json`), não banco — mesma convenção do
 ("editável sem alterar código-fonte") é satisfeito por edição do arquivo;
 não exige um banco.
 
-## Q2 do design (RESPONDIDA pelo usuário, 2026-07-13)
+## Q2 do design (RESPONDIDA pelo usuário, 2026-07-13; revista pela change `mcp-remote-http-transport`)
 
-Só transporte `stdio` na v1. Um servidor configurado com outro transporte
-(`http`, `sse`, `websocket`) é recusado com mensagem clara no carregamento
-da config — REQ-006 proíbe falha silenciosa.
+`stdio` e `http` (streamable HTTP remoto) são suportados. `http` exige `url`
+em vez de `command`, com `headers` opcionais resolvidos pela mesma regra
+`${VAR}` de `env` (REQ-010). Qualquer outro transporte (`sse`, `websocket`)
+continua recusado com mensagem clara no carregamento da config — REQ-006
+proíbe falha silenciosa.
 """
 from __future__ import annotations
 
@@ -57,7 +76,7 @@ from pathlib import Path
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_mcp_adapters.sessions import StdioConnection
+from langchain_mcp_adapters.sessions import StdioConnection, StreamableHttpConnection
 
 _audit_log = logging.getLogger("jeff_ai.mcp_client")
 
@@ -68,7 +87,12 @@ DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "mcp_servers.json"
 
 _ENV_VAR_PATTERN = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 
-_SUPPORTED_TRANSPORT = "stdio"
+# stdio (processo local, requer `command`) e http (streamable HTTP remoto,
+# requer `url`, sem `command`) — REQ-006 revisado pela change
+# `mcp-remote-http-transport`. Qualquer outro valor continua recusado
+# explicitamente (`sse`, `websocket`: fora de escopo, ver design da change).
+_SUPPORTED_TRANSPORTS = frozenset({"stdio", "http"})
+_DEFAULT_TRANSPORT = "stdio"
 
 
 class McpConfigError(ValueError):
@@ -108,27 +132,38 @@ def _resolve_env_value(raw: str) -> str:
     return os.environ[var_name]
 
 
-def build_connection(name: str, entry: dict) -> StdioConnection:
-    """Resolve UMA entrada de `mcpServers` para uma `StdioConnection`.
+def build_connection(name: str, entry: dict) -> StdioConnection | StreamableHttpConnection:
+    """Resolve UMA entrada de `mcpServers` para uma conexão `stdio` ou `http`.
 
     Extraído de `load_mcp_server_config` para que a API administrativa
     (`mcp_admin_api.py`, task `mcp-3`) possa checar o status de UM servidor
-    isoladamente — sem que um `env` faltando em OUTRO servidor do arquivo
-    derrube a checagem deste. `load_mcp_server_config` usa isto internamente
-    para manter o comportamento antigo (falha explícita ao carregar todos).
+    isoladamente — sem que um `env`/`headers` faltando em OUTRO servidor do
+    arquivo derrube a checagem deste. `load_mcp_server_config` usa isto
+    internamente para manter o comportamento antigo (falha explícita ao
+    carregar todos).
 
     Raises:
-        McpConfigError: transporte diferente de `stdio` (REQ-006), campo
-            `command` ausente, ou variável de ambiente referenciada em
-            `env` não definida (REQ-007 — falha explícita, nunca silenciosa).
+        McpConfigError: transporte fora de `_SUPPORTED_TRANSPORTS` (REQ-006),
+            campo obrigatório ausente (`command` para `stdio`, `url` para
+            `http`), ou variável de ambiente referenciada em `env`/`headers`
+            não definida (REQ-007/REQ-010 — falha explícita, nunca silenciosa).
     """
-    transport = entry.get("transport", _SUPPORTED_TRANSPORT)
-    if transport != _SUPPORTED_TRANSPORT:
+    transport = entry.get("transport", _DEFAULT_TRANSPORT)
+    if transport not in _SUPPORTED_TRANSPORTS:
         raise McpConfigError(
             f"servidor MCP '{name}': transporte '{transport}' não é "
-            f"suportado nesta versão do Jeff AI (só '{_SUPPORTED_TRANSPORT}'). "
+            f"suportado nesta versão do Jeff AI (aceita "
+            f"{', '.join(sorted(_SUPPORTED_TRANSPORTS))}). "
             "Remova ou corrija a entrada em mcp_servers.json."
         )
+
+    if transport == "http":
+        return _build_http_connection(name, entry)
+    return _build_stdio_connection(name, entry)
+
+
+def _build_stdio_connection(name: str, entry: dict) -> StdioConnection:
+    """Monta uma `StdioConnection` a partir de uma entrada `transport: stdio`."""
     if "command" not in entry:
         raise McpConfigError(
             f"servidor MCP '{name}': falta o campo obrigatório 'command'."
@@ -145,16 +180,38 @@ def build_connection(name: str, entry: dict) -> StdioConnection:
     )
 
 
+def _build_http_connection(name: str, entry: dict) -> StreamableHttpConnection:
+    """Monta uma `StreamableHttpConnection` a partir de uma entrada `transport: http`.
+
+    `headers` é opcional; cada valor segue a mesma regra de `env` — só
+    `${VAR}` exato é resolvido (REQ-010), nenhum segredo em texto puro.
+    """
+    if "url" not in entry:
+        raise McpConfigError(
+            f"servidor MCP '{name}': falta o campo obrigatório 'url' "
+            "para transporte 'http'."
+        )
+
+    raw_headers = entry.get("headers") or {}
+    resolved_headers = {k: _resolve_env_value(v) for k, v in raw_headers.items()}
+
+    return StreamableHttpConnection(
+        transport="streamable_http",
+        url=entry["url"],
+        headers=resolved_headers or None,
+    )
+
+
 def load_mcp_server_config(
     path: Path | str = DEFAULT_CONFIG_PATH,
-) -> dict[str, StdioConnection]:
-    """Lê `mcp_servers.json` e devolve conexões stdio prontas para `MultiServerMCPClient`.
+) -> dict[str, StdioConnection | StreamableHttpConnection]:
+    """Lê `mcp_servers.json` e devolve conexões prontas para `MultiServerMCPClient`.
 
     Arquivo ausente → devolve `{}` (nenhum servidor configurado; não é erro —
     é o estado default de um Jeff AI recém-instalado, REQ-001 "sem alterar
     código-fonte" inclui "sem exigir o arquivo existir").
 
-    Servidor com `transport` diferente de `stdio` → levanta `McpConfigError`
+    Servidor com `transport` fora de `stdio`/`http` → levanta `McpConfigError`
     com mensagem clara (REQ-006: recusa explícita, nunca falha silenciosa).
 
     Args:
@@ -171,7 +228,7 @@ def load_mcp_server_config(
 
 
 async def list_mcp_tools(
-    connections: dict[str, StdioConnection],
+    connections: dict[str, StdioConnection | StreamableHttpConnection],
 ) -> tuple[list[BaseTool], list[McpServerConnectionError]]:
     """Conecta a cada servidor e lista suas tools, isoladamente (REQ-004).
 
@@ -195,7 +252,12 @@ async def list_mcp_tools(
     if not connections:
         return [], []
 
-    client = MultiServerMCPClient(connections)
+    # `dict` é invariante: `dict[str, StdioConnection | StreamableHttpConnection]`
+    # não é reconhecido como subtipo do parâmetro (mais amplo, incluindo SSE e
+    # Websocket) que `MultiServerMCPClient` declara — falso positivo do mypy,
+    # não incompatibilidade real (`build_connection` só produz os dois tipos
+    # do nosso union). Ver https://mypy.readthedocs.io/en/stable/common_issues.html#variance
+    client = MultiServerMCPClient(connections)  # type: ignore[arg-type]
     tools: list[BaseTool] = []
     errors: list[McpServerConnectionError] = []
 

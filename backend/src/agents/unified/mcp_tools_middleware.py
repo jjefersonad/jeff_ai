@@ -21,18 +21,26 @@ injetadas a cada chamada do modelo, em runtime.
    MCP) antes de entregá-lo ao modelo. Ver ordem de composição em
    `agent.py:middleware=[McpToolsMiddleware(), EnvelopeMiddleware()]`.
 
-## REQ-003: fail-safe para tools MCP desconhecidas
+## REQ-003: classificação por default para tools MCP desconhecidas
 
-Toda tool MCP NÃO catalogada no `TOOL_EFFECTS` é classificada como
-`Capability.UNKNOWN` pelo `effects.classify()`. Como `UNKNOWN` não está no
-`FLOOR_CAPABILITIES`, a tool:
-- **Não é exposta** ao modelo se `UNKNOWN` não estiver no envelope concedido
-  (filtrada pelo `EnvelopeMiddleware`);
-- **Não executa** sem gate (Tier ≥ 3, pelo `tier_config`).
+Toda tool MCP NÃO catalogada no `TOOL_EFFECTS` e sem override manual em
+`mcp_tool_overrides.json` é classificada como `Capability.NETWORK` pelo
+`effects.classify()` — piso, decisão explícita do usuário revista pela
+change `remove-mcp-unknown-failsafe` (o comportamento anterior era
+`UNKNOWN`, fail-safe). Como `NETWORK` está em `FLOOR_CAPABILITIES`, a tool:
+- **É exposta** ao modelo mesmo sem envelope concedido (passa direto pelo
+  `EnvelopeMiddleware`, que trata o piso como "sem atrito onde não há
+  risco declarado");
+- **Executa sem gate de tier** por essa via — o piso não depende de
+  aprovação por tarefa.
 
-Ou seja: uma tool MCP hostil que tenta escrever é bloqueada por padrão — a
-menos que o usuário explicitamente conceda `UNKNOWN` no envelope. Isto fecha
-o REQ-003 e o REQ-008 do `task-scoped-permissions`.
+Ou seja: qualquer tool de um servidor MCP configurado em `mcp_servers.json`
+fica utilizável assim que o servidor conecta, sem exigir classificação
+manual prévia. Quem quiser restringir uma tool MCP específica mais do que
+o piso (`write_existing`, `vcs`, `shell`) usa `mcp_tool_overrides.json` —
+a classificação manual continua tendo precedência sobre o default
+`NETWORK`. Isto fecha o REQ-003 do `mcp-client` e o REQ-008 (revisto) do
+`task-scoped-permissions`.
 
 ## REQ-005: carregamento em runtime, sem restart
 

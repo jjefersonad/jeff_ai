@@ -15,7 +15,9 @@ rotas. Só o frontend (humano, via browser) fala com elas.
 - `PUT  /api/mcp/servers/{name}` — edita um servidor.
 - `DELETE /api/mcp/servers/{name}` — remove um servidor.
 - `GET  /api/mcp/servers/{name}/tools` — lista as tools de um servidor,
-  com nome, descrição e capacidade classificada (override ou `unknown`).
+  com nome, descrição e capacidade classificada (via `effects.classify()` —
+  override manual se houver, senão `network` por default para tool MCP,
+  desde `remove-mcp-unknown-failsafe`).
 - `GET  /api/mcp/capabilities` — capacidades válidas (para o combobox da UI).
 - `GET  /api/mcp/tools/overrides` — todos os overrides gravados.
 - `POST /api/mcp/tools/capability` — classifica manualmente uma tool MCP.
@@ -40,7 +42,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from src.agents.unified import mcp_config_store
-from src.agents.unified.effects import CAPABILITY_NAMES
+from src.agents.unified.effects import CAPABILITY_NAMES, classify
 from src.agents.unified.mcp_client import (
     McpConfigError,
     build_connection,
@@ -213,7 +215,6 @@ async def get_server_tools(name: str) -> dict[str, Any]:
     if errors:
         raise HTTPException(status_code=502, detail=str(errors[0])) from None
 
-    overrides = load_overrides()
     out = []
     for tool in tools:
         qualified = _qualify(name, tool.name)
@@ -222,7 +223,12 @@ async def get_server_tools(name: str) -> dict[str, Any]:
                 "name": tool.name,
                 "qualified_name": qualified,
                 "description": tool.description or "",
-                "capability": overrides.get(qualified, "unknown"),
+                # Consulta `effects.classify()` de verdade em vez de assumir
+                # "unknown" como fallback hardcoded — desde
+                # `remove-mcp-unknown-failsafe`, uma tool MCP sem override
+                # classifica como `network` por default, não `unknown`.
+                # Um fallback fixo aqui mentiria sobre o estado real da tool.
+                "capability": classify(qualified)[0].value,
             }
         )
     return {"server": name, "tools": out}

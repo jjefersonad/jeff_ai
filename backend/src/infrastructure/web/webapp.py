@@ -25,6 +25,7 @@ from fastapi import Depends, FastAPI
 from src.infrastructure.auth.db import close_pool, init_pool
 from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.schema import init_auth_schema
+from src.infrastructure.ownership.schema import ensure_schema as ensure_ownership_schema
 from src.infrastructure.web.auth_router import router as auth_router
 from src.infrastructure.web.documents_router import router as documents_router
 from src.infrastructure.web.images_router import router as images_router
@@ -32,14 +33,17 @@ from src.infrastructure.web.images_router import router as images_router
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Garante as tabelas `users`/`sessions`, o bootstrap do admin inicial e o pool de auth.
+    """Garante as tabelas `users`/`sessions`/`generated_files`, o bootstrap do admin e o pool de auth.
 
     Falha o startup com erro explícito se `POSTGRES_URI` ou as credenciais de
     admin (`ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH`) estiverem ausentes numa
     tabela `users` vazia — não deve haver um fallback silencioso sem admin.
+    `generated_files` depende de `users` já existir (FK), por isso roda depois
+    de `init_auth_schema`.
     """
     conninfo = os.environ["POSTGRES_URI"]
     init_auth_schema(conninfo)
+    ensure_ownership_schema(conninfo)
     await init_pool(conninfo)
     try:
         yield

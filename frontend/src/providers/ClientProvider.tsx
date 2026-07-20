@@ -7,15 +7,16 @@
  * Since the change `autenticacao-jwt-rotas-protegidas`, the backend requires a
  * session cookie on every protected request. The browser's default
  * `credentials: 'same-origin'` only sends cookies for same-origin requests,
- * which fails when the user configures `deploymentUrl` to a different origin
- * (e.g. localhost:3000 → localhost:2024 for `langgraph dev`). We use the SDK's
- * `onRequest` hook to force `credentials: 'include'` on every request so the
- * httpOnly session cookie is sent regardless of origin (REQ-003 of
- * `frontend-route-guard`).
+ * which fails since the backend (`NEXT_PUBLIC_API_URL`, see `getApiBaseUrl`)
+ * is a different origin from the frontend (e.g. localhost:3002 →
+ * localhost:8001). We use the SDK's `onRequest` hook to force
+ * `credentials: 'include'` on every request so the httpOnly session cookie is
+ * sent regardless of origin (REQ-003 of `frontend-route-guard`).
  */
 
 import { createContext, useContext, useMemo, ReactNode } from "react";
 import { Client, RequestHook } from "@langchain/langgraph-sdk";
+import { getApiBaseUrl } from "@/lib/api";
 
 interface ClientContextValue {
   client: Client;
@@ -25,15 +26,10 @@ const ClientContext = createContext<ClientContextValue | null>(null);
 
 interface ClientProviderProps {
   children: ReactNode;
-  deploymentUrl: string;
   apiKey: string;
 }
 
-export function ClientProvider({
-  children,
-  deploymentUrl,
-  apiKey,
-}: ClientProviderProps) {
+export function ClientProvider({ children, apiKey }: ClientProviderProps) {
   const client = useMemo(() => {
     // Forces `credentials: 'include'` on every SDK request so the session
     // cookie travels to the backend (see header docstring). The hook is the
@@ -45,14 +41,14 @@ export function ClientProvider({
     });
 
     return new Client({
-      apiUrl: deploymentUrl,
+      apiUrl: getApiBaseUrl(),
       defaultHeaders: {
         "Content-Type": "application/json",
         "X-Api-Key": apiKey,
       },
       onRequest: forceCredentialsInclude,
     });
-  }, [deploymentUrl, apiKey]);
+  }, [apiKey]);
 
   const value = useMemo(() => ({ client }), [client]);
 

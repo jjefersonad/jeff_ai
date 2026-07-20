@@ -210,14 +210,27 @@ def test_write_file_with_missing_path_arg_falls_back_to_write_new() -> None:
 # REQ-008: tool ausente do registry → `unknown` (fail-safe)
 # --------------------------------------------------------------------------- #
 def test_unknown_tool_returns_unknown_capability() -> None:
-    """Tool que não está no registry (e.g. de um servidor MCP de
-    terceiro) é classificada como `unknown`. Combinada com
-    `tiered-approval` REQ-002 (Tier 3+ fail-safe), isto fecha o
-    cenário do design.
+    """Tool que não está no registry é classificada como `unknown` —
+    fail-safe pra origens não-MCP (ex.: `save_generated_tool`).
+
+    NOTA: `"mcp_qualquer.delete_records"` (underscore simples + ponto)
+    NÃO é o prefixo qualificado real de tool MCP (`mcp__servidor__tool`,
+    duplo underscore — ver `mcp_tools_middleware._qualify_tool_names`).
+    Este teste cobre o fail-safe de tool desconhecida em geral, não o
+    caso específico de tool MCP — que, desde `remove-mcp-unknown-failsafe`,
+    tem tratamento diferente (`NETWORK`, não `UNKNOWN`; ver
+    `test_mcp_tool_overrides.test_classify_defaults_to_network_for_mcp_tool_without_override`).
     """
     assert is_unknown("mcp_qualquer.delete_records") is True
     result = classify("mcp_qualquer.delete_records")
     assert result == (Capability.UNKNOWN,)
+
+
+def test_real_mcp_qualified_tool_name_is_not_unknown_but_network() -> None:
+    """Contraste com o teste acima: um nome REALMENTE qualificado como
+    tool MCP (`mcp__servidor__tool`) não cai mais em `unknown` — desde
+    `remove-mcp-unknown-failsafe`, classifica como `network` (piso)."""
+    assert classify("mcp__servidor__delete_records") == (Capability.NETWORK,)
 
 
 def test_known_tool_is_not_unknown() -> None:
