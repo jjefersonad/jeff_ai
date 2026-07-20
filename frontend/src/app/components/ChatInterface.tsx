@@ -24,6 +24,7 @@ import {
 import { ChatMessage } from "@/app/components/ChatMessage";
 import { ToolApprovalInterrupt } from "@/app/components/ToolApprovalInterrupt";
 import { EnvelopeApprovalInterrupt } from "@/app/components/EnvelopeApprovalInterrupt";
+import { AssistantButton } from "@/app/components/AssistantButton";
 import type {
   TodoItem,
   ToolCall,
@@ -40,6 +41,13 @@ import { FilesPopover } from "@/app/components/TasksFilesSidebar";
 
 interface ChatInterfaceProps {
   assistant: Assistant | null;
+  /**
+   * Short assistant id (e.g. `"unified"`) used by the toolbar
+   * `AssistantButton`. Kept separate from the resolved `assistant` object
+   * (a `langgraph-sdk` `Assistant` with versioned UUIDs) because the
+   * toolbar surfaces the user-chosen id, not the SDK's resolved record.
+   */
+  assistantId: string;
 }
 
 const getStatusIcon = (status: TodoItem["status"], className?: string) => {
@@ -68,7 +76,7 @@ const getStatusIcon = (status: TodoItem["status"], className?: string) => {
   }
 };
 
-export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
+export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant, assistantId }) => {
   const [metaOpen, setMetaOpen] = useState<"tasks" | "files" | null>(null);
   const tasksContainerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -721,6 +729,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                   onChange={handleFileChange}
                   className="hidden"
                 />
+                <AssistantButton assistantId={assistantId} />
                 <Button
                   type="button"
                   variant="ghost"

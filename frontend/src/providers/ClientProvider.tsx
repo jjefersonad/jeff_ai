@@ -26,15 +26,20 @@ const ClientContext = createContext<ClientContextValue | null>(null);
 
 interface ClientProviderProps {
   children: ReactNode;
-  apiKey: string;
 }
 
-export function ClientProvider({ children, apiKey }: ClientProviderProps) {
+export function ClientProvider({ children }: ClientProviderProps) {
   const client = useMemo(() => {
     // Forces `credentials: 'include'` on every SDK request so the session
     // cookie travels to the backend (see header docstring). The hook is the
     // SDK's documented extension point for per-request `RequestInit`
     // mutations; `credentials` is the only field we need to override.
+    //
+    // Note: the previous implementation also injected an `X-Api-Key` header
+    // carrying a LangSmith key from the browser. That header is no longer
+    // sent — the backend never read it (auth is session-cookie-only via
+    // `require_auth`), and the key now lives on the backend as
+    // `LANGSMITH_API_KEY` (see `langsmith-api-key-config`).
     const forceCredentialsInclude: RequestHook = (_url, init) => ({
       ...init,
       credentials: "include",
@@ -44,11 +49,10 @@ export function ClientProvider({ children, apiKey }: ClientProviderProps) {
       apiUrl: getApiBaseUrl(),
       defaultHeaders: {
         "Content-Type": "application/json",
-        "X-Api-Key": apiKey,
       },
       onRequest: forceCredentialsInclude,
     });
-  }, [apiKey]);
+  }, []);
 
   const value = useMemo(() => ({ client }), [client]);
 

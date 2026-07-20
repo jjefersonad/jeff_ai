@@ -8,12 +8,10 @@ import {
   StandaloneConfig,
   DEFAULT_ASSISTANT_ID,
 } from "@/lib/config";
-import { ConfigDialog } from "@/app/components/ConfigDialog";
-import { LogoutButton } from "@/components/LogoutButton";
 import { Button } from "@/components/ui/button";
 import { Assistant } from "@langchain/langgraph-sdk";
 import { ClientProvider, useClient } from "@/providers/ClientProvider";
-import { Settings, MessagesSquare, SquarePen, ImageIcon, Plug } from "lucide-react";
+import { MessagesSquare, SquarePen } from "lucide-react";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -22,20 +20,16 @@ import {
 import { ThreadList } from "@/app/components/ThreadList";
 import { ChatProvider } from "@/providers/ChatProvider";
 import { ChatInterface } from "@/app/components/ChatInterface";
+import { SidebarToggle } from "@/app/components/SidebarToggle";
+import { UserMenu } from "@/app/components/UserMenu";
+import { NavSidebar } from "@/app/components/NavSidebar";
+import { NavSidebarProvider } from "@/app/components/NavSidebarProvider";
 
 interface HomePageInnerProps {
   config: StandaloneConfig;
-  configDialogOpen: boolean;
-  setConfigDialogOpen: (open: boolean) => void;
-  handleSaveConfig: (config: StandaloneConfig) => void;
 }
 
-function HomePageInner({
-  config,
-  configDialogOpen,
-  setConfigDialogOpen,
-  handleSaveConfig,
-}: HomePageInnerProps) {
+function HomePageInner({ config }: HomePageInnerProps) {
   const client = useClient();
   const [threadId, setThreadId] = useQueryState("threadId");
   const [sidebar, setSidebar] = useQueryState("sidebar");
@@ -109,81 +103,45 @@ function HomePageInner({
   }, [fetchAssistant]);
 
   return (
-    <>
-      <ConfigDialog
-        open={configDialogOpen}
-        onOpenChange={setConfigDialogOpen}
-        onSave={handleSaveConfig}
-        initialConfig={config}
-      />
-      <div className="flex h-screen flex-col">
-        <header className="flex h-16 items-center justify-between border-b border-border px-6">
-          <div className="flex items-center gap-4">
-            <h1 className="text-xl font-semibold">JEFF AI</h1>
-            {!sidebar && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setSidebar("1")}
-                className="rounded-md border border-border bg-card p-3 text-foreground hover:bg-accent"
-              >
-                <MessagesSquare className="mr-2 h-4 w-4" />
-                Conversas
-                {interruptCount > 0 && (
-                  <span className="ml-2 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] text-destructive-foreground">
-                    {interruptCount}
-                  </span>
-                )}
-              </Button>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="text-sm text-muted-foreground">
-              <span className="font-medium">Assistant:</span>{" "}
-              {config.assistantId}
-            </div>
+    <div className="flex h-screen flex-col">
+      <header className="flex h-16 items-center justify-between border-b border-border px-6">
+        <div className="flex items-center gap-4">
+          <SidebarToggle />
+          <h1 className="text-xl font-semibold">JEFF AI</h1>
+          {!sidebar && (
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
-              onClick={() => setConfigDialogOpen(true)}
+              onClick={() => setSidebar("1")}
+              className="rounded-md border border-border bg-card p-3 text-foreground hover:bg-accent"
             >
-              <Settings className="mr-2 h-4 w-4" />
-              Settings
+              <MessagesSquare className="mr-2 h-4 w-4" />
+              Conversas
+              {interruptCount > 0 && (
+                <span className="ml-2 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] text-destructive-foreground">
+                  {interruptCount}
+                </span>
+              )}
             </Button>
-            <LogoutButton />
-            <Button
-              variant="outline"
-              size="sm"
-              asChild
-            >
-              <a href="/images">
-                <ImageIcon className="mr-2 h-4 w-4" />
-                Imagens
-              </a>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              asChild
-            >
-              <a href="/mcp-servers">
-                <Plug className="mr-2 h-4 w-4" />
-                Servidores MCP
-              </a>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setThreadId(null)}
-              disabled={!threadId}
-              className="border-[#2F6868] bg-[#2F6868] text-white hover:bg-[#2F6868]/80"
-            >
-              <SquarePen className="mr-2 h-4 w-4" />
-              New Thread
-            </Button>
-          </div>
-        </header>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setThreadId(null)}
+            disabled={!threadId}
+            className="border-[#2F6868] bg-[#2F6868] text-white hover:bg-[#2F6868]/80"
+          >
+            <SquarePen className="mr-2 h-4 w-4" />
+            New Thread
+          </Button>
+          <UserMenu />
+        </div>
+      </header>
 
+      <div className="flex flex-1 overflow-hidden">
+        <NavSidebar />
         <div className="flex-1 overflow-hidden">
           <ResizablePanelGroup
             direction="horizontal"
@@ -220,26 +178,29 @@ function HomePageInner({
                 activeAssistant={assistant}
                 onHistoryRevalidate={() => mutateThreads?.()}
               >
-                <ChatInterface assistant={assistant} />
+                <ChatInterface
+                  assistant={assistant}
+                  assistantId={config.assistantId}
+                />
               </ChatProvider>
             </ResizablePanel>
           </ResizablePanelGroup>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
 function HomePageContent() {
   const [config, setConfig] = useState<StandaloneConfig | null>(null);
-  const [configDialogOpen, setConfigDialogOpen] = useState(false);
   const [assistantId, setAssistantId] = useQueryState("assistantId");
 
   // On mount, check for saved config; otherwise auto-provision a default.
   // The backend URL is fixed via NEXT_PUBLIC_API_URL (see lib/api.ts) — Jeff
   // AI is self-hosted with exactly one deployment, so there's no first-run
-  // Settings step required anymore. Settings now only covers which
-  // assistant graph to use and an optional LangSmith key.
+  // Settings step. The persisted config now only tracks the assistant graph
+  // id; the LangSmith API key (formerly here) is read from the backend env
+  // var `LANGSMITH_API_KEY` (see `langsmith-api-key-config`).
   useEffect(() => {
     const savedConfig = getConfig();
     if (savedConfig) {
@@ -264,14 +225,6 @@ function HomePageContent() {
     }
   }, [config, assistantId, setAssistantId]);
 
-  const handleSaveConfig = useCallback((newConfig: StandaloneConfig) => {
-    saveConfig(newConfig);
-    setConfig(newConfig);
-  }, []);
-
-  const langsmithApiKey =
-    config?.langsmithApiKey || process.env.NEXT_PUBLIC_LANGSMITH_API_KEY || "";
-
   if (!config) {
     return (
       <div className="flex h-screen items-center justify-center">
@@ -281,13 +234,10 @@ function HomePageContent() {
   }
 
   return (
-    <ClientProvider apiKey={langsmithApiKey}>
-      <HomePageInner
-        config={config}
-        configDialogOpen={configDialogOpen}
-        setConfigDialogOpen={setConfigDialogOpen}
-        handleSaveConfig={handleSaveConfig}
-      />
+    <ClientProvider>
+      <NavSidebarProvider>
+        <HomePageInner config={config} />
+      </NavSidebarProvider>
     </ClientProvider>
   );
 }
