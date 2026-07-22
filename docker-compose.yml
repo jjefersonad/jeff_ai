@@ -70,6 +70,13 @@ services:
       # é lido pelo `next dev` a cada compilação, então a env var do container
       # basta (sem precisar de build-arg).
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8001}
+      # Alvos server-side dos `rewrites()` em frontend/next.config.ts
+      # (proxy de /api/images, /api/files, /api/references, /api/mcp). Rodam
+      # dentro do processo Next.js, então usam o hostname + porta interna do
+      # serviço na rede Docker — não a porta mapeada no host. Sobrescrevíveis
+      # para deploys fora deste compose (bare metal, k8s, produção).
+      BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:8000}
+      IMAGE_SERVER_INTERNAL_URL: ${IMAGE_SERVER_INTERNAL_URL:-http://image-server:8080}
     depends_on:
       - backend
       - image-server

@@ -80,7 +80,10 @@ export async function apiFetch(
     ...rest,
     credentials: "include",
     headers: {
-      "Content-Type": "application/json",
+      // FormData bodies (multipart uploads) must NOT get an explicit
+      // Content-Type — the browser sets one itself, including the boundary
+      // parameter, only when the header is left unset.
+      ...(rest.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
       ...(headers ?? {}),
     },
   });
@@ -174,4 +177,43 @@ export async function downloadAuthenticatedFile(
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
+}
+
+export interface UploadedAttachment {
+  attachment_id: string;
+  url: string;
+  metadata: {
+    thread_id: string;
+    filename: string;
+    content_type: string;
+    size_bytes: number;
+  };
+}
+
+/**
+ * Uploads a chat attachment (`POST /api/attachments`) through `apiFetch`, so
+ * the session cookie is always attached and a 401 always triggers the same
+ * re-authentication flow as every other authenticated call — never a
+ * hand-rolled `fetch()`, which is what caused the original `Unauthorized`
+ * bug on this same upload path.
+ */
+export async function uploadAttachment(
+  file: File,
+  threadId: string
+): Promise<UploadedAttachment> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("thread_id", threadId);
+
+  const response = await apiFetch("/api/attachments", {
+    method: "POST",
+    body: form,
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new ApiError(response.status, message);
+  }
+
+  return (await response.json()) as UploadedAttachment;
 }

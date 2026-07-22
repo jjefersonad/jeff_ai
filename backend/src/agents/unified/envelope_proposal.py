@@ -274,7 +274,7 @@ PROPOSE_ENVELOPE_TOOL_NAME = "propose_envelope"
 
 @tool(PROPOSE_ENVELOPE_TOOL_NAME)
 def propose_envelope_tool(
-    required_capabilities: list[dict[str, str]],
+    required_capabilities: list[CapabilityProposal],
     tool_call_id: Annotated[str, InjectedToolCallId],
     state: Annotated[dict[str, Any], InjectedState],
     excluded_capabilities: list[str] | None = None,
@@ -290,9 +290,11 @@ def propose_envelope_tool(
     vez de falhar em silêncio ou tentar um caminho alternativo.
 
     Args:
-        required_capabilities: Lista de `{capability, justification}`
-            (uma por capability que a tarefa requer). A justificativa
-            tem 1 linha (até 200 chars).
+        required_capabilities: Lista de objetos `{"capability": ..., "justification": ...}`
+            (uma por capability que a tarefa requer) — NÃO é
+            `{nome_da_capability: justificativa}`. Exemplo correto:
+            `[{"capability": "write_existing", "justification": "Editar main.py"}]`.
+            A justificativa tem 1 linha (até 200 chars).
         tool_call_id: Injetado pelo runtime — usado para construir a
             `ToolMessage` de resposta. O modelo NÃO fornece isto.
         state: Injetado pelo runtime (`InjectedState`) — usado para ler
@@ -327,13 +329,13 @@ def propose_envelope_tool(
         num atributo de instância) é o que torna a concessão
         per-thread, checkpointada e sujeita à expiração por turno.
     """
-    # Validação upfront (Pydantic) — campos faltantes / tipos
-    # errados viram `ValidationError` que o modelo recebe como
-    # `ToolMessage(status="error")`.
+    # `required_capabilities` já chega validado como `list[CapabilityProposal]`
+    # — o schema da própria tool (derivado da assinatura) exige as chaves
+    # `capability`/`justification`, então entradas malformadas são
+    # rejeitadas pelo framework antes de chegar aqui. `ProposeEnvelope`
+    # ainda valida `excluded_capabilities` e as regras entre os dois campos.
     proposal = ProposeEnvelope(
-        required_capabilities=[
-            CapabilityProposal(**item) for item in required_capabilities
-        ],
+        required_capabilities=required_capabilities,
         excluded_capabilities=list(excluded_capabilities or []),
     )
 

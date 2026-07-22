@@ -7,10 +7,19 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { cn } from "@/lib/utils";
 import { DownloadError, downloadAuthenticatedFile } from "@/lib/api";
+import { MermaidDiagram } from "@/app/components/MermaidDiagram";
 
 interface MarkdownContentProps {
   content: string;
   className?: string;
+  /**
+   * Whether the message this content belongs to is still being streamed.
+   * Forwarded to `MermaidDiagram` so it defers rendering a live diagram
+   * until the fenced ```mermaid block is no longer being written token by
+   * token. Defaults to `false` (e.g. sub-agent input/output, which arrive
+   * as already-complete tool results, not token-streamed).
+   */
+  isStreaming?: boolean;
 }
 
 /**
@@ -129,7 +138,7 @@ function DocumentDownloadChip({
 }
 
 export const MarkdownContent = React.memo<MarkdownContentProps>(
-  ({ content, className = "" }) => {
+  ({ content, className = "", isStreaming = false }) => {
     // Normaliza paths de imagem e de documentos antes de renderizar
     const normalizedContent = normalizeDocumentPaths(normalizeImagePaths(content));
 
@@ -154,6 +163,14 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
               children?: React.ReactNode;
             }) {
               const match = /language-(\w+)/.exec(className || "");
+              if (!inline && match && match[1] === "mermaid") {
+                return (
+                  <MermaidDiagram
+                    code={String(children).replace(/\n$/, "")}
+                    isStreaming={isStreaming}
+                  />
+                );
+              }
               return !inline && match ? (
                 <SyntaxHighlighter
                   style={oneDark}

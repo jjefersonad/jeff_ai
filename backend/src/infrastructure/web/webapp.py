@@ -22,10 +22,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 
+from src.infrastructure.attachments.schema import (
+    ensure_schema as ensure_attachments_schema,
+)
 from src.infrastructure.auth.db import close_pool, init_pool
 from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.schema import init_auth_schema
 from src.infrastructure.ownership.schema import ensure_schema as ensure_ownership_schema
+from src.infrastructure.web.attachments_router import router as attachments_router
 from src.infrastructure.web.auth_router import router as auth_router
 from src.infrastructure.web.documents_router import router as documents_router
 from src.infrastructure.web.images_router import router as images_router
@@ -33,17 +37,18 @@ from src.infrastructure.web.images_router import router as images_router
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Garante as tabelas `users`/`sessions`/`generated_files`, o bootstrap do admin e o pool de auth.
+    """Garante as tabelas `users`/`sessions`/`generated_files`/`chat_attachments`, o bootstrap do admin e o pool de auth.
 
     Falha o startup com erro explícito se `POSTGRES_URI` ou as credenciais de
     admin (`ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH`) estiverem ausentes numa
     tabela `users` vazia — não deve haver um fallback silencioso sem admin.
-    `generated_files` depende de `users` já existir (FK), por isso roda depois
-    de `init_auth_schema`.
+    `generated_files` e `chat_attachments` dependem de `users` já existir (FK),
+    por isso rodam depois de `init_auth_schema`.
     """
     conninfo = os.environ["POSTGRES_URI"]
     init_auth_schema(conninfo)
     ensure_ownership_schema(conninfo)
+    ensure_attachments_schema(conninfo)
     await init_pool(conninfo)
     try:
         yield
@@ -66,3 +71,6 @@ app.include_router(images_router)
 
 # Rotas de download de documentos Office (docx/xlsx/pptx).
 app.include_router(documents_router)
+
+# Rota de upload de anexos de chat (imagem/pdf/docx/xlsx/csv/txt).
+app.include_router(attachments_router)

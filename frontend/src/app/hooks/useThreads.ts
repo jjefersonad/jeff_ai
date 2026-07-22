@@ -24,7 +24,7 @@ export function useThreads(props: {
   // Client here, which would silently drop the session cookie cross-origin.
   const client = useClient();
 
-  return useSWRInfinite(
+  const swr = useSWRInfinite(
     (pageIndex: number, previousPageData: ThreadItem[] | null) => {
       const config = getConfig();
 
@@ -122,4 +122,11 @@ export function useThreads(props: {
       revalidateOnFocus: true,
     }
   );
+
+  async function deleteThread(id: string) {
+    await client.threads.delete(id);
+    await swr.mutate();
+  }
+
+  return { ...swr, deleteThread };
 }

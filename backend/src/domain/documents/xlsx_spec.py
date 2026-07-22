@@ -33,6 +33,8 @@ class Sheet:
         object.__setattr__(self, "name", self.name.strip())
 
         rows = tuple(tuple(row) for row in self.rows)
+        if not rows:
+            raise DomainError("Sheet.rows deve conter ao menos uma linha.")
         for row in rows:
             if any(not isinstance(cell, str | int | float | None) for cell in row):
                 raise DomainError("Sheet.rows só aceita str, int, float ou None.")

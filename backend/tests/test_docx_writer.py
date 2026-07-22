@@ -12,8 +12,13 @@ E os da task `fix-docx-generation-url-and-json-content-task-test-1`:
 - REQ-005: `create_docx_document` retorna `url` absoluta (default e com
   `DOCUMENT_BASE_URL` sobrescrita).
 - REQ-006: payload string serializado em JSON produz blocos (não título com
-  JSON bruto); string simples continua modo legado; JSON malformado retorna
-  `{"error": ...}` sem arquivo parcial.
+  JSON bruto); JSON malformado retorna `{"error": ...}` sem arquivo parcial.
+
+E os da task `fix-docx-empty-content-task-docx-2`:
+- REQ-006 (MODIFIED): string simples não-JSON deixou de ser um "modo legado"
+  que produzia documento só com título — agora é rejeitada com `DomainError`
+  (causa raiz de um bug onde documentos gerados só tinham título). A
+  tolerância a JSON serializado como string continua funcionando sem mudança.
 """
 from __future__ import annotations
 
@@ -193,14 +198,19 @@ def test_list_block_rejects_empty_items():
         ListBlock(items=("", "ok"))
 
 
+def test_docx_spec_rejects_empty_blocks():
+    """REQ-007: `blocks` vazio é barrado no domínio, antes do writer rodar."""
+    with pytest.raises(DomainError, match="blocks"):
+        DocxSpec(title="Relatório", blocks=())
+
+
+def test_docx_spec_accepts_non_empty_blocks():
+    """REQ-007 (regressão): `blocks` com ao menos um item continua funcionando."""
+    spec = DocxSpec(title="Relatório", blocks=(Heading(text="Resumo", level=1),))
+    assert spec.blocks == (Heading(text="Resumo", level=1),)
+
+
 # --- Tool create_docx_document (adapter fino) -----------------------------
-
-
-def test_to_docx_spec_from_string():
-    spec = docx_tool._to_docx_spec("Só título")
-    assert isinstance(spec, DocxSpec)
-    assert spec.title == "Só título"
-    assert spec.blocks == ()
 
 
 def test_to_docx_spec_from_structured_input():
@@ -282,7 +292,12 @@ async def test_tool_returns_error_on_invalid_input(monkeypatch, tmp_path):
     )
 
     # Título vazio é barrado pelo domínio antes de qualquer I/O.
-    result = await docx_tool.create_docx_document.coroutine("   ")
+    result = await docx_tool.create_docx_document.coroutine(
+        DocxDocumentInput(
+            title="   ",
+            blocks=[DocxBlockInput(type="paragraph", text="corpo")],
+        )
+    )
 
     assert "error" in result
     assert "title" in result["error"].lower()
@@ -309,7 +324,9 @@ async def test_build_create_document_defaults_to_localhost_8080(
     monkeypatch.delenv("DOCUMENT_BASE_URL", raising=False)
     use_case = dep.build_create_document()
 
-    result = await use_case.execute(DocxSpec(title="Só título"))
+    result = await use_case.execute(
+        DocxSpec(title="Só título", blocks=(Paragraph(text="corpo"),))
+    )
 
     assert result.url.startswith("http://localhost:8080/api/files/docx/")
 
@@ -320,7 +337,9 @@ async def test_build_create_document_uses_overridden_base_url(
     monkeypatch.setenv("DOCUMENT_BASE_URL", "https://files.example.com")
     use_case = dep.build_create_document()
 
-    result = await use_case.execute(DocxSpec(title="Só título"))
+    result = await use_case.execute(
+        DocxSpec(title="Só título", blocks=(Paragraph(text="corpo"),))
+    )
 
     assert result.url.startswith("https://files.example.com/api/files/docx/")
 
@@ -331,7 +350,12 @@ async def test_tool_returns_absolute_url_end_to_end(
     """A tool `create_docx_document`, de ponta a ponta, devolve `url` absoluta."""
     monkeypatch.delenv("DOCUMENT_BASE_URL", raising=False)
 
-    result = await docx_tool.create_docx_document.coroutine("Só título")
+    result = await docx_tool.create_docx_document.coroutine(
+        DocxDocumentInput(
+            title="Só título",
+            blocks=[DocxBlockInput(type="paragraph", text="corpo")],
+        )
+    )
 
     assert result["url"].startswith("http://localhost:8080/api/files/docx/")
 
@@ -359,12 +383,33 @@ def test_to_docx_spec_from_json_serialized_string():
     assert isinstance(spec.blocks[1], Paragraph)
 
 
-def test_to_docx_spec_plain_string_stays_legacy_title_mode():
-    """String comum (não JSON) continua produzindo documento só com título."""
-    spec = docx_tool._to_docx_spec("Relatório trimestral")
+def test_to_docx_spec_rejects_plain_non_json_string():
+    """String comum (não JSON) é rejeitada — não produz mais documento só com título.
 
-    assert spec.title == "Relatório trimestral"
-    assert spec.blocks == ()
+    REQ-006 (MODIFIED): o "modo legado" que gerava um `.docx` apenas com
+    título a partir de uma string simples era a causa raiz de um bug onde
+    documentos gerados sempre ficavam sem conteúdo de corpo. Esse atalho foi
+    eliminado; a tolerância a JSON serializado como string (testada abaixo)
+    continua funcionando sem alteração.
+    """
+    with pytest.raises(DomainError, match="estruturado"):
+        docx_tool._to_docx_spec("Relatório trimestral")
+
+
+async def test_tool_plain_non_json_string_returns_error_without_partial_file(
+    monkeypatch, tmp_path
+):
+    """REQ-006 (MODIFIED): string simples não-JSON vira `{"error": ...}` via a tool."""
+    monkeypatch.setattr(
+        docx_tool,
+        "build_create_document",
+        lambda: dep.CreateDocument(writer=DocxWriter(output_dir=tmp_path)),
+    )
+
+    result = await docx_tool.create_docx_document.coroutine("Relatório trimestral")
+
+    assert "error" in result
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_to_docx_spec_rejects_malformed_json_string():

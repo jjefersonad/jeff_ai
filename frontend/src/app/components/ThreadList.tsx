@@ -2,11 +2,20 @@
 
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { format } from "date-fns";
-import { Loader2, MessageSquare, X } from "lucide-react";
+import { Loader2, MessageSquare, Trash2, X } from "lucide-react";
 import { useQueryState } from "nuqs";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -123,13 +132,35 @@ export function ThreadList({
   onClose,
   onInterruptCountChange,
 }: ThreadListProps) {
-  const [currentThreadId] = useQueryState("threadId");
+  const [currentThreadId, setThreadId] = useQueryState("threadId");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   const threads = useThreads({
     status: statusFilter === "all" ? undefined : statusFilter,
     limit: 20,
   });
+
+  const [threadPendingDelete, setThreadPendingDelete] =
+    useState<ThreadItem | null>(null);
+
+  const handleCancelDelete = useCallback(() => {
+    setThreadPendingDelete(null);
+  }, []);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!threadPendingDelete) return;
+    const deletedId = threadPendingDelete.id;
+    try {
+      await threads.deleteThread(deletedId);
+      if (deletedId === currentThreadId) {
+        setThreadId(null);
+      }
+    } catch {
+      toast.error("Failed to delete thread. Please try again.");
+    } finally {
+      setThreadPendingDelete(null);
+    }
+  }, [threadPendingDelete, threads, currentThreadId, setThreadId]);
 
   const flattened = useMemo(() => {
     return threads.data?.flat() ?? [];
@@ -297,12 +328,19 @@ export function ThreadList({
                   </h4>
                   <div className="flex flex-col gap-1">
                     {groupThreads.map((thread) => (
-                      <button
+                      <div
                         key={thread.id}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         onClick={() => onThreadSelect(thread.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            onThreadSelect(thread.id);
+                          }
+                        }}
                         className={cn(
-                          "grid w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors duration-200",
+                          "grid w-full cursor-pointer grid-cols-[1fr_auto] items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors duration-200",
                           "hover:bg-accent",
                           currentThreadId === thread.id
                             ? "border border-primary bg-accent hover:bg-accent"
@@ -335,7 +373,20 @@ export function ThreadList({
                             </div>
                           </div>
                         </div>
-                      </button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Delete thread"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setThreadPendingDelete(thread);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -364,6 +415,40 @@ export function ThreadList({
           </div>
         )}
       </ScrollArea>
+
+      <Dialog
+        open={threadPendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) handleCancelDelete();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete thread</DialogTitle>
+            <DialogDescription>
+              {threadPendingDelete
+                ? `This will permanently delete "${threadPendingDelete.title}". This action cannot be undone.`
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleCancelDelete}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleConfirmDelete}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

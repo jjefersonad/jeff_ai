@@ -227,6 +227,37 @@ def test_apply_grant_to_frozen_middleware_raises() -> None:
 # =========================================================================== #
 # E. propose_envelope_tool: interrupt() e grant
 # =========================================================================== #
+def test_propose_envelope_tool_schema_requires_capability_and_justification_keys() -> None:
+    """Regressão: o schema exposto ao LLM deve declarar `CapabilityProposal`
+    com `capability`/`justification` como campos obrigatórios — não um
+    `dict[str, str]` genérico. Bug original: o schema não forçava essas
+    chaves, então o modelo enviava `{"write_existing": "justificativa"}`
+    (nome da capability → justificativa) em vez de
+    `{"capability": "write_existing", "justification": "..."}`, e a
+    validação só pegava o erro tarde, sem indicar o shape esperado."""
+    schema = propose_envelope_tool.get_input_schema().model_json_schema()
+    required_capabilities_prop = schema["properties"]["required_capabilities"]
+    item_ref = required_capabilities_prop["items"]["$ref"].rsplit("/", 1)[-1]
+    capability_schema = schema["$defs"][item_ref]
+
+    assert set(capability_schema["required"]) == {"capability", "justification"}
+    assert "capability" in capability_schema["properties"]
+    assert "justification" in capability_schema["properties"]
+
+
+def test_propose_envelope_tool_rejects_capability_name_as_key_shape() -> None:
+    """Regressão do bug relatado: `{"write_existing": "..."}` (nome da
+    capability como chave) MUST ser rejeitado — não é o shape aceito."""
+    with pytest.raises(ValidationError):
+        _invoke_propose(
+            {
+                "required_capabilities": [
+                    {"write_existing": "Executar script para gerar documento"},
+                ],
+            }
+        )
+
+
 def test_propose_envelope_tool_has_correct_name() -> None:
     """O nome do tool é exposto como constante pública para
     outras camadas (e.g. middleware que precisa interceptá-lo)."""

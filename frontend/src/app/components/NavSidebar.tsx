@@ -3,9 +3,11 @@
 /**
  * Primary navigation sidebar for the authenticated layout.
  *
- * Renders two entries — **Images** and **MCP Servers** — linking to
- * `/images` and `/mcp-servers` respectively. The active entry (matching the
- * current pathname) is highlighted with `aria-current="page"`.
+ * Renders three entries — **Chat**, **Images**, and **MCP Servers** — linking
+ * to `/`, `/images`, and `/mcp-servers` respectively. **Chat** exists because
+ * the top-bar "JEFF AI" link back to `/` isn't an obvious return path once a
+ * user has navigated into a full sidebar destination. The active entry
+ * (matching the current pathname) is highlighted with `aria-current="page"`.
  *
  * Responsive behaviour (per design decision D4):
  *   - ≥ 768px viewport → the sidebar renders as an inline panel that pushes
@@ -22,7 +24,7 @@
 
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import { ImageIcon, Plug, XIcon } from "lucide-react";
+import { ImageIcon, MessagesSquare, Plug, XIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -41,6 +43,14 @@ interface NavEntry {
 }
 
 const ENTRIES: readonly NavEntry[] = [
+  {
+    label: "Chat",
+    href: "/",
+    description: "Back to the conversation",
+    icon: MessagesSquare,
+    // Only the exact root route — nested routes belong to other entries.
+    match: (p) => p === "/",
+  },
   {
     label: "Images",
     href: "/images",
@@ -220,15 +230,15 @@ function SidebarLink({
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex items-start gap-3 rounded-md p-2 text-sm transition-colors",
-        "hover:bg-accent hover:text-accent-foreground",
+        "flex items-start gap-3 rounded-md p-2 text-sm transition-colors text-white",
+        "hover:bg-accent hover:text-white",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        active && "bg-accent text-accent-foreground"
+        active && "bg-accent text-white"
       )}
     >
-      <Icon aria-hidden="true" className="mt-0.5" />
+      <Icon aria-hidden="true" className="mt-0.5 text-white" />
       <span className="flex min-w-0 flex-col">
-        <span className="font-medium">{entry.label}</span>
+        <span className="font-medium text-white">{entry.label}</span>
         <span className="text-xs text-muted-foreground">
           {entry.description}
         </span>

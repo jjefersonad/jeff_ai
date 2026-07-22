@@ -67,8 +67,15 @@ export function useChat({
   });
 
   const sendMessage = useCallback(
-    (content: string) => {
-      const newMessage: Message = { id: uuidv4(), type: "human", content };
+    (content: string, attachmentIds?: string[]) => {
+      const newMessage: Message = {
+        id: uuidv4(),
+        type: "human",
+        content,
+        ...(attachmentIds && attachmentIds.length > 0
+          ? { additional_kwargs: { attachment_ids: attachmentIds } }
+          : {}),
+      };
       stream.submit(
         { messages: [newMessage] },
         {
@@ -157,6 +164,7 @@ export function useChat({
 
   return {
     stream,
+    threadId,
     todos: stream.values.todos ?? [],
     files: stream.values.files ?? {},
     grantedCapabilities: stream.values.granted_capabilities ?? [],

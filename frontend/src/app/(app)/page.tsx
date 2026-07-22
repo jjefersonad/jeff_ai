@@ -20,16 +20,19 @@ import {
 import { ThreadList } from "@/app/components/ThreadList";
 import { ChatProvider } from "@/providers/ChatProvider";
 import { ChatInterface } from "@/app/components/ChatInterface";
-import { SidebarToggle } from "@/app/components/SidebarToggle";
-import { UserMenu } from "@/app/components/UserMenu";
-import { NavSidebar } from "@/app/components/NavSidebar";
-import { NavSidebarProvider } from "@/app/components/NavSidebarProvider";
 
 interface HomePageInnerProps {
   config: StandaloneConfig;
 }
 
-function HomePageInner({ config }: HomePageInnerProps) {
+/**
+ * Chat route content. The authenticated shell (top bar, sidebar,
+ * `NavSidebarProvider`) is provided by the parent `(app)/layout.tsx`.
+ * This file is responsible only for the chat panel itself plus the
+ * chat-specific controls (`Conversas` thread-history toggle and
+ * `New Thread`).
+ */
+function ChatPageInner({ config }: HomePageInnerProps) {
   const client = useClient();
   const [threadId, setThreadId] = useQueryState("threadId");
   const [sidebar, setSidebar] = useQueryState("sidebar");
@@ -103,95 +106,87 @@ function HomePageInner({ config }: HomePageInnerProps) {
   }, [fetchAssistant]);
 
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex h-16 items-center justify-between border-b border-border px-6">
-        <div className="flex items-center gap-4">
-          <SidebarToggle />
-          <h1 className="text-xl font-semibold">JEFF AI</h1>
-          {!sidebar && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setSidebar("1")}
-              className="rounded-md border border-border bg-card p-3 text-foreground hover:bg-accent"
-            >
-              <MessagesSquare className="mr-2 h-4 w-4" />
-              Conversas
-              {interruptCount > 0 && (
-                <span className="ml-2 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] text-destructive-foreground">
-                  {interruptCount}
-                </span>
-              )}
-            </Button>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
+    <div className="flex h-full flex-col">
+      {/* Chat-specific toolbar: thread-history toggle + new-thread action.
+          The authenticated shell (top bar + sidebar) lives in the parent
+          (app)/layout.tsx; this bar is page-specific and lives in the slot. */}
+      <div className="flex items-center gap-2 border-b border-border bg-card px-4 py-2">
+        {!sidebar && (
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
-            onClick={() => setThreadId(null)}
-            disabled={!threadId}
-            className="border-[#2F6868] bg-[#2F6868] text-white hover:bg-[#2F6868]/80"
+            onClick={() => setSidebar("1")}
+            className="rounded-md border border-border bg-card text-foreground hover:bg-accent"
           >
-            <SquarePen className="mr-2 h-4 w-4" />
-            New Thread
-          </Button>
-          <UserMenu />
-        </div>
-      </header>
-
-      <div className="flex flex-1 overflow-hidden">
-        <NavSidebar />
-        <div className="flex-1 overflow-hidden">
-          <ResizablePanelGroup
-            direction="horizontal"
-            autoSaveId="standalone-chat"
-          >
-            {sidebar && (
-              <>
-                <ResizablePanel
-                  id="thread-history"
-                  order={1}
-                  defaultSize={25}
-                  minSize={20}
-                  className="relative min-w-[380px]"
-                >
-                  <ThreadList
-                    onThreadSelect={async (id) => {
-                      await setThreadId(id);
-                    }}
-                    onMutateReady={(fn) => setMutateThreads(() => fn)}
-                    onClose={() => setSidebar(null)}
-                    onInterruptCountChange={setInterruptCount}
-                  />
-                </ResizablePanel>
-                <ResizableHandle />
-              </>
+            <MessagesSquare className="mr-2 h-4 w-4" />
+            Conversas
+            {interruptCount > 0 && (
+              <span className="ml-2 inline-flex min-h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] text-destructive-foreground">
+                {interruptCount}
+              </span>
             )}
-
-            <ResizablePanel
-              id="chat"
-              className="relative flex flex-col"
-              order={2}
-            >
-              <ChatProvider
-                activeAssistant={assistant}
-                onHistoryRevalidate={() => mutateThreads?.()}
+          </Button>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setThreadId(null)}
+          disabled={!threadId}
+          className="ml-auto border-[#2F6868] bg-[#2F6868] text-white hover:bg-[#2F6868]/80"
+        >
+          <SquarePen className="mr-2 h-4 w-4" />
+          New Thread
+        </Button>
+      </div>
+      <div className="flex-1 overflow-hidden">
+        <ResizablePanelGroup
+          direction="horizontal"
+          autoSaveId="standalone-chat"
+        >
+          {sidebar && (
+            <>
+              <ResizablePanel
+                id="thread-history"
+                order={1}
+                defaultSize={25}
+                minSize={20}
+                className="relative min-w-[380px]"
               >
-                <ChatInterface
-                  assistant={assistant}
-                  assistantId={config.assistantId}
+                <ThreadList
+                  onThreadSelect={async (id) => {
+                    await setThreadId(id);
+                  }}
+                  onMutateReady={(fn) => setMutateThreads(() => fn)}
+                  onClose={() => setSidebar(null)}
+                  onInterruptCountChange={setInterruptCount}
                 />
-              </ChatProvider>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </div>
+              </ResizablePanel>
+              <ResizableHandle />
+            </>
+          )}
+
+          <ResizablePanel
+            id="chat"
+            className="relative flex flex-col"
+            order={2}
+          >
+            <ChatProvider
+              activeAssistant={assistant}
+              onHistoryRevalidate={() => mutateThreads?.()}
+            >
+              <ChatInterface
+                assistant={assistant}
+                assistantId={config.assistantId}
+              />
+            </ChatProvider>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
     </div>
   );
 }
 
-function HomePageContent() {
+function ChatPageContent() {
   const [config, setConfig] = useState<StandaloneConfig | null>(null);
   const [assistantId, setAssistantId] = useQueryState("assistantId");
 
@@ -227,31 +222,27 @@ function HomePageContent() {
 
   if (!config) {
     return (
-      <div className="flex h-screen items-center justify-center">
+      <div className="flex h-full items-center justify-center">
         <p className="text-muted-foreground">Loading...</p>
       </div>
     );
   }
 
-  return (
-    <ClientProvider>
-      <NavSidebarProvider>
-        <HomePageInner config={config} />
-      </NavSidebarProvider>
-    </ClientProvider>
-  );
+  return <ChatPageInner config={config} />;
 }
 
-export default function HomePage() {
+export default function ChatPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="flex h-screen items-center justify-center">
-          <p className="text-muted-foreground">Loading...</p>
-        </div>
-      }
-    >
-      <HomePageContent />
-    </Suspense>
+    <ClientProvider>
+      <Suspense
+        fallback={
+          <div className="flex h-full items-center justify-center">
+            <p className="text-muted-foreground">Loading...</p>
+          </div>
+        }
+      >
+        <ChatPageContent />
+      </Suspense>
+    </ClientProvider>
   );
 }
