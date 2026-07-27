@@ -13,6 +13,20 @@ vi.mock("./MermaidDiagram", () => ({
     mockMermaidDiagram(props),
 }));
 
+const mockAuthenticatedImage = vi.fn(
+  (_props: { src: string; alt?: string; isStreaming?: boolean }) => (
+    <div data-testid="authenticated-image-mock" />
+  )
+);
+
+vi.mock("./AuthenticatedImage", () => ({
+  AuthenticatedImage: (props: {
+    src: string;
+    alt?: string;
+    isStreaming?: boolean;
+  }) => mockAuthenticatedImage(props),
+}));
+
 const MERMAID_CONTENT = "```mermaid\nflowchart TD\n  A --> B\n```";
 
 describe("MarkdownContent - mermaid delegation (melhorar-visualizacao-diagramas delta)", () => {
@@ -44,5 +58,42 @@ describe("MarkdownContent - mermaid delegation (melhorar-visualizacao-diagramas 
 
     expect(mockMermaidDiagram).not.toHaveBeenCalled();
     expect(container.textContent).toContain("print");
+  });
+});
+
+describe("MarkdownContent - authenticated generated images", () => {
+  beforeEach(() => {
+    mockAuthenticatedImage.mockClear();
+  });
+
+  it("routes /api/images/* through AuthenticatedImage (session cookie)", () => {
+    render(
+      <MarkdownContent content={"![Cool Bulldog](/api/images/20260725121054.png)"} />
+    );
+
+    expect(mockAuthenticatedImage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        src: "/api/images/20260725121054.png",
+        alt: "Cool Bulldog",
+      })
+    );
+    expect(screen.getByTestId("authenticated-image-mock")).toBeInTheDocument();
+  });
+
+  it("rewrites hallucinated absolute hosts to /api/images/<file>", () => {
+    render(
+      <MarkdownContent
+        content={
+          "![Cool Bulldog Portrait](https://your-frontend.com/api/images/20260725121054.png)"
+        }
+      />
+    );
+
+    expect(mockAuthenticatedImage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        src: "/api/images/20260725121054.png",
+        alt: "Cool Bulldog Portrait",
+      })
+    );
   });
 });

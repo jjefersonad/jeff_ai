@@ -3,11 +3,13 @@
 /**
  * Primary navigation sidebar for the authenticated layout.
  *
- * Renders three entries — **Chat**, **Images**, and **MCP Servers** — linking
- * to `/`, `/images`, and `/mcp-servers` respectively. **Chat** exists because
- * the top-bar "JEFF AI" link back to `/` isn't an obvious return path once a
- * user has navigated into a full sidebar destination. The active entry
- * (matching the current pathname) is highlighted with `aria-current="page"`.
+ * Renders **Chat**, **Images**, **MCP Servers**, and (for `role=admin` only)
+ * **Consumo** — linking to `/`, `/images`, `/mcp-servers`, and `/usage`.
+ * **Chat** exists because the top-bar "JEFF AI" link back to `/` isn't an
+ * obvious return path once a user has navigated into a full sidebar
+ * destination. The active entry (matching the current pathname) is
+ * highlighted with `aria-current="page"`. Admin-only **Consumo** is filtered
+ * via `getVisibleNavEntries(user?.role)` (token-usage-reporting REQ-006).
  *
  * Responsive behaviour (per design decision D4):
  *   - ≥ 768px viewport → the sidebar renders as an inline panel that pushes
@@ -22,13 +24,14 @@
  * `?sidebar=` query state (left untouched by this component).
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
-import { ImageIcon, MessagesSquare, Plug, XIcon } from "lucide-react";
+import { BarChart3, ImageIcon, MessagesSquare, Plug, XIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useNavSidebar } from "@/app/components/NavSidebarProvider";
+import { useAuth, type AuthRole } from "@/providers/AuthProvider";
 
 interface NavEntry {
   label: string;
@@ -40,6 +43,8 @@ interface NavEntry {
   // e.g. `frontend/src/app/page.tsx` passing icon components as children.
   icon: React.ComponentType<Record<string, unknown>>;
   match: (pathname: string) => boolean;
+  /** When set, the entry is only shown for that role (admin-only surfaces). */
+  requireRole?: AuthRole;
 }
 
 const ENTRIES: readonly NavEntry[] = [
@@ -66,7 +71,24 @@ const ENTRIES: readonly NavEntry[] = [
     icon: Plug,
     match: (p) => p === "/mcp-servers" || p.startsWith("/mcp-servers/"),
   },
+  {
+    label: "Consumo",
+    href: "/usage",
+    description: "Token usage by period (admin)",
+    icon: BarChart3,
+    match: (p) => p === "/usage" || p.startsWith("/usage/"),
+    requireRole: "admin",
+  },
 ];
+
+/** Visible nav entries for the current auth role (REQ-006 admin-only usage). */
+export function getVisibleNavEntries(
+  role: AuthRole | null | undefined
+): NavEntry[] {
+  return ENTRIES.filter(
+    (entry) => !entry.requireRole || entry.requireRole === role
+  );
+}
 
 const MOBILE_BREAKPOINT = 768; // px — see D4 of the design.
 
@@ -117,6 +139,11 @@ function useEscToClose(enabled: boolean, onClose: () => void) {
 export function NavSidebar() {
   const pathname = usePathname();
   const { open, setOpen, hydrated } = useNavSidebar();
+  const { user } = useAuth();
+  const entries = useMemo(
+    () => getVisibleNavEntries(user?.role),
+    [user?.role]
+  );
   const isMobile = useIsMobile();
   const close = () => setOpen(false);
 
@@ -176,7 +203,7 @@ export function NavSidebar() {
             </Button>
           </div>
           <ul className="flex flex-col gap-1">
-            {ENTRIES.map((entry) => (
+            {entries.map((entry) => (
               <li key={entry.href}>
                 <SidebarLink
                   entry={entry}
@@ -201,7 +228,7 @@ export function NavSidebar() {
     >
       <span className="text-sm font-semibold">Navigation</span>
       <ul className="flex flex-col gap-1">
-        {ENTRIES.map((entry) => (
+        {entries.map((entry) => (
           <li key={entry.href}>
             <SidebarLink
               entry={entry}

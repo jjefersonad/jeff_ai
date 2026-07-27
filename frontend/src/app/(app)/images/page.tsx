@@ -6,6 +6,7 @@ import { ImageGrid } from "@/app/components/ImageGallery";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ImageIcon, ChevronLeft, ChevronRight } from "lucide-react";
+import { apiFetch } from "@/lib/api";
 
 interface ImagesResponse {
   images: Array<{
@@ -18,7 +19,13 @@ interface ImagesResponse {
   offset: number;
 }
 
-const fetcher = (url: string) => fetch(url).then((res) => res.json());
+const fetcher = async (url: string) => {
+  const response = await apiFetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to load images (${response.status})`);
+  }
+  return response.json();
+};
 
 const PAGE_SIZE = 20;
 

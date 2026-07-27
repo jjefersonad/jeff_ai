@@ -6,9 +6,9 @@
  * Per the post-verify fix in `frontend-menu-redesign-task-verify-fix-1`,
  * the shell (top bar + left navigation sidebar + `NavSidebarProvider`)
  * used to live only inside `app/page.tsx` (the chat route), which meant
- * that `/images` and `/mcp-servers` had no top bar and no way back to the
- * chat. This layout extracts the shell so that every authenticated route
- * inside `(app)/` renders it.
+ * that `/images`, `/mcp-servers`, and `/usage` had no top bar and no way
+ * back to the chat. This layout extracts the shell so that every
+ * authenticated route inside `(app)/` renders it.
  *
  * The shell is NOT gated on `useAuth().isAuthenticated` here. That flag is
  * only flipped by an in-session `login()` call (there is no `/public/me`

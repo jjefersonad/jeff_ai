@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ApiError, setUnauthorizedHandler, uploadAttachment } from "./api";
+import {
+  ApiError,
+  DownloadError,
+  fetchAuthenticatedBlobUrl,
+  setUnauthorizedHandler,
+  uploadAttachment,
+} from "./api";
 
 describe("uploadAttachment (chat-file-attachment REQ-002)", () => {
   const originalFetch = global.fetch;
@@ -65,5 +71,48 @@ describe("uploadAttachment (chat-file-attachment REQ-002)", () => {
     await expect(uploadAttachment(file, "t1")).rejects.toThrow(ApiError);
 
     expect(unauthorizedSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("fetchAuthenticatedBlobUrl (session-protected media)", () => {
+  const originalFetch = global.fetch;
+  const originalCreateObjectURL = URL.createObjectURL;
+
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_API_URL = "http://backend.test";
+    URL.createObjectURL = vi.fn(() => "blob:mock-image");
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    URL.createObjectURL = originalCreateObjectURL;
+    setUnauthorizedHandler(null);
+  });
+
+  it("fetches the media path with credentials and returns an object URL", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      blob: async () => new Blob(["png"], { type: "image/png" }),
+    });
+    global.fetch = fetchMock;
+
+    const url = await fetchAuthenticatedBlobUrl("/api/images/20260725121054.png");
+
+    expect(url).toBe("blob:mock-image");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://backend.test/api/images/20260725121054.png",
+      expect.objectContaining({ credentials: "include" })
+    );
+  });
+
+  it("throws DownloadError(unauthorized) on 401", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: "Unauthorized" }), { status: 401 })
+    );
+
+    await expect(
+      fetchAuthenticatedBlobUrl("/api/images/missing.png")
+    ).rejects.toBeInstanceOf(DownloadError);
   });
 });

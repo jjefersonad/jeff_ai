@@ -31,13 +31,18 @@ from src.infrastructure.filesystem.filesystem_sdd_artifact_store import (
 )
 from src.infrastructure.llm.gemini_image_adapter import GeminiImageAdapter
 from src.infrastructure.persistence.store_style_repository import StoreStyleRepository
+from src.infrastructure.usage.repository import UsageRepository
 from src.infrastructure.web.httpx_reference_image_fetch import HttpxReferenceImageFetch
 
 
 def build_plan_and_create_image() -> PlanAndCreateImage:
     """Monta PlanAndCreateImage com Gemini + repositório de estilos no Store."""
+    postgres_uri = os.getenv("POSTGRES_URI")
+    usage_repository = (
+        UsageRepository(postgres_uri) if postgres_uri else None
+    )
     return PlanAndCreateImage(
-        image_gen=GeminiImageAdapter(),
+        image_gen=GeminiImageAdapter(usage_repository=usage_repository),
         styles=StoreStyleRepository(get_store()),
     )
 

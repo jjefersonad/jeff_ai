@@ -159,6 +159,94 @@ services:
     profiles:
       - admin
 
+  # Gateway do canal Telegram (change `integracao-telegram`,
+  # `integracao-telegram-task-ops-1`).
+  #
+  # Processo próprio de longa duração que faz long-polling da Bot API do
+  # Telegram (sem webhook, sem ingress público — mesma decisão do Hermes Agent
+  # que o usuário roda em produção) e roteia cada mensagem autorizada para o
+  # grafo `unified` reaproveitando o `AgentRunnerPort`/`LangGraphDirectAgentRunner`
+  # que `agendamento-jeff-cli` também consome.
+  #
+  # Sem as env vars TELEGRAM_BOT_TOKEN/TELEGRAM_AUTHORIZED_CHAT_ID o bootstrap
+  # do entrypoint falha rápido com mensagem citando-as (ver
+  # `src/infrastructure/telegram/telegram_gateway.py:bootstrap_config`). Sem
+  # POSTGRES_URI o entrypoint também sai com erro — o mapeamento chat_id↔thread_id
+  # e o pool do runner precisam do banco.
+  #
+  # Reinicia sozinho em qualquer crash: o risco do polling cair silenciosamente
+  # e o usuário parar de receber respostas é mitigado por `restart: unless-stopped`
+  # (ver Risks/Trade-offs no design da change).
+  #
+  # Obs.: a imagem `langchain/langgraph-api:3.11` (base do `Dockerfile.backend`)
+  # não inclui `python-telegram-bot`; o container `backend` traz essa dep
+  # transitivamente apenas em dev (`.venv`). Para o gateway subir **neste**
+  # compose, o entrypoint faz `pip install` explícito no startup (alternativa
+  # ao conserto do Dockerfile, que fica fora do escopo desta task).
+  telegram_gateway:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.backend
+    container_name: jeff_ia_telegram_gateway
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    environment:
+      # Token do bot e chat_id autorizado (allowlist single-user, REQ-002 do
+      # telegram-channel-spec). `env_file` já propaga `TELEGRAM_BOT_TOKEN` e
+      # `TELEGRAM_AUTHORIZED_CHAT_ID` do `backend/.env`; redeclarar aqui
+      # seria redundante.
+      # Mesmo fallback do serviço `backend`: usa o host interno do Postgres
+      # na rede docker, não o mapeamento de porta do host.
+      POSTGRES_URI: ${POSTGRES_URI:-postgresql://jeff_ia:jeff_ia@jeff_ia_postgres:5432/jeff_ia}
+      REDIS_URI: ${REDIS_URI:-redis://:${REDIS_PASSWORD}@jeff_ia_redis:6379/0}
+      # === Telegram Gateway (change telegram-slash-commands) ===
+      # Token e chat_id são propagados pelo `env_file: backend/.env` (linha 192).
+      # Não redeclarar aqui — o `environment:` do compose é expandido a partir
+      # do shell do host (não do `.env`), então ${TELEGRAM_BOT_TOKEN} viraria
+      # string vazia quando o usuário não tem a var exportada no shell,
+      # sobrescrevendo o valor correto do `.env` com warning
+      # `variable is not set, defaulting to a blank string`.
+      # (registrado durante o verify/2026-07-23)
+    depends_on:
+      jeff_ia_postgres:
+        condition: service_healthy
+    # Volumes compartilhados com o `backend`:
+    # - `outputs`: o gateway precisa enxergar o mesmo `backend/outputs/` que
+    #   as tools `send_telegram_photo`/`_document` (REQ-004 do
+    #   telegram-tools-spec) leem para resolver o allowlist de path. Sem este
+    #   mount, o path absoluto `backend/outputs/...` (resolvido a partir do
+    #   WORKDIR `/deps/backend` da imagem) apontaria para o diretório interno
+    #   do container, sem os artefatos gerados pelo `backend`.
+    # - `src`: mesma justificativa do `backend` — DEV/teste sem rebuild. Em
+    #   produção real, esse mount é dispensável.
+    volumes:
+      - ./backend/outputs:/deps/backend/outputs
+      - ./backend/src:/deps/backend/src
+    # `entrypoint:` (e não `command:`) é necessário porque o ENTRYPOINT da
+    # imagem `langchain/langgraph-api:3.11` é `/storage/entrypoint.sh` que
+    # termina com `exec uvicorn langgraph_api.server:app` — ou seja, sempre
+    # sobe o `uvicorn` da API HTTP do langgraph, ignorando o `command:` do
+    # compose. Para o `telegram_gateway` rodar `python telegram_gateway.py`
+    # em vez do `uvicorn`, precisamos **substituir o entrypoint inteiro**.
+    # (verificado em 2026-07-23: o stack `uvicorn` aparecia no log mesmo
+    # com `command:` definido, e o erro `Config 'LANGGRAPH_STORE' has
+    # value '${env:...}'` era o `langgraph_api/config/__init__.py` tentando
+    # inicializar o store/checkpointer do uvicorn — não tem nada a ver
+    # com o nosso script).
+    #
+    # Usa um script wrapper (e não `sh -c "..."` inline) porque o `sh -c`
+    # abre stdout/stderr como pipes que ficam sem leitor após o `exec
+    # python`, fazendo o `python` travar no write quando o buffer enche.
+    # Sintoma: `docker logs` mostra `pip install` mas nada do `python`.
+    # O wrapper `telegram_gateway_entrypoint.sh` reabre FDs e usa
+    # `exec python -u` para garantir saída visível.
+    # (verificado em 2026-07-23: container Up, PID 1 em `ep_poll`, FDs
+    # 1/2 = pipes sem leitor, `docker logs` congelado)
+    entrypoint: ["/bin/sh", "/deps/backend/telegram_gateway_entrypoint.sh"]
+    networks:
+      - jeff_ia-network
+
 volumes:
   postgres_data:
     driver: local

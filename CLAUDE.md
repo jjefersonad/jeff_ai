@@ -119,7 +119,7 @@ The safety model. `build_interrupt_on()` turns the declarative registry into the
 
 ### Image generation
 
-Image requests go to `image_design_subagent`, which presents a design plan; `interrupt_on` pauses before `create_image_from_prompt` runs. On approval the image is generated via Gemini and saved to `backend/outputs/images/`; the approved style is stored per-thread via `save_design_style` for reuse. The tool returns `{path, url, metadata}` — **always use `url` in markdown, never `path`.**
+Image requests go to `image_design_subagent`, which presents a design plan and then calls `create_image_from_prompt` immediately (no HITL `interrupt_on` on image generation). The image is generated via Gemini and saved to `backend/outputs/images/`; the style is stored per-thread via `save_design_style` after a successful generation. The tool returns `{path, url, metadata}` — **always use `url` in markdown, never `path`.**
 
 ### Office documents
 
@@ -157,6 +157,7 @@ Required in `backend/.env`:
 
 Optional: `TAVILY_API_KEY` (web search) · `GOOGLE_API_KEY` (Gemini) · `LANGSMITH_API_KEY` (tracing)
 - `JEFF_AI_TZ` (opcional) — IANA timezone name (e.g., `America/Sao_Paulo`). Default: `UTC`. Usado pelo `current-date-context` para preencher o system prompt com a data local.
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_AUTHORIZED_CHAT_ID` (integracao-telegram) — token do bot Telegram e o único `chat_id` autorizado (allowlist single-user). Exigidas pelo processo `telegram_gateway.py`; sem elas o gateway não sobe.
 
 ---
 

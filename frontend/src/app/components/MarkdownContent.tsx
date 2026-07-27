@@ -7,6 +7,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { cn } from "@/lib/utils";
 import { DownloadError, downloadAuthenticatedFile } from "@/lib/api";
+import { AuthenticatedImage } from "@/app/components/AuthenticatedImage";
 import { MermaidDiagram } from "@/app/components/MermaidDiagram";
 
 interface MarkdownContentProps {
@@ -23,12 +24,17 @@ interface MarkdownContentProps {
 }
 
 /**
- * Converte paths absolutos do filesystem para URLs relativas acessíveis pelo frontend.
- * Ex: /deps/backend/outputs/images/20260705091430.png → /api/images/20260705091430.png
+ * Converte paths/URLs de imagem gerada para a rota relativa do frontend.
+ *
+ * Casos cobertos:
+ * - path absoluto do container: `/deps/backend/outputs/images/X.png`
+ * - host inventado pelo LLM: `https://your-frontend.com/api/images/X.png`
+ * - qualquer origem absoluta terminando em `/api/images/X.png`
+ *
+ * Sem isso, o `<img>` tenta um host inexistente e o chat mostra
+ * "[Imagem não carregada]" mesmo com a PNG salva e o usuário autenticado.
  */
 function normalizeImagePaths(markdown: string): string {
-  // Regex para capturar markdown images com paths absolutos que contêm "outputs/images/"
-  // Captura tanto ![alt](path) quanto <img src="path" ...>
   return markdown
     .replace(
       /!\[([^\]]*)\]\(([^)]+\/(?:backend\/)?outputs\/images\/([^/)]+\.png))\)/gi,
@@ -37,8 +43,20 @@ function normalizeImagePaths(markdown: string): string {
       }
     )
     .replace(
+      /!\[([^\]]*)\]\(https?:\/\/[^)\s]+\/api\/images\/([^/)]+\.png)\)/gi,
+      (_match, alt, filename) => {
+        return `![${alt}](/api/images/${filename})`;
+      }
+    )
+    .replace(
       /<img[^>]*src=["']([^"']+\/(?:backend\/)?outputs\/images\/([^"/]+\.png))["'][^>]*>/gi,
       (_match, _fullPath, filename) => {
+        return `<img src="/api/images/${filename}" />`;
+      }
+    )
+    .replace(
+      /<img[^>]*src=["']https?:\/\/[^"']+\/api\/images\/([^"/]+\.png)["'][^>]*>/gi,
+      (_match, filename) => {
         return `<img src="/api/images/${filename}" />`;
       }
     );
@@ -272,24 +290,28 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
               alt?: string;
             }) {
               const url = typeof src === "string" ? src : undefined;
-              const isGeneratedImage = url?.startsWith("/api/images/");
+              // Rotas de mídia do backend exigem cookie de sessão — bare
+              // `<img src>` quebra no split frontend (:3002) / API (:8001).
+              const needsAuth =
+                !!url &&
+                (url.startsWith("/api/images/") ||
+                  url.startsWith("/api/references/"));
+              if (needsAuth && url) {
+                return (
+                  <AuthenticatedImage
+                    src={url}
+                    alt={alt || ""}
+                    isStreaming={isStreaming}
+                    className="max-w-full rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200 cursor-pointer"
+                  />
+                );
+              }
               return (
                 <img
                   src={url}
                   alt={alt || ""}
-                  className={cn(
-                    "max-w-full rounded-lg",
-                    isGeneratedImage && "shadow-md hover:shadow-lg transition-shadow duration-200 cursor-pointer"
-                  )}
+                  className="max-w-full rounded-lg"
                   loading="lazy"
-                  onError={(e) => {
-                    const target = e.target as HTMLImageElement;
-                    target.style.display = "none";
-                    const fallback = document.createElement("div");
-                    fallback.className = "text-muted-foreground text-sm p-4 border border-dashed border-border rounded-lg";
-                    fallback.textContent = alt ? `[Imagem não carregada: ${alt}]` : "[Imagem não carregada]";
-                    target.parentNode?.appendChild(fallback);
-                  }}
                 />
               );
             },

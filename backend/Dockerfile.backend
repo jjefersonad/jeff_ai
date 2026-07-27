@@ -18,7 +18,14 @@ RUN pip install --no-cache-dir \
     "deepagents==0.6.12" \
     "langchain-ollama==1.1.0" \
     "langchain-openrouter==0.2.6" \
-    "langgraph-runtime-inmem>=0.30.0,<0.31.0" \
+    # Faixa ampliada em 2026-07-23: a versão `<0.31.0` que estava fixada
+    # tornava o `langgraph-api 0.11.1` (instalado pela imagem base
+    # `langchain/langgraph-api:3.11`) incompatível com o runtime. Sintoma:
+    # `Worker stats` mostra `active=0` e `requests_queued=5` parado — o
+    # runtime enfileira mas nunca processa. Sem o fix, qualquer
+    # `agent_runner.run()` que chega do `telegram_gateway` fica preso
+    # no pool do backend e o bot não responde nada.
+    "langgraph-runtime-inmem>=0.30.0,<0.32.0" \
     "python-docx==1.2.0" \
     "openpyxl==3.1.5" \
     "python-pptx==1.0.2" \
@@ -44,9 +51,26 @@ RUN pip install --no-cache-dir \
     # `psycopg`/`psycopg-pool` (usados por `auth/db.py`) já vêm transitivos do
     # checkpointer Postgres do LangGraph; `passlib`/`bcrypt` não.
     "passlib[bcrypt]==1.7.4" \
-    "bcrypt==4.0.1"
+    "bcrypt==4.0.1" \
+    # Necessário para o `langgraph_api` carregar o grafo `unified` sem
+    # `No module named 'telegram'`. O grafo importa `src.tools.telegram_tools`,
+    # `src.infrastructure.telegram.authorization` e `src.infrastructure.telegram.commands`
+    # (esta última pela change `telegram-slash-commands`), todos com imports
+    # top-level de `telegram`/`telegram.error` (pacote PyPI do
+    # `python-telegram-bot`). O `telegram_gateway` já faz `pip install` próprio
+    # no `command:` dele, mas o **backend** também precisa — sem esta linha o
+    # `collect_graphs_from_env` falha no boot. Versão alinhada com o
+    # `telegram_gateway` e com o `telegram_tools.py` (que usa `Bot` e
+    # `MessageLimit` do pacote). Registrado durante o verify da change
+    # `telegram-slash-commands` (2026-07-23).
+    "python-telegram-bot>=21.0"
 
 ENV PYTHONPATH="/deps/backend:$PYTHONPATH"
-ENV LANGGRAPH_STORE='{"type": "postgres", "url": "\${env:POSTGRES_URI}", "index": {"embed": "./src/models/ollama_embeddings.py:embed_texts", "dims": 1024, "fields": ["content"]}}'
-ENV LANGGRAPH_CHECKPOINTER='{"type": "postgres", "url": "\${env:POSTGRES_URI}"}'
+# `store` e `checkpointer` são lidos do `langgraph.json` (que resolve
+# `${env:POSTGRES_URI}` automaticamente em runtime). As ENVs `LANGGRAPH_STORE`
+# e `LANGGRAPH_CHECKPOINTER` foram removidas em 2026-07-23 porque o
+# `langgraph_api` (via `starlette.config`) tentava fazer `cast=StoreConfig`
+# no JSON bruto da ENV, e o placeholder `${env:POSTGRES_URI}` não-resolvido
+# fazia o cast falhar com `Not a valid StoreConfig`. O `langgraph.json` é
+# a fonte de verdade.
 ENV LANGSERVE_GRAPHS='{"unified": "src.composition.graphs:unified", "agent": "src.composition.graphs:agent", "sdd_agent": "src.composition.graphs:sdd_agent", "assistant": "src.composition.graphs:assistant"}'
