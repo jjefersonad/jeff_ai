@@ -17,10 +17,10 @@
  *
  * NOTE: this wrapper covers only *direct* `fetch` calls. The langgraph-sdk
  * `Client` (used for threads/runs/assistants) is configured separately in
- * `ClientProvider` via the `onRequest` hook to inject `credentials: 'include'`
- * (cookies travel automatically, but the 401 redirect-on-Client-error path
- * is handled by the user navigating naturally to a page that the middleware
- * will then gate).
+ * `ClientProvider`: `onRequest` injects `credentials: 'include'`, and
+ * `callerOptions.fetch` (`fetchWithUnauthorizedCheck`) calls `checkUnauthorized`
+ * on every SDK response — the same 401 handling this wrapper does, reused
+ * instead of duplicated (`session-expiry-redirect-to-login`).
  */
 
 export class ApiError extends Error {
@@ -38,6 +38,17 @@ let unauthorizedHandler: UnauthorizedHandler | null = null;
 
 export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
   unauthorizedHandler = handler;
+}
+
+/**
+ * Shared 401 check so a single function knows what happens on session
+ * expiry — called by `apiFetch` below, and by `ClientProvider`'s
+ * `fetchWithUnauthorizedCheck` (the langgraph-sdk `Client`'s `callerOptions.fetch`).
+ */
+export function checkUnauthorized(response: Response): void {
+  if (response.status === 401 && unauthorizedHandler) {
+    unauthorizedHandler();
+  }
 }
 
 /**
@@ -88,9 +99,7 @@ export async function apiFetch(
     },
   });
 
-  if (response.status === 401 && unauthorizedHandler) {
-    unauthorizedHandler();
-  }
+  checkUnauthorized(response);
 
   return response;
 }

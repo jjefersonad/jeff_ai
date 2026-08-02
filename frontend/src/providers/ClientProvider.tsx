@@ -12,11 +12,31 @@
  * localhost:8001). We use the SDK's `onRequest` hook to force
  * `credentials: 'include'` on every request so the httpOnly session cookie is
  * sent regardless of origin (REQ-003 of `frontend-route-guard`).
+ *
+ * Since the change `session-expiry-redirect-to-login`, the `Client` is also
+ * given a custom `callerOptions.fetch` (`fetchWithUnauthorizedCheck`). Every
+ * `BaseClient` subclass (threads, runs/streaming, assistants, crons) funnels
+ * through that one fetch implementation, so a 401 from any of them — chat
+ * streaming via `useStream`, thread listing/deletion via `useThreads`, etc —
+ * triggers the same `unauthorizedHandler`/`redirectToLogin` that `apiFetch`
+ * already triggers for REST calls (REQ-003).
  */
 
 import { createContext, useContext, useMemo, ReactNode } from "react";
 import { Client, RequestHook } from "@langchain/langgraph-sdk";
-import { getApiBaseUrl } from "@/lib/api";
+import { checkUnauthorized, getApiBaseUrl } from "@/lib/api";
+
+/**
+ * Custom `fetch` passed to the SDK `Client` via `callerOptions.fetch`. Mirrors
+ * the native `fetch` signature exactly (so `AsyncCaller.fetch(...args)` can
+ * call it positionally) and forwards to the real `fetch` unchanged, checking
+ * the response for a 401 before returning it — without consuming its body.
+ */
+export const fetchWithUnauthorizedCheck: typeof fetch = async (...args) => {
+  const response = await fetch(...args);
+  checkUnauthorized(response);
+  return response;
+};
 
 interface ClientContextValue {
   client: Client;
@@ -51,6 +71,7 @@ export function ClientProvider({ children }: ClientProviderProps) {
         "Content-Type": "application/json",
       },
       onRequest: forceCredentialsInclude,
+      callerOptions: { fetch: fetchWithUnauthorizedCheck },
     });
   }, []);
 

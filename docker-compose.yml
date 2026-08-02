@@ -76,10 +76,8 @@ services:
       # serviço na rede Docker — não a porta mapeada no host. Sobrescrevíveis
       # para deploys fora deste compose (bare metal, k8s, produção).
       BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:8000}
-      IMAGE_SERVER_INTERNAL_URL: ${IMAGE_SERVER_INTERNAL_URL:-http://image-server:8080}
     depends_on:
       - backend
-      - image-server
     networks:
       - jeff_ia-network
 

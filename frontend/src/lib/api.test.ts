@@ -2,10 +2,37 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   ApiError,
   DownloadError,
+  checkUnauthorized,
   fetchAuthenticatedBlobUrl,
   setUnauthorizedHandler,
   uploadAttachment,
 } from "./api";
+
+describe("checkUnauthorized (session-expiry-redirect-to-login, frontend-route-guard REQ-003)", () => {
+  afterEach(() => {
+    setUnauthorizedHandler(null);
+  });
+
+  it("calls the registered handler exactly once for a 401 response", () => {
+    const unauthorizedSpy = vi.fn();
+    setUnauthorizedHandler(unauthorizedSpy);
+
+    checkUnauthorized(new Response(null, { status: 401 }));
+
+    expect(unauthorizedSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not call the handler for non-401 responses", () => {
+    const unauthorizedSpy = vi.fn();
+    setUnauthorizedHandler(unauthorizedSpy);
+
+    checkUnauthorized(new Response(null, { status: 200 }));
+    checkUnauthorized(new Response(null, { status: 404 }));
+    checkUnauthorized(new Response(null, { status: 500 }));
+
+    expect(unauthorizedSpy).not.toHaveBeenCalled();
+  });
+});
 
 describe("uploadAttachment (chat-file-attachment REQ-002)", () => {
   const originalFetch = global.fetch;
