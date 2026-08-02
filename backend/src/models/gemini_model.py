@@ -1,10 +1,12 @@
 """Google Gemini model configuration with retry and fallback support."""
 
 import os
-from dotenv import load_dotenv
+
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-load_dotenv()
+from src.composition.env import load_env
+
+load_env()
 
 # Default instances
 gemini_model = ChatGoogleGenerativeAI(

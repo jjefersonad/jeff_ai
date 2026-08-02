@@ -55,7 +55,6 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # noqa: F401  (re-export)
 
 from deepagents import create_deep_agent
-from dotenv import load_dotenv
 from langgraph.store.base import BaseStore
 from langgraph.types import Checkpointer
 
@@ -72,6 +71,7 @@ from src.agents.unified.mcp_tools_middleware import McpToolsMiddleware
 from src.agents.unified.scoped_skills_middleware import ScopedSkillsMiddleware
 from src.agents.unified.tier_config import build_interrupt_on
 from src.composition.backends import FsRoute, make_backend_factory
+from src.composition.env import load_env
 from src.infrastructure.usage.callback import UsageRecordingCallback
 from src.infrastructure.usage.repository import UsageRepository
 from src.models.fallback_model import unified_model
@@ -134,7 +134,7 @@ from src.tools.telegram_tools import (
 from src.tools.test_runner_tools import run_tests
 from src.tools.whatsapp_tools import send_whatsapp_message
 
-load_dotenv()
+load_env()
 
 _log = logging.getLogger(__name__)
 

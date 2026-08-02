@@ -23,10 +23,9 @@ import asyncio
 import logging
 import os
 
-from dotenv import load_dotenv
-
 from src.application.ports.scheduled_task_repository import ScheduledTaskRepositoryPort
 from src.application.use_cases.run_scheduled_task import RunScheduledTask
+from src.composition.env import load_env
 from src.domain.scheduling import TaskStatus
 
 logger = logging.getLogger(__name__)
@@ -82,7 +81,7 @@ async def _run(
 
 def main(argv: list[str] | None = None) -> int:
     """Entry-point síncrono: parse argv, valida env, roda o job, devolve exit code."""
-    load_dotenv()
+    load_env()
     args = parse_args(argv)
 
     postgres_uri = os.environ.get("POSTGRES_URI")

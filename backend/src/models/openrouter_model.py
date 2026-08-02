@@ -8,10 +8,11 @@ neste projeto (deepagents chama `bind_tools` em toda requisição). Ver
 
 import os
 
-from dotenv import load_dotenv
 from langchain_openrouter import ChatOpenRouter
 
-load_dotenv()
+from src.composition.env import load_env
+
+load_env()
 
 openrouter_model = ChatOpenRouter(
     model=os.getenv("OPENROUTER_MODEL", "openrouter/free"),

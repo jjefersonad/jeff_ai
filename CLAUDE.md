@@ -150,17 +150,50 @@ The `unified-dev-agent` change was archived as complete while parts of it were n
 
 ## Environment Variables
 
-Required in `backend/.env`:
-- `POSTGRES_URI` — PostgreSQL connection string
-- `OLLAMA_BASE_URL` — Ollama server endpoint (default `http://10.0.0.214:11434`)
-- `OLLAMA_MODEL` — model name (default `minimax-m2.7:cloud`)
+Two files, one rule: **anything referenced as `${VAR}` in any `docker-compose*.yml` lives in
+`./.env`** (repo root); everything else — secrets the Python process reads directly and that no
+Compose file ever interpolates — lives in `backend/.env`. Docker Compose's `environment:` block
+(sourced from `./.env`) always wins over `env_file: backend/.env` for a repeated key, so
+duplicating a shared key in `backend/.env` doesn't just do nothing — it goes stale silently,
+which already happened once with `OLLAMA_MODEL`. Bare-metal runs (`python main.py`, `make dev`,
+`pytest`) apply the identical precedence via `src/composition/env.py:load_env()` (loads
+`backend/.env`, then `./.env` on top with `override=True`) — every `load_dotenv()` call site was
+replaced with this. See `.env.example` (root) and `backend/.env.example` for the full,
+commented list of variables in each file.
 
-Optional: `TAVILY_API_KEY` (web search) · `GOOGLE_API_KEY` (Gemini) · `LANGSMITH_API_KEY` (tracing)
-- `JEFF_AI_TZ` (opcional) — IANA timezone name (e.g., `America/Sao_Paulo`). Default: `UTC`. Usado pelo `current-date-context` para preencher o system prompt com a data local.
-- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_AUTHORIZED_CHAT_ID` (integracao-telegram) — token do bot Telegram e o único `chat_id` autorizado (allowlist single-user). Exigidas pelo processo `telegram_gateway.py`; sem elas o gateway não sobe.
-- `EVOLUTION_API_URL` / `EVOLUTION_API_KEY` / `EVOLUTION_INSTANCE_NAME` (whatsapp-evolution-channel, em implementação) — URL da Evolution API (`http://evolution_api:8080` dentro da rede Docker, ou a porta host `8085` fora dela), chave `AUTHENTICATION_API_KEY` configurada no container `evolution_api`, e o nome da instância única (número central do WhatsApp). **Vivem no `.env` da raiz do projeto** (mesmo tratamento de `REDIS_PASSWORD` — a substituição `${...}` do `docker-compose.yml` não lê `backend/.env`), propagadas ao container `backend` via `environment:`. Hoje (`task-infra-1`) só configuram o container `evolution_api`; o código do backend que as consome (webhook e tool de envio) ainda não existe — ver `task-channel-1`/`task-tools-1` do change.
-- `EVOLUTION_POSTGRES_PASSWORD` / `EVOLUTION_REDIS_PASSWORD` (whatsapp-evolution-channel) — credenciais do Postgres/Redis dedicados da Evolution API (`docker-compose.yml`, serviços `evolution_postgres`/`evolution_redis`). Também no `.env` da raiz, gerados localmente, não versionados — mesmo padrão de `REDIS_PASSWORD`.
-- `INTEGRATION_CREDENTIALS_KEY` (user-integration-credentials) — chave simétrica Fernet para cifra em repouso de `user_integrations.config` (Telegram, WhatsApp Business, SMTP). Gerar com `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+Root `./.env` — required: `POSTGRES_URI`, `REDIS_PASSWORD` (dev) or `REDIS_URI` (prod),
+`LANGSMITH_API_KEY`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `FRONTEND_ORIGIN`. Production-only
+(`docker-compose.prod.yml`): `POSTGRES_URI`/`REDIS_URI` must point at externally managed
+instances (no local `jeff_ia_postgres`/`jeff_ia_redis` containers), plus `NEXT_PUBLIC_API_URL`,
+`EVOLUTION_POSTGRES_PASSWORD`, `EVOLUTION_REDIS_PASSWORD`, `EVOLUTION_SERVER_URL`. Optional:
+`JEFF_AI_TZ` (IANA timezone, e.g. `America/Sao_Paulo`, default `UTC`, used by
+`current-date-context`), `SKILLS_ALLOWLIST`, `EVOLUTION_API_URL`/`EVOLUTION_API_KEY`/
+`EVOLUTION_INSTANCE_NAME` (whatsapp-evolution-channel — the backend client at
+`src/infrastructure/whatsapp/evolution_client.py` and the `send_whatsapp_message` tool are both
+implemented; without these three the WhatsApp channel doesn't authenticate).
+
+`backend/.env` — `GOOGLE_API_KEY`, `TAVILY_API_KEY`, `OPENROUTER_API_KEY`, `ADMIN_USERNAME` /
+`ADMIN_PASSWORD_HASH` (session-auth bootstrap), `TELEGRAM_BOT_TOKEN` / `TELEGRAM_AUTHORIZED_CHAT_ID`
+(integracao-telegram — required for `telegram_gateway.py` to start), `INTEGRATION_CREDENTIALS_KEY`
+(user-integration-credentials — Fernet key for `user_integrations.config` at rest; generate with
+`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`), plus
+tuning knobs (`OLLAMA_NUM_CTX`, `SESSION_TTL`, `SHELL_COMMAND_TIMEOUT`, etc.) that all have safe
+in-code defaults.
+
+### Production deploy
+
+`docker-compose.prod.yml` is standalone — it does **not** need `docker-compose.yml`. Fill in
+`./.env` and `backend/.env` from their `.env.example` files, then:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+This builds the frontend with `target: prod` (`next build && next start`, not the dev server —
+see `frontend/Dockerfile.frontend`) and brings up `backend`, `frontend`, `telegram_gateway`, and
+the Evolution API bundle (`evolution_postgres`/`evolution_redis`/`evolution_api`). Postgres/Redis
+for the Jeff AI app itself are expected to already exist (managed instances) — `POSTGRES_URI`/
+`REDIS_URI` have no fallback default in this file and the compose fails fast if either is unset.
 
 ---
 
