@@ -24,6 +24,8 @@ import {
 import { ChatMessage } from "@/app/components/ChatMessage";
 import { ToolApprovalInterrupt } from "@/app/components/ToolApprovalInterrupt";
 import { EnvelopeApprovalInterrupt } from "@/app/components/EnvelopeApprovalInterrupt";
+import { AssistantButton } from "@/app/components/AssistantButton";
+import { AttachmentPicker } from "@/app/components/AttachmentPicker";
 import type {
   TodoItem,
   ToolCall,
@@ -34,12 +36,20 @@ import type {
 import { Assistant, Message } from "@langchain/langgraph-sdk";
 import { extractStringFromMessageContent } from "@/app/utils/utils";
 import { useChatContext } from "@/providers/ChatProvider";
+import { uploadAttachment } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useStickToBottom } from "use-stick-to-bottom";
 import { FilesPopover } from "@/app/components/TasksFilesSidebar";
 
 interface ChatInterfaceProps {
   assistant: Assistant | null;
+  /**
+   * Short assistant id (e.g. `"unified"`) used by the toolbar
+   * `AssistantButton`. Kept separate from the resolved `assistant` object
+   * (a `langgraph-sdk` `Assistant` with versioned UUIDs) because the
+   * toolbar surfaces the user-chosen id, not the SDK's resolved record.
+   */
+  assistantId: string;
 }
 
 const getStatusIcon = (status: TodoItem["status"], className?: string) => {
@@ -68,7 +78,7 @@ const getStatusIcon = (status: TodoItem["status"], className?: string) => {
   }
 };
 
-export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
+export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant, assistantId }) => {
   const [metaOpen, setMetaOpen] = useState<"tasks" | "files" | null>(null);
   const tasksContainerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -82,10 +92,12 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
   const { scrollRef, contentRef } = useStickToBottom();
 
   const {
     stream,
+    threadId,
     messages,
     todos,
     files,
@@ -103,12 +115,37 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   const submitDisabled = isLoading || !assistant;
 
   const handleSubmit = useCallback(
-    (e?: FormEvent) => {
+    async (e?: FormEvent) => {
       if (e) {
         e.preventDefault();
       }
       const messageText = input.trim();
       if (!messageText || isLoading || submitDisabled) return;
+
+      let attachmentIds: string[] = [];
+      if (pendingAttachments.length > 0) {
+        if (!threadId) {
+          setUploadError(
+            "Cannot attach files before the conversation starts. Send a message first, then attach."
+          );
+          return;
+        }
+        setUploading(true);
+        try {
+          const uploaded = await Promise.all(
+            pendingAttachments.map((file) => uploadAttachment(file, threadId))
+          );
+          attachmentIds = uploaded.map((a) => a.attachment_id);
+        } catch (err) {
+          setUploadError(
+            err instanceof Error ? err.message : "Failed to upload attachment"
+          );
+          return;
+        } finally {
+          setUploading(false);
+        }
+      }
+
       // Anexa a imagem de referência (upload) com instrução explícita — o texto da
       // mensagem é o sinal mais forte para o modelo rotear o path para `references`
       // e NÃO tentar abrir/ler o arquivo.
@@ -118,12 +155,22 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
           `NÃO use read_file, ls ou glob neste caminho — ele NÃO está no seu workspace; a imagem só é lida pela tool de geração. ` +
           `Não peça a imagem novamente: ela já está disponível no servidor.`
         : messageText;
-      sendMessage(messageWithReference);
+      sendMessage(messageWithReference, attachmentIds);
       setInput("");
       setReference(null);
       setUploadError(null);
+      setPendingAttachments([]);
     },
-    [input, isLoading, reference, sendMessage, setInput, submitDisabled]
+    [
+      input,
+      isLoading,
+      reference,
+      sendMessage,
+      setInput,
+      submitDisabled,
+      pendingAttachments,
+      threadId,
+    ]
   );
 
   const handleFileChange = useCallback(
@@ -376,6 +423,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                     message={data.message}
                     toolCalls={data.toolCalls}
                     isLoading={isLoading}
+                    isStreaming={isLoading && isLastMessage}
                     actionRequestsMap={
                       isLastMessage ? actionRequestsMap : undefined
                     }
@@ -721,6 +769,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                   onChange={handleFileChange}
                   className="hidden"
                 />
+                <AssistantButton assistantId={assistantId} />
                 <Button
                   type="button"
                   variant="ghost"
@@ -735,6 +784,11 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                     <Paperclip size={16} />
                   )}
                 </Button>
+                <AttachmentPicker
+                  attachments={pendingAttachments}
+                  onAttachmentsChange={setPendingAttachments}
+                  disabled={uploading || submitDisabled}
+                />
               </div>
               <div className="flex justify-end gap-2">
                 <Button

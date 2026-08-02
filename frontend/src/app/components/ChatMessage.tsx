@@ -21,6 +21,13 @@ interface ChatMessageProps {
   message: Message;
   toolCalls: ToolCall[];
   isLoading?: boolean;
+  /**
+   * Whether this specific message is the one currently being streamed
+   * (i.e. `isLoading` AND this is the last message in the thread). Forwarded
+   * to `MarkdownContent` so a ```mermaid block only renders as a live
+   * diagram once the message has finished streaming.
+   */
+  isStreaming?: boolean;
   actionRequestsMap?: Map<string, ActionRequest>;
   reviewConfigsMap?: Map<string, ReviewConfig>;
   ui?: any[];
@@ -34,6 +41,7 @@ export const ChatMessage = React.memo<ChatMessageProps>(
     message,
     toolCalls,
     isLoading,
+    isStreaming = false,
     actionRequestsMap,
     reviewConfigsMap,
     ui,
@@ -117,7 +125,10 @@ export const ChatMessage = React.memo<ChatMessageProps>(
                     {messageContent}
                   </p>
                 ) : hasContent ? (
-                  <MarkdownContent content={messageContent} />
+                  <MarkdownContent
+                    content={messageContent}
+                    isStreaming={isStreaming}
+                  />
                 ) : null}
               </div>
             </div>

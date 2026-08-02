@@ -29,3 +29,12 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     strings e retorna a lista de vetores correspondentes.
     """
     return ollama_embeddings.embed_documents(texts)
+
+
+async def aembed_texts(texts: list[str]) -> list[list[float]]:
+    """Gera embeddings para uma lista de textos, sem bloquear o event loop.
+
+    Contraparte async de `embed_texts`, usada por `ScopedSkillsMiddleware.abefore_agent`
+    para não bloquear o servidor async ao calcular a relevância de skills por turno.
+    """
+    return await ollama_embeddings.aembed_documents(texts)

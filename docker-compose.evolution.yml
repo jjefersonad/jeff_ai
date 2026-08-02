@@ -1,0 +1,310 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.backend
+    container_name: jeff_ia_backend
+    ports:
+      - "8001:8000"
+    env_file:
+      - backend/.env
+    environment:
+      POSTGRES_URI: ${POSTGRES_URI:-postgresql://jeff_ia:jeff_ia@jeff_ia_postgres:5432/jeff_ia}
+      REDIS_URI: ${REDIS_URI:-redis://:${REDIS_PASSWORD}@jeff_ia_redis:6379/0}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY}
+      LANGCHAIN_TRACING_V2: true
+      LANGSMITH_PROJECT: jeff_ai_project
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
+      JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
+      # Evolution API (change whatsapp-evolution-channel) — mesmo tratamento de
+      # REDIS_PASSWORD/REDIS_URI acima: a substituição ${...} do compose só lê
+      # o .env da raiz (não backend/.env), então esses valores precisam chegar
+      # ao processo backend via este bloco environment:, não via env_file.
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution_api:8080}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY em .env}
+      EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-jeff-ai-central}
+      # Repos de terceiros liberados para install_external_skill (além dos defaults
+      # oficiais). Lista separada por vírgula. Liberado por decisão humana (REQ-007).
+      SKILLS_ALLOWLIST: ${SKILLS_ALLOWLIST:-usenotra/skills}
+      LANGGRAPH_STORE: '{"type": "postgres", "url": "$${env:POSTGRES_URI}", "index": {"embed": "./src/models/ollama_embeddings.py:embed_texts", "dims": 1024, "fields": ["content"]}}'
+      LANGGRAPH_CHECKPOINTER: '{"type": "postgres", "url": "$${env:POSTGRES_URI}"}'
+      # Espelha a seção "http" do langgraph.json: a imagem langchain/langgraph-api
+      # não lê langgraph.json em runtime, só as env vars LANGGRAPH_*. Sem esta var,
+      # HTTP_CONFIG fica None e o app customizado (webapp.py: /public/login,
+      # /public/logout, rotas de imagens/documentos) nunca é montado (achado
+      # empírico 2026-07-16, change autenticacao-jwt-rotas-protegidas).
+      LANGGRAPH_HTTP: '{"app": "./src/infrastructure/web/webapp.py:app", "cors": {"allow_origins": ["${FRONTEND_ORIGIN:-http://localhost:3002}"], "allow_credentials": true, "allow_methods": ["*"], "allow_headers": ["*"]}}'
+      # LANGSERVE_CORS_ALLOW_ORIGINS/LANGSERVE_CORS_ALLOW_CREDENTIALS não são lidas
+      # por `langgraph_api` (nenhum env var com esse prefixo existe para cors no
+      # pacote instalado, achado empírico 2026-07-16) — eram config morta desde
+      # sempre, e o servidor caía no default allow_origins="*" com
+      # allow_credentials=True hardcoded. A variável real é `CORS_ALLOW_ORIGINS`
+      # (sem prefixo, lista separada por vírgula); `allow_credentials=True` já é
+      # hardcoded no fallback do servidor quando CORS_CONFIG não está setado.
+      CORS_ALLOW_ORIGINS: ${FRONTEND_ORIGIN:-http://localhost:3002}
+    depends_on:
+      jeff_ia_postgres:
+        condition: service_healthy
+      jeff_ia_redis:
+        condition: service_started
+    volumes:
+      - ./backend/outputs:/deps/backend/outputs
+      - ./backend/langgraph.json:/deps/backend/langgraph.json
+      # Persiste skills criadas/instaladas pelo assistant em runtime.
+      - ./backend/skills:/deps/backend/skills
+      # [DEV/teste] monta o código-fonte do host para testar mudanças sem rebuild da imagem.
+      - ./backend/src:/deps/backend/src
+      # Persiste tools Python geradas (staging) + approved.json para revisão humana no host.
+      - ./backend/src/tools/generated:/deps/backend/src/tools/generated
+    networks:
+      - jeff_ia-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile.frontend
+    container_name: jeff_ia_frontend
+    ports:
+      - "3002:3000"
+    environment:
+      LANGSERVE_URL: http://localhost:8001
+      # Origem fixa do backend, usada pelo browser (cross-origin, com cookies
+      # via credentials:'include') — não mais configurável por usuário via
+      # Settings (ver frontend/src/lib/api.ts:getApiBaseUrl). NEXT_PUBLIC_*
+      # é lido pelo `next dev` a cada compilação, então a env var do container
+      # basta (sem precisar de build-arg).
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8001}
+      # Alvos server-side dos `rewrites()` em frontend/next.config.ts
+      # (proxy de /api/images, /api/files, /api/references, /api/mcp). Rodam
+      # dentro do processo Next.js, então usam o hostname + porta interna do
+      # serviço na rede Docker — não a porta mapeada no host. Sobrescrevíveis
+      # para deploys fora deste compose (bare metal, k8s, produção).
+      BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:8000}
+    depends_on:
+      - backend
+    networks:
+      - jeff_ia-network
+
+  jeff_ia_postgres:
+    image: pgvector/pgvector:pg15
+    container_name: jeff_ia_postgres
+    environment:
+      POSTGRES_DB: jeff_ia
+      POSTGRES_USER: jeff_ia
+      POSTGRES_PASSWORD: jeff_ia
+    ports:
+      - "5436:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jeff_ia -d jeff_ia"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jeff_ia-network
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+
+  jeff_ia_redis:
+    image: redis:7-alpine
+    container_name: jeff_ia_redis
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - jeff_ia-network
+
+  jeff_ia_pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: jeff_ia_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.local
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    depends_on:
+      jeff_ia_postgres:
+        condition: service_healthy
+    networks:
+      - jeff_ia-network
+    profiles:
+      - admin
+
+  # Gateway do canal Telegram (change `integracao-telegram`,
+  # `integracao-telegram-task-ops-1`).
+  #
+  # Processo próprio de longa duração que faz long-polling da Bot API do
+  # Telegram (sem webhook, sem ingress público — mesma decisão do Hermes Agent
+  # que o usuário roda em produção) e roteia cada mensagem autorizada para o
+  # grafo `unified` reaproveitando o `AgentRunnerPort`/`LangGraphDirectAgentRunner`
+  # que `agendamento-jeff-cli` também consome.
+  #
+  # Sem as env vars TELEGRAM_BOT_TOKEN/TELEGRAM_AUTHORIZED_CHAT_ID o bootstrap
+  # do entrypoint falha rápido com mensagem citando-as (ver
+  # `src/infrastructure/telegram/telegram_gateway.py:bootstrap_config`). Sem
+  # POSTGRES_URI o entrypoint também sai com erro — o mapeamento chat_id↔thread_id
+  # e o pool do runner precisam do banco.
+  #
+  # Reinicia sozinho em qualquer crash: o risco do polling cair silenciosamente
+  # e o usuário parar de receber respostas é mitigado por `restart: unless-stopped`
+  # (ver Risks/Trade-offs no design da change).
+  #
+  # Obs.: a imagem `langchain/langgraph-api:3.11` (base do `Dockerfile.backend`)
+  # não inclui `python-telegram-bot`; o container `backend` traz essa dep
+  # transitivamente apenas em dev (`.venv`). Para o gateway subir **neste**
+  # compose, o entrypoint faz `pip install` explícito no startup (alternativa
+  # ao conserto do Dockerfile, que fica fora do escopo desta task).
+  telegram_gateway:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.backend
+    container_name: jeff_ia_telegram_gateway
+    restart: unless-stopped
+    env_file:
+      - backend/.env
+    environment:
+      # Token do bot e chat_id autorizado (allowlist single-user, REQ-002 do
+      # telegram-channel-spec). `env_file` já propaga `TELEGRAM_BOT_TOKEN` e
+      # `TELEGRAM_AUTHORIZED_CHAT_ID` do `backend/.env`; redeclarar aqui
+      # seria redundante.
+      # Mesmo fallback do serviço `backend`: usa o host interno do Postgres
+      # na rede docker, não o mapeamento de porta do host.
+      POSTGRES_URI: ${POSTGRES_URI:-postgresql://jeff_ia:jeff_ia@jeff_ia_postgres:5432/jeff_ia}
+      REDIS_URI: ${REDIS_URI:-redis://:${REDIS_PASSWORD}@jeff_ia_redis:6379/0}
+      # === Telegram Gateway (change telegram-slash-commands) ===
+      # Token e chat_id são propagados pelo `env_file: backend/.env` (linha 192).
+      # Não redeclarar aqui — o `environment:` do compose é expandido a partir
+      # do shell do host (não do `.env`), então ${TELEGRAM_BOT_TOKEN} viraria
+      # string vazia quando o usuário não tem a var exportada no shell,
+      # sobrescrevendo o valor correto do `.env` com warning
+      # `variable is not set, defaulting to a blank string`.
+      # (registrado durante o verify/2026-07-23)
+    depends_on:
+      jeff_ia_postgres:
+        condition: service_healthy
+    # Volumes compartilhados com o `backend`:
+    # - `outputs`: o gateway precisa enxergar o mesmo `backend/outputs/` que
+    #   as tools `send_telegram_photo`/`_document` (REQ-004 do
+    #   telegram-tools-spec) leem para resolver o allowlist de path. Sem este
+    #   mount, o path absoluto `backend/outputs/...` (resolvido a partir do
+    #   WORKDIR `/deps/backend` da imagem) apontaria para o diretório interno
+    #   do container, sem os artefatos gerados pelo `backend`.
+    # - `src`: mesma justificativa do `backend` — DEV/teste sem rebuild. Em
+    #   produção real, esse mount é dispensável.
+    volumes:
+      - ./backend/outputs:/deps/backend/outputs
+      - ./backend/src:/deps/backend/src
+    # `entrypoint:` (e não `command:`) é necessário porque o ENTRYPOINT da
+    # imagem `langchain/langgraph-api:3.11` é `/storage/entrypoint.sh` que
+    # termina com `exec uvicorn langgraph_api.server:app` — ou seja, sempre
+    # sobe o `uvicorn` da API HTTP do langgraph, ignorando o `command:` do
+    # compose. Para o `telegram_gateway` rodar `python telegram_gateway.py`
+    # em vez do `uvicorn`, precisamos **substituir o entrypoint inteiro**.
+    # (verificado em 2026-07-23: o stack `uvicorn` aparecia no log mesmo
+    # com `command:` definido, e o erro `Config 'LANGGRAPH_STORE' has
+    # value '${env:...}'` era o `langgraph_api/config/__init__.py` tentando
+    # inicializar o store/checkpointer do uvicorn — não tem nada a ver
+    # com o nosso script).
+    #
+    # Usa um script wrapper (e não `sh -c "..."` inline) porque o `sh -c`
+    # abre stdout/stderr como pipes que ficam sem leitor após o `exec
+    # python`, fazendo o `python` travar no write quando o buffer enche.
+    # Sintoma: `docker logs` mostra `pip install` mas nada do `python`.
+    # O wrapper `telegram_gateway_entrypoint.sh` reabre FDs e usa
+    # `exec python -u` para garantir saída visível.
+    # (verificado em 2026-07-23: container Up, PID 1 em `ep_poll`, FDs
+    # 1/2 = pipes sem leitor, `docker logs` congelado)
+    entrypoint: ["/bin/sh", "/deps/backend/telegram_gateway_entrypoint.sh"]
+    networks:
+      - jeff_ia-network
+
+  # Postgres/Redis dedicados da Evolution API (change `whatsapp-evolution-channel`,
+  # `whatsapp-evolution-channel-task-infra-1`) — instância própria, separada de
+  # `jeff_ia_postgres`/`jeff_ia_redis`, para não acoplar o schema gerenciado via
+  # Prisma pela Evolution API ao banco do Jeff AI (design Decision 3).
+  evolution_postgres:
+    image: postgres:15-alpine
+    container_name: jeff_ia_evolution_postgres
+    environment:
+      POSTGRES_DB: evolution
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: ${EVOLUTION_POSTGRES_PASSWORD:?defina EVOLUTION_POSTGRES_PASSWORD em .env}
+    volumes:
+      - evolution_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jeff_ia-network
+
+  evolution_redis:
+    image: redis:7-alpine
+    container_name: jeff_ia_evolution_redis
+    command: redis-server --requirepass ${EVOLUTION_REDIS_PASSWORD:?defina EVOLUTION_REDIS_PASSWORD em .env}
+    volumes:
+      - evolution_redis_data:/data
+    networks:
+      - jeff_ia-network
+
+  # Evolution API em modo Cloud API (número central da Jeff AI, `whatsapp-channel`
+  # capability) — uma única instância, decisão explícita de manter a Evolution
+  # API como conector mesmo com um número só (design Decision 3 de
+  # `whatsapp-evolution-channel`), para deixar aberta a porta de um eventual
+  # modo "número próprio por usuário" no futuro sem reescrever a integração.
+  #
+  # `AUTHENTICATION_API_KEY` é a chave que o backend deverá usar para
+  # autenticar contra esta API (cliente HTTP ainda não implementado nesta
+  # task — ver `task-channel-1`/`task-tools-1`) — não confundir com o token
+  # do WABA em si (esse é configurado por instância via API/painel, fora
+  # deste compose).
+  evolution_api:
+    image: evoapicloud/evolution-api:v2.1.1
+    container_name: jeff_ia_evolution_api
+    restart: unless-stopped
+    ports:
+      - "8085:8080"
+    environment:
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY em .env}
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${EVOLUTION_POSTGRES_PASSWORD}@evolution_postgres:5432/evolution
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://:${EVOLUTION_REDIS_PASSWORD}@evolution_redis:6379/0
+      SERVER_URL: ${EVOLUTION_SERVER_URL:-http://localhost:8085}
+    depends_on:
+      evolution_postgres:
+        condition: service_healthy
+      evolution_redis:
+        condition: service_started
+    volumes:
+      - evolution_instances:/evolution/instances
+    networks:
+      - jeff_ia-network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  evolution_postgres_data:
+    driver: local
+  evolution_redis_data:
+    driver: local
+  evolution_instances:
+    driver: local
+
+networks:
+  jeff_ia-network:
+    driver: bridge

@@ -30,9 +30,15 @@ neste change (ver `user-data-isolation-design`, decisão "Ownership de
 threads/runs/crons via @auth.on global + metadata.owner"). `assistants` e o
 `store` nativo ficam fora de escopo (handler devolve filtro vazio para eles) —
 ver Open Questions do design.
+
+`@auth.on.threads.create_run` carimba `configurable.user_key = web:<identity>`
+a partir da sessão (nunca do body do frontend) para metering de tokens
+(`track-user-token-usage`).
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from langgraph_sdk import Auth
 from starlette.requests import Request
@@ -41,6 +47,7 @@ from src.infrastructure.auth.session_resolver import (
     SessionAuthError,
     resolve_session_user,
 )
+from src.infrastructure.usage.user_key import web_user_key
 
 auth = Auth()
 
@@ -68,6 +75,56 @@ async def authenticate(request: Request) -> Auth.types.MinimalUserDict:
 _OWNER_SCOPED_RESOURCES = ("threads", "runs", "crons")
 
 
+def _stamp_web_user_key(value: dict[str, Any], identity: str) -> str:
+    """Carimba `configurable.user_key = web:<identity>` no payload create_run.
+
+    Sempre sobrescreve `user_key` enviado pelo cliente — o frontend nunca é
+    fonte de verdade (track-user-token-usage / REQ-002, REQ-003).
+    """
+    key = web_user_key(identity)
+    metadata = value.setdefault("metadata", {})
+    if isinstance(metadata, dict):
+        metadata["owner"] = identity
+
+    kwargs = value.setdefault("kwargs", {})
+    if not isinstance(kwargs, dict):
+        kwargs = {}
+        value["kwargs"] = kwargs
+
+    config = kwargs.setdefault("config", {})
+    if not isinstance(config, dict):
+        config = {}
+        kwargs["config"] = config
+
+    configurable = config.setdefault("configurable", {})
+    if not isinstance(configurable, dict):
+        configurable = {}
+        config["configurable"] = configurable
+
+    configurable["user_key"] = key
+    return key
+
+
+@auth.on.threads.create_run
+async def stamp_user_key_on_run_create(
+    ctx: Auth.types.AuthContext,
+    value: dict,
+) -> Auth.types.FilterType:
+    """Carimba `user_key` server-side ao criar um run web.
+
+    Mais específico que `@auth.on` — toma precedência em `create_run`.
+    Replica o filtro por `owner` (e bypass de admin) do handler global, e
+    adicionalmente injeta `configurable.user_key = web:<identity>`,
+    sobrescrevendo qualquer valor do cliente.
+    """
+    identity = ctx.user.identity
+    _stamp_web_user_key(value, identity)
+
+    if "admin" in ctx.user.permissions:
+        return {}
+    return {"owner": identity}
+
+
 @auth.on
 async def authorize_by_owner(
     ctx: Auth.types.AuthContext, value: dict
@@ -80,6 +137,9 @@ async def authorize_by_owner(
     de bypass (REQ-009 de `backend-session-auth`), lido de
     `ctx.user.permissions` — o mesmo valor que `authenticate()` populou a
     partir de `user.role`, sem reimplementar a resolução de sessão (REQ-008).
+
+    `create_run` é tratado por `stamp_user_key_on_run_create` (mais específico);
+    este handler não roda nesse caminho.
     """
     if "admin" in ctx.user.permissions or ctx.resource not in _OWNER_SCOPED_RESOURCES:
         return {}

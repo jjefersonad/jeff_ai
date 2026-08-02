@@ -1,0 +1,252 @@
+"""Testes do domínio de scheduling (task `agendamento-jeff-cli-task-domain-1`).
+
+Puro: sem framework, sem I/O. Cobre:
+- Máquina de estado de `ScheduledTask` (transições válidas/inválidas — REQ-002).
+- Campo `tool_scope` tipado como `ToolScope` (REQ-006).
+- Validação de `Schedule.__post_init__` para `kind="cron"` e `"once"`.
+- Ausência de imports proibidos (langgraph / psycopg / fastapi / apscheduler).
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+from src.domain.scheduling.scheduled_task import (
+    Schedule,
+    ScheduledTask,
+    TaskStatus,
+    ToolScope,
+)
+from src.domain.shared.errors import DomainError
+
+# ---------------------------------------------------------------------------
+# REQ-002 — Máquina de estado
+# ---------------------------------------------------------------------------
+
+
+def _new_task() -> ScheduledTask:
+    """Constrói uma tarefa no estado SCHEDULED para uso nos testes."""
+    return ScheduledTask(
+        id="t-1",
+        prompt="olá",
+        thread_id="th-1",
+        schedule=Schedule(kind="once", expr="2026-01-01T00:00:00"),
+        tool_scope=ToolScope.RESTRICTED,
+    )
+
+
+def test_task_starts_in_scheduled_state():
+    t = _new_task()
+    assert t.status == TaskStatus.SCHEDULED
+
+
+def test_start_transitions_scheduled_to_running():
+    t = _new_task()
+    t.start()
+    assert t.status == TaskStatus.RUNNING
+    assert t.started_at is not None
+
+
+def test_succeed_transitions_running_to_succeeded():
+    t = _new_task()
+    t.start()
+    t.succeed()
+    assert t.status == TaskStatus.SUCCEEDED
+    assert t.finished_at is not None
+
+
+def test_fail_transitions_running_to_failed_with_error():
+    t = _new_task()
+    t.start()
+    t.fail("boom")
+    assert t.status == TaskStatus.FAILED
+    assert t.finished_at is not None
+    assert t.error == "boom"
+
+
+def test_succeed_outside_running_is_rejected():
+    t = _new_task()  # ainda SCHEDULED
+    with pytest.raises(DomainError, match="RUNNING"):
+        t.succeed()
+
+
+def test_fail_outside_running_is_rejected():
+    t = _new_task()
+    with pytest.raises(DomainError, match="RUNNING"):
+        t.fail("nunca rodou")
+
+
+def test_start_from_running_is_rejected():
+    t = _new_task()
+    t.start()
+    with pytest.raises(DomainError, match="SCHEDULED"):
+        t.start()
+
+
+def test_start_from_terminal_state_is_rejected():
+    t = _new_task()
+    t.start()
+    t.succeed()
+    with pytest.raises(DomainError, match="SCHEDULED"):
+        t.start()
+
+
+def test_succeed_from_succeeded_is_rejected():
+    t = _new_task()
+    t.start()
+    t.succeed()
+    with pytest.raises(DomainError, match="RUNNING"):
+        t.succeed()
+
+
+# ---------------------------------------------------------------------------
+# REQ-006 — tool_scope tipado
+# ---------------------------------------------------------------------------
+
+
+def test_tool_scope_is_typed_field_with_default_restricted():
+    """Default sensato: RESTRICTED — só promove a FULL se o caller pedir."""
+    t = _new_task()
+    assert t.tool_scope == ToolScope.RESTRICTED
+    assert isinstance(t.tool_scope, ToolScope)
+
+
+def test_tool_scope_full_is_accepted():
+    t = ScheduledTask(
+        id="t-2",
+        prompt="olá",
+        thread_id="th-2",
+        schedule=Schedule(kind="once", expr="2026-01-01T00:00:00"),
+        tool_scope=ToolScope.FULL,
+    )
+    assert t.tool_scope == ToolScope.FULL
+
+
+# ---------------------------------------------------------------------------
+# Validação de Schedule
+# ---------------------------------------------------------------------------
+
+
+def test_schedule_once_accepts_iso_datetime():
+    s = Schedule(kind="once", expr="2026-12-31T23:59:00")
+    assert s.kind == "once"
+    assert s.expr == "2026-12-31T23:59:00"
+
+
+@pytest.mark.parametrize("expr", ["0 9 * * *", "*/15 * * * *", "0 0 1 * *"])
+def test_schedule_cron_accepts_valid_5_field_expression(expr: str):
+    s = Schedule(kind="cron", expr=expr)
+    assert s.kind == "cron"
+    assert s.expr == expr
+
+
+def test_schedule_cron_rejects_too_few_fields():
+    with pytest.raises(DomainError, match="cron"):
+        Schedule(kind="cron", expr="0 9 * *")
+
+
+def test_schedule_cron_rejects_out_of_range_hour():
+    """Hora 25 está fora do range [0,23] — cinco campos válidos não bastam."""
+    with pytest.raises(DomainError, match="cron"):
+        Schedule(kind="cron", expr="0 25 * * *")
+
+
+def test_schedule_cron_rejects_out_of_range_minute():
+    """Minuto 60 está fora do range [0,59] — cinco campos válidos não bastam."""
+    with pytest.raises(DomainError, match="cron"):
+        Schedule(kind="cron", expr="60 9 * * *")
+
+
+def test_schedule_cron_rejects_non_numeric_field():
+    with pytest.raises(DomainError, match="cron"):
+        Schedule(kind="cron", expr="x 9 * * *")
+
+
+def test_schedule_once_rejects_malformed_expr():
+    with pytest.raises(DomainError, match="once"):
+        Schedule(kind="once", expr="não-é-iso")
+
+
+def test_schedule_rejects_unknown_kind():
+    with pytest.raises(DomainError, match="kind"):
+        Schedule(kind="intervalo", expr="x")  # type: ignore[arg-type]
+
+
+def test_schedule_rejects_empty_expr():
+    with pytest.raises(DomainError, match="expr"):
+        Schedule(kind="once", expr="")
+
+
+# ---------------------------------------------------------------------------
+# Validação da entidade ScheduledTask
+# ---------------------------------------------------------------------------
+
+
+def test_scheduled_task_requires_non_empty_prompt():
+    with pytest.raises(DomainError, match="prompt"):
+        ScheduledTask(
+            id="t-x",
+            prompt="   ",
+            thread_id="th-1",
+            schedule=Schedule(kind="once", expr="2026-01-01T00:00:00"),
+        )
+
+
+def test_scheduled_task_requires_id():
+    with pytest.raises(DomainError, match="id"):
+        ScheduledTask(
+            id="",
+            prompt="p",
+            thread_id="th-1",
+            schedule=Schedule(kind="once", expr="2026-01-01T00:00:00"),
+        )
+
+
+def test_scheduled_task_requires_thread_id():
+    with pytest.raises(DomainError, match="thread_id"):
+        ScheduledTask(
+            id="t-1",
+            prompt="p",
+            thread_id="",
+            schedule=Schedule(kind="once", expr="2026-01-01T00:00:00"),
+        )
+
+
+def test_scheduled_task_default_timeout_is_sensible():
+    t = _new_task()
+    assert t.timeout_seconds > 0
+    assert t.timeout_seconds <= 24 * 60 * 60  # ≤ 1 dia
+
+
+def test_scheduled_task_rejects_non_positive_timeout():
+    with pytest.raises(DomainError, match="timeout"):
+        ScheduledTask(
+            id="t-1",
+            prompt="p",
+            thread_id="th-1",
+            schedule=Schedule(kind="once", expr="2026-01-01T00:00:00"),
+            timeout_seconds=0,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pureza: zero import proibido
+# ---------------------------------------------------------------------------
+
+
+_FORBIDDEN = ("langgraph", "psycopg", "fastapi", "apscheduler")
+
+
+def test_domain_module_has_no_framework_imports():
+    """domain/ não pode importar nada de framework — só stdlib + domínio."""
+    src = (Path(__file__).parent.parent / "src" / "domain" / "scheduling" / "scheduled_task.py").read_text()
+    # Remove comentários e docstrings (defesa contra menção explicativa em comentário)
+    no_strings = re.sub(r'""".*?"""', "", src, flags=re.DOTALL)
+    no_strings = re.sub(r"'''.*?'''", "", no_strings, flags=re.DOTALL)
+    for forbidden in _FORBIDDEN:
+        # Procura pelo padrão `import X` ou `from X` (não em string de docstring)
+        assert not re.search(rf"^\s*(import|from)\s+{forbidden}\b", no_strings, flags=re.MULTILINE), (
+            f"domain/scheduling/scheduled_task.py não pode importar '{forbidden}'"
+        )

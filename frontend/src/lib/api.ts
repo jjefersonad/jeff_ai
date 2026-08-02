@@ -17,10 +17,10 @@
  *
  * NOTE: this wrapper covers only *direct* `fetch` calls. The langgraph-sdk
  * `Client` (used for threads/runs/assistants) is configured separately in
- * `ClientProvider` via the `onRequest` hook to inject `credentials: 'include'`
- * (cookies travel automatically, but the 401 redirect-on-Client-error path
- * is handled by the user navigating naturally to a page that the middleware
- * will then gate).
+ * `ClientProvider`: `onRequest` injects `credentials: 'include'`, and
+ * `callerOptions.fetch` (`fetchWithUnauthorizedCheck`) calls `checkUnauthorized`
+ * on every SDK response — the same 401 handling this wrapper does, reused
+ * instead of duplicated (`session-expiry-redirect-to-login`).
  */
 
 export class ApiError extends Error {
@@ -38,6 +38,17 @@ let unauthorizedHandler: UnauthorizedHandler | null = null;
 
 export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
   unauthorizedHandler = handler;
+}
+
+/**
+ * Shared 401 check so a single function knows what happens on session
+ * expiry — called by `apiFetch` below, and by `ClientProvider`'s
+ * `fetchWithUnauthorizedCheck` (the langgraph-sdk `Client`'s `callerOptions.fetch`).
+ */
+export function checkUnauthorized(response: Response): void {
+  if (response.status === 401 && unauthorizedHandler) {
+    unauthorizedHandler();
+  }
 }
 
 /**
@@ -80,14 +91,15 @@ export async function apiFetch(
     ...rest,
     credentials: "include",
     headers: {
-      "Content-Type": "application/json",
+      // FormData bodies (multipart uploads) must NOT get an explicit
+      // Content-Type — the browser sets one itself, including the boundary
+      // parameter, only when the header is left unset.
+      ...(rest.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
       ...(headers ?? {}),
     },
   });
 
-  if (response.status === 401 && unauthorizedHandler) {
-    unauthorizedHandler();
-  }
+  checkUnauthorized(response);
 
   return response;
 }
@@ -140,6 +152,29 @@ function toPath(url: string): string {
 }
 
 /**
+ * Fetches a session-protected resource (image, document, …) via `apiFetch` and
+ * returns an object URL for the response blob. Caller MUST revoke the URL with
+ * `URL.revokeObjectURL` when done.
+ *
+ * Bare `<img src="/api/images/...">` / `<a href>` against a SameSite=Strict
+ * session cookie often fail when the page origin (frontend) differs from the
+ * API origin (`NEXT_PUBLIC_API_URL`), or when Next middleware redirects the
+ * rewrite to the login HTML. Fetching through `apiFetch` (credentials always
+ * included, resolved against the backend origin) avoids both.
+ */
+export async function fetchAuthenticatedBlobUrl(url: string): Promise<string> {
+  const response = await apiFetch(toPath(url));
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new DownloadError(response.status, message, downloadErrorKind(response.status));
+  }
+
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
+
+/**
  * Downloads a session-protected file (e.g. a generated `/api/files/docx/...` document)
  * by fetching it with credentials attached and saving the response as a blob, instead of
  * letting the browser navigate directly to the URL.
@@ -155,15 +190,7 @@ export async function downloadAuthenticatedFile(
   url: string,
   filename: string
 ): Promise<void> {
-  const response = await apiFetch(toPath(url));
-
-  if (!response.ok) {
-    const message = await parseErrorMessage(response);
-    throw new DownloadError(response.status, message, downloadErrorKind(response.status));
-  }
-
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
+  const objectUrl = await fetchAuthenticatedBlobUrl(url);
   try {
     const link = document.createElement("a");
     link.href = objectUrl;
@@ -174,4 +201,43 @@ export async function downloadAuthenticatedFile(
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
+}
+
+export interface UploadedAttachment {
+  attachment_id: string;
+  url: string;
+  metadata: {
+    thread_id: string;
+    filename: string;
+    content_type: string;
+    size_bytes: number;
+  };
+}
+
+/**
+ * Uploads a chat attachment (`POST /api/attachments`) through `apiFetch`, so
+ * the session cookie is always attached and a 401 always triggers the same
+ * re-authentication flow as every other authenticated call — never a
+ * hand-rolled `fetch()`, which is what caused the original `Unauthorized`
+ * bug on this same upload path.
+ */
+export async function uploadAttachment(
+  file: File,
+  threadId: string
+): Promise<UploadedAttachment> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("thread_id", threadId);
+
+  const response = await apiFetch("/api/attachments", {
+    method: "POST",
+    body: form,
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new ApiError(response.status, message);
+  }
+
+  return (await response.json()) as UploadedAttachment;
 }

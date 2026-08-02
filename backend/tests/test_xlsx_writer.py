@@ -175,6 +175,18 @@ def test_sheet_rejects_empty_name():
         Sheet(name="   ", rows=(("a",),))
 
 
+def test_sheet_rejects_empty_rows():
+    """REQ-006 (xlsx-generation): aba presente mas sem linhas é barrada no domínio."""
+    with pytest.raises(DomainError, match="rows"):
+        Sheet(name="Vendas", rows=())
+
+
+def test_sheet_accepts_non_empty_rows():
+    """REQ-006 (regressão): aba com ao menos uma linha continua funcionando."""
+    sheet = Sheet(name="Vendas", rows=(("Mês", "Receita"), ("Jan", 12000)), header=True)
+    assert sheet.rows == (("Mês", "Receita"), ("Jan", 12000))
+
+
 # --- Tool create_xlsx_spreadsheet (adapter fino) --------------------------
 
 

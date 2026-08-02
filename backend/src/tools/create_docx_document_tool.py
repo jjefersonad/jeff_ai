@@ -73,12 +73,13 @@ def _to_blocks(raw_blocks: list[DocxBlockInput]) -> tuple[object, ...]:
 
 
 def _to_docx_spec(payload: Union[str, DocxDocumentInput]) -> DocxSpec:
-    """Constrói o `DocxSpec` a partir da entrada (string simples ou input estruturado).
+    """Constrói o `DocxSpec` a partir da entrada (string JSON ou input estruturado).
 
-    String → documento só com o título (modo legado) — a menos que a string
-    seja, na verdade, um `DocxDocumentInput` serializado em JSON pela camada de
-    tool-calling (degradação do argumento estruturado para string). Nesse caso,
-    parseia e valida em vez de gravar o JSON bruto como título.
+    String → só é aceita quando é, na verdade, um `DocxDocumentInput`
+    serializado em JSON pela camada de tool-calling (degradação do argumento
+    estruturado para string); nesse caso, parseia e valida em vez de gravar o
+    JSON bruto como título. Uma string simples não-JSON é rejeitada — não
+    existe mais um "modo legado" que gera documento apenas com título.
     DocxDocumentInput → título + blocos convertidos via `_to_blocks`.
     """
     if isinstance(payload, str):
@@ -90,7 +91,10 @@ def _to_docx_spec(payload: Union[str, DocxDocumentInput]) -> DocxSpec:
             except (json.JSONDecodeError, ValidationError) as exc:
                 raise DomainError(f"payload JSON inválido: {exc}") from exc
         else:
-            return DocxSpec(title=payload)
+            raise DomainError(
+                "Entrada string simples requer conteúdo estruturado (blocks); "
+                "use DocxDocumentInput ou um JSON serializado."
+            )
     return DocxSpec(title=payload.title, blocks=_to_blocks(payload.blocks))
 
 
@@ -107,12 +111,17 @@ async def create_docx_document(
     - url: URL servida para download — SEMPRE usar em markdown para exibir o link.
     - metadata: metadados do documento gerado (kind, título, contagem de blocos).
 
-    Aceita entrada tolerante:
-    - string simples → documento com apenas o título (modo legado).
-    - DocxDocumentInput (Pydantic) com `title` e `blocks` (heading/paragraph/
-      list/table/image). Blocos com `type` desconhecido são ignorados.
+    Requer conteúdo estruturado — SEMPRE envie `DocxDocumentInput` (Pydantic)
+    com `title` e `blocks` não vazio (heading/paragraph/list/table/image),
+    populado com o conteúdo real pedido pelo usuário. Blocos com `type`
+    desconhecido são ignorados. Uma string simples (não-JSON) NÃO é aceita
+    como atalho para um documento só com título — é rejeitada com `error`.
+    Uma string que seja um `DocxDocumentInput` serializado em JSON ainda é
+    tolerada (parseada e validada), para o caso de a camada de tool-calling
+    degradar o argumento estruturado em texto.
 
-    Em caso de entrada inválida, retorna um dicionário com a chave `error`
+    Em caso de entrada inválida (incluindo string simples não-JSON, ou
+    `blocks` vazio/omitido), retorna um dicionário com a chave `error`
     descrevendo o problema e nenhum arquivo parcial é deixado em disco.
 
     Example return:
