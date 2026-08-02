@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { DownloadError, downloadAuthenticatedFile } from "@/lib/api";
 import { AuthenticatedImage } from "@/app/components/AuthenticatedImage";
 import { MermaidDiagram } from "@/app/components/MermaidDiagram";
+import { ImageZoomModal } from "@/app/components/ImageZoomModal";
 
 interface MarkdownContentProps {
   content: string;
@@ -160,6 +161,21 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
     // Normaliza paths de imagem e de documentos antes de renderizar
     const normalizedContent = normalizeDocumentPaths(normalizeImagePaths(content));
 
+    // Lightbox state — null = modal fechado. Quando o user clica numa imagem,
+    // `AuthenticatedImage` invoca `onImageClick` com a blob URL já carregada
+    // (evita refetch e funciona offline-friendly enquanto o blob viver).
+    const [zoomSrc, setZoomSrc] = React.useState<string | null>(null);
+    const [zoomAlt, setZoomAlt] = React.useState<string>("");
+
+    const handleImageClick = React.useCallback((src: string, alt: string) => {
+      setZoomSrc(src);
+      setZoomAlt(alt);
+    }, []);
+
+    const handleZoomClose = React.useCallback((open: boolean) => {
+      if (!open) setZoomSrc(null);
+    }, []);
+
     return (
       <div
         className={cn(
@@ -186,6 +202,7 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
                   <MermaidDiagram
                     code={String(children).replace(/\n$/, "")}
                     isStreaming={isStreaming}
+                    onImageClick={handleImageClick}
                   />
                 );
               }
@@ -290,6 +307,7 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
               alt?: string;
             }) {
               const url = typeof src === "string" ? src : undefined;
+              const altText = alt || "";
               // Rotas de mídia do backend exigem cookie de sessão — bare
               // `<img src>` quebra no split frontend (:3002) / API (:8001).
               const needsAuth =
@@ -300,8 +318,9 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
                 return (
                   <AuthenticatedImage
                     src={url}
-                    alt={alt || ""}
+                    alt={altText}
                     isStreaming={isStreaming}
+                    onImageClick={handleImageClick}
                     className="max-w-full rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200 cursor-pointer"
                   />
                 );
@@ -309,9 +328,10 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
               return (
                 <img
                   src={url}
-                  alt={alt || ""}
-                  className="max-w-full rounded-lg"
+                  alt={altText}
+                  className="max-w-full rounded-lg cursor-pointer"
                   loading="lazy"
+                  onClick={() => url && handleImageClick(url, altText)}
                 />
               );
             },
@@ -328,6 +348,11 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
         >
           {normalizedContent}
         </ReactMarkdown>
+        <ImageZoomModal
+          src={zoomSrc}
+          alt={zoomAlt}
+          onOpenChange={handleZoomClose}
+        />
       </div>
     );
   }

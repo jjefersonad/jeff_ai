@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
 import { MermaidDiagram } from "./MermaidDiagram";
 
 const mockInitialize = vi.fn();
@@ -116,5 +117,62 @@ describe("MermaidDiagram", () => {
     expect(mockRender).not.toHaveBeenCalled();
     expect(container.querySelector("svg")).toBeFalsy();
     expect(container.textContent).toContain("flowchart");
+  });
+});
+
+describe("MermaidDiagram - image click handler", () => {
+  beforeEach(() => {
+    mockInitialize.mockReset();
+    mockRender.mockReset();
+    mockMatchMedia(false);
+  });
+
+  it("calls onImageClick with a data: URL when the diagram wrapper is clicked", async () => {
+    const onImageClick = vi.fn();
+    const user = userEvent.setup();
+
+    mockRender.mockResolvedValue({
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" data-testid="diagram-svg"></svg>',
+    });
+
+    const { container } = render(
+      <MermaidDiagram
+        code={VALID_CODE}
+        isStreaming={false}
+        onImageClick={onImageClick}
+      />
+    );
+
+    // Wait for the diagram to render (mermaid.render resolves async)
+    await waitFor(() => {
+      expect(container.querySelector("svg")).toBeTruthy();
+    });
+
+    // Find the clickable wrapper (it has role="button" + cursor-pointer)
+    const wrapper = container.querySelector("[role='button']");
+    expect(wrapper).toBeTruthy();
+
+    await user.click(wrapper as HTMLElement);
+
+    expect(onImageClick).toHaveBeenCalledTimes(1);
+    const [src, alt] = onImageClick.mock.calls[0];
+    expect(src).toMatch(/^data:image\/svg\+xml;base64,/);
+    expect(alt).toBe("Mermaid diagram");
+  });
+
+  it("does not call onImageClick before the diagram has rendered", async () => {
+    const onImageClick = vi.fn();
+
+    const { container } = render(
+      <MermaidDiagram
+        code={VALID_CODE}
+        isStreaming={false}
+        onImageClick={onImageClick}
+      />
+    );
+
+    // Diagram not yet rendered — wrapper shows the code-fallback.
+    expect(container.querySelector("svg")).toBeFalsy();
+    expect(onImageClick).not.toHaveBeenCalled();
   });
 });

@@ -83,30 +83,6 @@ services:
     networks:
       - jeff_ia-network
 
-  image-server:
-    image: python:3.11-slim
-    container_name: jeff_ia_image_server
-    ports:
-      - "8083:8080"
-    volumes:
-      # Leitura/escrita: além de servir imagens, recebe uploads de referência.
-      - ./backend/outputs:/deps/backend/outputs
-      - ./backend/image_server.py:/app/image_server.py:ro
-      # `src` é montado para o servidor importar a lógica de validação de upload.
-      - ./backend/src:/app/src:ro
-    working_dir: /app
-    # Pacotes adicionados: `langchain-core` e `langchain-mcp-adapters` são
-    # necessários desde a change `unified-agent-realignment` — o `mcp_admin_api`
-    # (montado em `image_server.py:8080`) importa `mcp_client.py` que importa
-    # `langchain_core.tools` e `langchain_mcp_adapters`. Sem isso, o container
-    # quebra logo no boot.
-    command:
-      - sh
-      - -c
-      - "pip install --no-cache-dir fastapi uvicorn python-multipart langchain-core langchain-mcp-adapters && python image_server.py"
-    networks:
-      - jeff_ia-network
-
   jeff_ia_postgres:
     image: pgvector/pgvector:pg15
     container_name: jeff_ia_postgres

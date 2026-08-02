@@ -17,6 +17,13 @@ interface AuthenticatedImageProps {
   loading?: "lazy" | "eager";
   onLoad?: () => void;
   onClick?: () => void;
+  /**
+   * Fired when the user clicks the successfully-loaded image. Receives the
+   * blob URL (so the parent can open a lightbox without refetching) and the
+   * alt text. Not fired during loading or error states — clicking those is
+   * a no-op (or shows the error message in the error span).
+   */
+  onImageClick?: (src: string, alt: string) => void;
 }
 
 function isCompleteImageUrl(url: string): boolean {
@@ -41,6 +48,7 @@ export function AuthenticatedImage({
   loading = "lazy",
   onLoad,
   onClick,
+  onImageClick,
 }: AuthenticatedImageProps) {
   const [objectUrl, setObjectUrl] = React.useState<string | null>(null);
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
@@ -115,7 +123,10 @@ export function AuthenticatedImage({
       className={className}
       loading={loading}
       onLoad={onLoad}
-      onClick={onClick}
+      onClick={(e) => {
+        onClick?.();
+        onImageClick?.(objectUrl, alt);
+      }}
     />
   );
 }
