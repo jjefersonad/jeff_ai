@@ -8,10 +8,11 @@ do run (contextvar do LangGraph, stampado server-side em
 
 `resolve_user_id` é o resolvedor canônico `user_key → user_id` (design
 Decision 4 de `user-integration-credentials`): `web:<uuid>` retorna o uuid
-direto; `telegram:<chat_id>` consulta `user_integrations` (`task
-store-2`) por um vínculo ativo daquele `chat_id`, via
-`telegram-account-linking`, e retorna `None` sem vínculo (mesmo
-comportamento "zero servidores" de antes, agora estendido ao Telegram).
+direto; `telegram:<chat_id>` e `whatsapp:<phone_number>` consultam
+`user_integrations` (`task store-2` / `whatsapp-evolution-channel-task
+resolve-1`) por um vínculo ativo, e retornam `None` sem vínculo (mesmo
+comportamento "zero servidores" de antes, agora estendido ao Telegram e
+ao WhatsApp).
 
 `is_authorized` (REQ-002 de `media-ownership-authorization`) é usada pelos
 routers HTTP (`documents_router.py`, `images_router.py`) para decidir se o
@@ -31,7 +32,9 @@ from src.infrastructure.persistence.user_integrations_repository import (
 
 _WEB_USER_KEY_PREFIX = "web:"
 _TELEGRAM_USER_KEY_PREFIX = "telegram:"
+_WHATSAPP_USER_KEY_PREFIX = "whatsapp:"
 _TELEGRAM_INTEGRATION_TYPE = "telegram"
+_WHATSAPP_INTEGRATION_TYPE = "whatsapp_business"
 
 
 async def resolve_user_id() -> str | None:
@@ -45,6 +48,9 @@ async def resolve_user_id() -> str | None:
     if user_key.startswith(_TELEGRAM_USER_KEY_PREFIX):
         chat_id = user_key.removeprefix(_TELEGRAM_USER_KEY_PREFIX)
         return await resolve_telegram_user_id(chat_id)
+    if user_key.startswith(_WHATSAPP_USER_KEY_PREFIX):
+        phone_number = user_key.removeprefix(_WHATSAPP_USER_KEY_PREFIX)
+        return await resolve_whatsapp_user_id(phone_number)
     return None
 
 
@@ -66,6 +72,23 @@ async def resolve_telegram_user_id(chat_id: str) -> str | None:
         if (
             integration.integration_type == _TELEGRAM_INTEGRATION_TYPE
             and integration.config.get("chat_id") == chat_id
+        ):
+            return integration.user_id
+    return None
+
+
+async def resolve_whatsapp_user_id(phone_number: str) -> str | None:
+    """Vínculo `phone_number → user_id` via `user_integrations`.
+
+    Mesmo padrão de `resolve_telegram_user_id`: `config` é cifrado em
+    repouso, então decifra cada entrada `whatsapp_business` (via o
+    repositório, que já decifra) e compara em Python.
+    """
+    repository = PostgresUserIntegrationRepository(os.environ["POSTGRES_URI"])
+    for integration in await repository.list_all():
+        if (
+            integration.integration_type == _WHATSAPP_INTEGRATION_TYPE
+            and integration.config.get("phone_number") == phone_number
         ):
             return integration.user_id
     return None

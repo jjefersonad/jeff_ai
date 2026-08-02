@@ -158,6 +158,9 @@ Required in `backend/.env`:
 Optional: `TAVILY_API_KEY` (web search) · `GOOGLE_API_KEY` (Gemini) · `LANGSMITH_API_KEY` (tracing)
 - `JEFF_AI_TZ` (opcional) — IANA timezone name (e.g., `America/Sao_Paulo`). Default: `UTC`. Usado pelo `current-date-context` para preencher o system prompt com a data local.
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_AUTHORIZED_CHAT_ID` (integracao-telegram) — token do bot Telegram e o único `chat_id` autorizado (allowlist single-user). Exigidas pelo processo `telegram_gateway.py`; sem elas o gateway não sobe.
+- `EVOLUTION_API_URL` / `EVOLUTION_API_KEY` / `EVOLUTION_INSTANCE_NAME` (whatsapp-evolution-channel, em implementação) — URL da Evolution API (`http://evolution_api:8080` dentro da rede Docker, ou a porta host `8085` fora dela), chave `AUTHENTICATION_API_KEY` configurada no container `evolution_api`, e o nome da instância única (número central do WhatsApp). **Vivem no `.env` da raiz do projeto** (mesmo tratamento de `REDIS_PASSWORD` — a substituição `${...}` do `docker-compose.yml` não lê `backend/.env`), propagadas ao container `backend` via `environment:`. Hoje (`task-infra-1`) só configuram o container `evolution_api`; o código do backend que as consome (webhook e tool de envio) ainda não existe — ver `task-channel-1`/`task-tools-1` do change.
+- `EVOLUTION_POSTGRES_PASSWORD` / `EVOLUTION_REDIS_PASSWORD` (whatsapp-evolution-channel) — credenciais do Postgres/Redis dedicados da Evolution API (`docker-compose.yml`, serviços `evolution_postgres`/`evolution_redis`). Também no `.env` da raiz, gerados localmente, não versionados — mesmo padrão de `REDIS_PASSWORD`.
+- `INTEGRATION_CREDENTIALS_KEY` (user-integration-credentials) — chave simétrica Fernet para cifra em repouso de `user_integrations.config` (Telegram, WhatsApp Business, SMTP). Gerar com `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
 
 ---
 

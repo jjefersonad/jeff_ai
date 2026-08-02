@@ -9,7 +9,7 @@ uma chamada a `register_integration_type` — nunca uma migração da tabela
 """
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TelegramIntegrationConfig(BaseModel):
@@ -19,7 +19,9 @@ class TelegramIntegrationConfig(BaseModel):
 
 
 class WhatsAppBusinessIntegrationConfig(BaseModel):
-    """Stub — adapter do WhatsApp Business está fora de escopo desta mudança."""
+    """`config` de um vínculo WhatsApp Business: o `phone_number` autorizado."""
+
+    phone_number: str = Field(min_length=1)
 
 
 class SmtpIntegrationConfig(BaseModel):

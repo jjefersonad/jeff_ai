@@ -42,6 +42,11 @@ def test_webapp_lifespan_calls_usage_ensure_schema(
         "ensure_usage_schema",
         lambda conninfo: calls.append(f"usage:{conninfo}"),
     )
+    # Adicionados por whatsapp-evolution-channel-task-prereq-1/-linking-2 — sem
+    # mockar, o lifespan tentaria conectar de verdade em "postgresql://usage-bootstrap".
+    monkeypatch.setattr(webapp, "ensure_user_integrations_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_telegram_link_codes_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_whatsapp_link_codes_schema", lambda conninfo: None)
 
     async def _fake_init_pool(conninfo: str) -> None:
         calls.append(f"pool:{conninfo}")
@@ -59,6 +64,95 @@ def test_webapp_lifespan_calls_usage_ensure_schema(
     # Schema de usage deve existir antes do pool (records podem ocorrer após yield).
     assert calls.index("usage:postgresql://usage-bootstrap") < calls.index(
         "pool:postgresql://usage-bootstrap"
+    )
+
+
+def test_webapp_lifespan_calls_user_integrations_and_telegram_link_codes_ensure_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """whatsapp-evolution-channel-task-prereq-1-unit-1 (2ª parte da acceptance criteria):
+
+    lifespan do webapp também garante os schemas `user_integrations` e
+    `telegram_link_codes` — sem isso, `integrations_router` (montado no mesmo
+    task) responderia 401/200 normalmente mas quebraria no primeiro INSERT/
+    SELECT contra tabelas inexistentes.
+    """
+    calls: list[str] = []
+    monkeypatch.setenv("POSTGRES_URI", "postgresql://prereq-bootstrap")
+
+    monkeypatch.setattr(webapp, "init_auth_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_ownership_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_attachments_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_usage_schema", lambda conninfo: None)
+    monkeypatch.setattr(
+        webapp,
+        "ensure_user_integrations_schema",
+        lambda conninfo: calls.append(f"user_integrations:{conninfo}"),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "ensure_telegram_link_codes_schema",
+        lambda conninfo: calls.append(f"telegram_link_codes:{conninfo}"),
+    )
+    # whatsapp-evolution-channel-task-linking-2: mockado sem asserção própria
+    # aqui (coberta em test_webapp_lifespan_calls_whatsapp_link_codes_ensure_schema
+    # abaixo) — só precisa não tentar conectar de verdade.
+    monkeypatch.setattr(webapp, "ensure_whatsapp_link_codes_schema", lambda conninfo: None)
+
+    async def _fake_init_pool(conninfo: str) -> None:
+        calls.append(f"pool:{conninfo}")
+
+    async def _fake_close_pool() -> None:
+        return None
+
+    monkeypatch.setattr(webapp, "init_pool", _fake_init_pool)
+    monkeypatch.setattr(webapp, "close_pool", _fake_close_pool)
+
+    with TestClient(webapp.app):
+        pass
+
+    assert "user_integrations:postgresql://prereq-bootstrap" in calls
+    assert "telegram_link_codes:postgresql://prereq-bootstrap" in calls
+
+
+def test_webapp_lifespan_calls_whatsapp_link_codes_ensure_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """whatsapp-evolution-channel-task-linking-2: lifespan garante `whatsapp_link_codes`.
+
+    Sem isso, `POST /api/integrations/whatsapp/link-code` quebraria no
+    primeiro INSERT contra uma tabela inexistente.
+    """
+    calls: list[str] = []
+    monkeypatch.setenv("POSTGRES_URI", "postgresql://linking-2-bootstrap")
+
+    monkeypatch.setattr(webapp, "init_auth_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_ownership_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_attachments_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_usage_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_user_integrations_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_telegram_link_codes_schema", lambda conninfo: None)
+    monkeypatch.setattr(
+        webapp,
+        "ensure_whatsapp_link_codes_schema",
+        lambda conninfo: calls.append(f"whatsapp_link_codes:{conninfo}"),
+    )
+
+    async def _fake_init_pool(conninfo: str) -> None:
+        calls.append(f"pool:{conninfo}")
+
+    async def _fake_close_pool() -> None:
+        return None
+
+    monkeypatch.setattr(webapp, "init_pool", _fake_init_pool)
+    monkeypatch.setattr(webapp, "close_pool", _fake_close_pool)
+
+    with TestClient(webapp.app):
+        pass
+
+    assert "whatsapp_link_codes:postgresql://linking-2-bootstrap" in calls
+    assert calls.index("whatsapp_link_codes:postgresql://linking-2-bootstrap") < calls.index(
+        "pool:postgresql://linking-2-bootstrap"
     )
 
 

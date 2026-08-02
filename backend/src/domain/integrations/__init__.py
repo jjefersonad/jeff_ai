@@ -6,5 +6,6 @@ fronteira do caso de uso (`src/application/integrations/`).
 """
 from src.domain.integrations.telegram_link_code import TelegramLinkCode
 from src.domain.integrations.user_integration import UserIntegration
+from src.domain.integrations.whatsapp_link_code import WhatsAppLinkCode
 
-__all__ = ["TelegramLinkCode", "UserIntegration"]
+__all__ = ["TelegramLinkCode", "UserIntegration", "WhatsAppLinkCode"]

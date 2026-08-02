@@ -132,6 +132,7 @@ from src.tools.telegram_tools import (
     send_telegram_photo,
 )
 from src.tools.test_runner_tools import run_tests
+from src.tools.whatsapp_tools import send_whatsapp_message
 
 load_dotenv()
 
@@ -303,6 +304,8 @@ _UNIFIED_TOOLS: list = [
     send_telegram_message,
     send_telegram_photo,
     send_telegram_document,
+    # --- WhatsApp (Tier 2, whatsapp-evolution-channel) ---------------------- #
+    send_whatsapp_message,
     # --- Documentos Office/PDF (markitdown) --------------------------------- #
     # Substitui a change `document-reading-tools`. Tier 1 (auto): só leitura.
     read_document,

@@ -109,6 +109,12 @@ TIER_2_TOOLS: tuple[str, ...] = (
     "send_telegram_message",
     "send_telegram_photo",
     "send_telegram_document",
+    # WhatsApp (whatsapp-evolution-channel, REQ-001 / whatsapp-tools-spec) —
+    # envio ativo via Evolution API (número central, Modelo B). Execução
+    # direta pelo mesmo raciocínio do Telegram: destino resolvido por vínculo
+    # em `user_integrations` (não por env var), e sem I/O de arquivo local —
+    # gate humano não acrescenta proteção real.
+    "send_whatsapp_message",
 )
 
 # Tier 3 — Edição de EXISTENTES + commit (interrupt_on com diff preview).

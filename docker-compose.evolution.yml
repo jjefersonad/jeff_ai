@@ -228,10 +228,81 @@ services:
     networks:
       - jeff_ia-network
 
+  # Postgres/Redis dedicados da Evolution API (change `whatsapp-evolution-channel`,
+  # `whatsapp-evolution-channel-task-infra-1`) — instância própria, separada de
+  # `jeff_ia_postgres`/`jeff_ia_redis`, para não acoplar o schema gerenciado via
+  # Prisma pela Evolution API ao banco do Jeff AI (design Decision 3).
+  evolution_postgres:
+    image: postgres:15-alpine
+    container_name: jeff_ia_evolution_postgres
+    environment:
+      POSTGRES_DB: evolution
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: ${EVOLUTION_POSTGRES_PASSWORD:?defina EVOLUTION_POSTGRES_PASSWORD em .env}
+    volumes:
+      - evolution_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jeff_ia-network
+
+  evolution_redis:
+    image: redis:7-alpine
+    container_name: jeff_ia_evolution_redis
+    command: redis-server --requirepass ${EVOLUTION_REDIS_PASSWORD:?defina EVOLUTION_REDIS_PASSWORD em .env}
+    volumes:
+      - evolution_redis_data:/data
+    networks:
+      - jeff_ia-network
+
+  # Evolution API em modo Cloud API (número central da Jeff AI, `whatsapp-channel`
+  # capability) — uma única instância, decisão explícita de manter a Evolution
+  # API como conector mesmo com um número só (design Decision 3 de
+  # `whatsapp-evolution-channel`), para deixar aberta a porta de um eventual
+  # modo "número próprio por usuário" no futuro sem reescrever a integração.
+  #
+  # `AUTHENTICATION_API_KEY` é a chave que o backend deverá usar para
+  # autenticar contra esta API (cliente HTTP ainda não implementado nesta
+  # task — ver `task-channel-1`/`task-tools-1`) — não confundir com o token
+  # do WABA em si (esse é configurado por instância via API/painel, fora
+  # deste compose).
+  evolution_api:
+    image: evoapicloud/evolution-api:v2.1.1
+    container_name: jeff_ia_evolution_api
+    restart: unless-stopped
+    ports:
+      - "8085:8080"
+    environment:
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY em .env}
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${EVOLUTION_POSTGRES_PASSWORD}@evolution_postgres:5432/evolution
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://:${EVOLUTION_REDIS_PASSWORD}@evolution_redis:6379/0
+      SERVER_URL: ${EVOLUTION_SERVER_URL:-http://localhost:8085}
+    depends_on:
+      evolution_postgres:
+        condition: service_healthy
+      evolution_redis:
+        condition: service_started
+    volumes:
+      - evolution_instances:/evolution/instances
+    networks:
+      - jeff_ia-network
+
 volumes:
   postgres_data:
     driver: local
   redis_data:
+    driver: local
+  evolution_postgres_data:
+    driver: local
+  evolution_redis_data:
+    driver: local
+  evolution_instances:
     driver: local
 
 networks:

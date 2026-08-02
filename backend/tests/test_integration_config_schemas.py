@@ -23,6 +23,29 @@ def test_validate_config_rejects_telegram_payload_missing_chat_id() -> None:
         config_schemas.validate_config("telegram", {})
 
 
+def test_validate_config_accepts_valid_whatsapp_business_payload() -> None:
+    """whatsapp-evolution-channel-task-store-1-unit-1 (REQ-005 delta)."""
+    result = config_schemas.validate_config(
+        "whatsapp_business", {"phone_number": "+5511999999999"}
+    )
+
+    assert result.phone_number == "+5511999999999"
+
+
+def test_validate_config_rejects_whatsapp_business_payload_missing_phone_number() -> None:
+    """whatsapp-evolution-channel-task-store-1-unit-2 (REQ-005 delta)."""
+    with pytest.raises(ValidationError):
+        config_schemas.validate_config("whatsapp_business", {})
+
+
+def test_validate_config_rejects_whatsapp_business_payload_empty_phone_number() -> None:
+    """whatsapp-evolution-channel-task-store-1-unit-2 (REQ-005 delta): scenario
+    'Config sem phone_number rejeitado' also covers a present-but-empty value,
+    not just a missing key."""
+    with pytest.raises(ValidationError):
+        config_schemas.validate_config("whatsapp_business", {"phone_number": ""})
+
+
 def test_register_new_integration_type_validates_immediately() -> None:
     class _ThrowawayConfig(BaseModel):
         foo: str

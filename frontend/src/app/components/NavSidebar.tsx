@@ -3,8 +3,9 @@
 /**
  * Primary navigation sidebar for the authenticated layout.
  *
- * Renders **Chat**, **Images**, **MCP Servers**, and (for `role=admin` only)
- * **Consumo** — linking to `/`, `/images`, `/mcp-servers`, and `/usage`.
+ * Renders **Chat**, **Images**, **MCP Servers**, **Integrações**, and (for
+ * `role=admin` only) **Consumo** — linking to `/`, `/images`, `/mcp-servers`,
+ * `/integrations`, and `/usage`.
  * **Chat** exists because the top-bar "JEFF AI" link back to `/` isn't an
  * obvious return path once a user has navigated into a full sidebar
  * destination. The active entry (matching the current pathname) is
@@ -26,7 +27,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
-import { BarChart3, ImageIcon, MessagesSquare, Plug, XIcon } from "lucide-react";
+import {
+  BarChart3,
+  ImageIcon,
+  MessageCircle,
+  MessagesSquare,
+  Plug,
+  XIcon,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -78,6 +86,13 @@ const ENTRIES: readonly NavEntry[] = [
     icon: BarChart3,
     match: (p) => p === "/usage" || p.startsWith("/usage/"),
     requireRole: "admin",
+  },
+  {
+    label: "Integrações",
+    href: "/integrations",
+    description: "Link your account to other channels (WhatsApp)",
+    icon: MessageCircle,
+    match: (p) => p === "/integrations" || p.startsWith("/integrations/"),
   },
 ];
 

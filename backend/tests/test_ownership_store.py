@@ -83,6 +83,15 @@ def _telegram_integration(*, user_id: str, chat_id: str) -> UserIntegration:
     )
 
 
+def _whatsapp_integration(*, user_id: str, phone_number: str) -> UserIntegration:
+    return UserIntegration(
+        id="integration-1",
+        user_id=user_id,
+        integration_type="whatsapp_business",
+        config={"phone_number": phone_number},
+    )
+
+
 def _patch_integration_repository(
     monkeypatch: pytest.MonkeyPatch, integrations: list[UserIntegration]
 ) -> None:
@@ -152,6 +161,62 @@ async def test_resolve_user_id_telegram_ignores_other_chat_ids(
     )
 
     assert await store.resolve_user_id() is None
+
+
+async def test_resolve_user_id_whatsapp_linked_returns_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unit 1 de `whatsapp-evolution-channel-task-resolve-2`: `whatsapp:<phone_number>`
+    delega a `resolve_whatsapp_user_id()` e retorna o `user_id` do vínculo — espelha o
+    branch `telegram:` existente."""
+    _patch_config(monkeypatch, "whatsapp:5511999990000")
+    _patch_integration_repository(
+        monkeypatch, [_whatsapp_integration(user_id="user-xyz", phone_number="5511999990000")]
+    )
+
+    assert await store.resolve_user_id() == "user-xyz"
+
+
+async def test_resolve_user_id_whatsapp_unlinked_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_config(monkeypatch, "whatsapp:5511999990000")
+    _patch_integration_repository(monkeypatch, [])
+
+    assert await store.resolve_user_id() is None
+
+
+async def test_resolve_whatsapp_user_id_linked_returns_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unit 1 de `whatsapp-evolution-channel-task-resolve-1`: phone_number com
+    vínculo ativo resolve para o `user_id` dono do vínculo."""
+    _patch_integration_repository(
+        monkeypatch, [_whatsapp_integration(user_id="user-xyz", phone_number="5511999990000")]
+    )
+
+    assert await store.resolve_whatsapp_user_id("5511999990000") == "user-xyz"
+
+
+async def test_resolve_whatsapp_user_id_unlinked_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unit 2 de `whatsapp-evolution-channel-task-resolve-1`: sem entrada
+    `whatsapp_business` correspondente, retorna `None` sem levantar."""
+    _patch_integration_repository(monkeypatch, [])
+
+    assert await store.resolve_whatsapp_user_id("5511999990000") is None
+
+
+async def test_resolve_whatsapp_user_id_ignores_other_phone_numbers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Vínculo de OUTRO phone_number não vaza para uma sessão diferente."""
+    _patch_integration_repository(
+        monkeypatch, [_whatsapp_integration(user_id="user-xyz", phone_number="5511999990000")]
+    )
+
+    assert await store.resolve_whatsapp_user_id("5511888880000") is None
 
 
 async def test_record_ownership_skips_insert_without_user_id(

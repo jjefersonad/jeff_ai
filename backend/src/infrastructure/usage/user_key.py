@@ -15,6 +15,11 @@ def telegram_user_key(chat_id: str | int) -> str:
     return f"telegram:{chat_id}"
 
 
+def whatsapp_user_key(phone_number: str) -> str:
+    """Formata a chave de usuário do canal WhatsApp: `whatsapp:<phone_number>`."""
+    return f"whatsapp:{phone_number}"
+
+
 def resolve_user_key(
     *,
     user_key: str | None = None,

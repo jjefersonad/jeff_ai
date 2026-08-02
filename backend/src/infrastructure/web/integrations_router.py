@@ -22,6 +22,11 @@ quanto para entrada de outro usuário — REQ-001 exige não revelar existência
 (design Decision 3 de `user-integration-credentials`), o código gerado é
 sempre atrelado ao `user_id` da sessão (REQ-001 do spec
 `user-integration-credentials-telegram-account-linking`).
+
+`POST /api/integrations/whatsapp/link-code` espelha exatamente o mesmo padrão
+para o WhatsApp (`WhatsAppLinkCodeRepositoryPort`/`_whatsapp_link_code_
+repository`/tabela `whatsapp_link_codes`) — whatsapp-channel REQ-001 do
+change `whatsapp-evolution-channel`.
 """
 from __future__ import annotations
 
@@ -42,7 +47,11 @@ from src.application.ports.telegram_link_code_repository import (
 from src.application.ports.user_integration_repository import (
     UserIntegrationRepositoryPort,
 )
+from src.application.ports.whatsapp_link_code_repository import (
+    WhatsAppLinkCodeRepositoryPort,
+)
 from src.application.use_cases.create_telegram_link_code import CreateTelegramLinkCode
+from src.application.use_cases.create_whatsapp_link_code import CreateWhatsAppLinkCode
 from src.application.use_cases.delete_user_integration import DeleteUserIntegration
 from src.application.use_cases.get_user_integration import (
     GetUserIntegration,
@@ -60,6 +69,9 @@ from src.infrastructure.persistence.telegram_link_codes_repository import (
 from src.infrastructure.persistence.user_integrations_repository import (
     PostgresUserIntegrationRepository,
 )
+from src.infrastructure.persistence.whatsapp_link_codes_repository import (
+    PostgresWhatsAppLinkCodeRepository,
+)
 
 router = APIRouter()
 
@@ -72,6 +84,11 @@ def _user_integration_repository() -> UserIntegrationRepositoryPort:
 def _telegram_link_code_repository() -> TelegramLinkCodeRepositoryPort:
     """Constrói o repositório de códigos de vínculo a partir de `POSTGRES_URI`."""
     return PostgresTelegramLinkCodeRepository(os.environ["POSTGRES_URI"])
+
+
+def _whatsapp_link_code_repository() -> WhatsAppLinkCodeRepositoryPort:
+    """Constrói o repositório de códigos de vínculo WhatsApp a partir de `POSTGRES_URI`."""
+    return PostgresWhatsAppLinkCodeRepository(os.environ["POSTGRES_URI"])
 
 
 class UserIntegrationWriteRequest(BaseModel):
@@ -202,6 +219,27 @@ async def create_telegram_link_code_endpoint(
     return TelegramLinkCodeResponse(code=link_code.code, expires_at=link_code.expires_at)
 
 
+class WhatsAppLinkCodeResponse(BaseModel):
+    """Contrato HTTP de `POST /api/integrations/whatsapp/link-code`."""
+
+    code: str
+    expires_at: datetime
+
+
+@router.post("/api/integrations/whatsapp/link-code", status_code=201)
+async def create_whatsapp_link_code_endpoint(
+    user: User | None = Depends(require_auth),
+    repo: WhatsAppLinkCodeRepositoryPort = Depends(_whatsapp_link_code_repository),
+) -> WhatsAppLinkCodeResponse:
+    """whatsapp-channel REQ-001: código atrelado ao `user_id` da sessão."""
+    if user is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    use_case = CreateWhatsAppLinkCode(repository=repo)
+    link_code = await use_case.execute(caller_user_id=user.id)
+    return WhatsAppLinkCodeResponse(code=link_code.code, expires_at=link_code.expires_at)
+
+
 @router.get("/api/integrations/{integration_id}")
 async def get_integration_endpoint(
     integration_id: str,
@@ -264,7 +302,10 @@ async def update_integration_endpoint(
     return _to_response(saved)
 
 
-@router.delete("/api/integrations/{integration_id}", status_code=204)
+# `response_model=None` explícito: sem isso, FastAPI infere `NoneType` (não o
+# valor `None`) a partir de `-> None`, que é truthy e dispara a assertion de
+# "status 204 não pode ter corpo" (fastapi==0.115.0).
+@router.delete("/api/integrations/{integration_id}", status_code=204, response_model=None)
 async def delete_integration_endpoint(
     integration_id: str,
     user: User | None = Depends(require_auth),
