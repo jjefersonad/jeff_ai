@@ -7,19 +7,35 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { cn } from "@/lib/utils";
 import { DownloadError, downloadAuthenticatedFile } from "@/lib/api";
+import { AuthenticatedImage } from "@/app/components/AuthenticatedImage";
+import { MermaidDiagram } from "@/app/components/MermaidDiagram";
+import { ImageZoomModal } from "@/app/components/ImageZoomModal";
 
 interface MarkdownContentProps {
   content: string;
   className?: string;
+  /**
+   * Whether the message this content belongs to is still being streamed.
+   * Forwarded to `MermaidDiagram` so it defers rendering a live diagram
+   * until the fenced ```mermaid block is no longer being written token by
+   * token. Defaults to `false` (e.g. sub-agent input/output, which arrive
+   * as already-complete tool results, not token-streamed).
+   */
+  isStreaming?: boolean;
 }
 
 /**
- * Converte paths absolutos do filesystem para URLs relativas acessíveis pelo frontend.
- * Ex: /deps/backend/outputs/images/20260705091430.png → /api/images/20260705091430.png
+ * Converte paths/URLs de imagem gerada para a rota relativa do frontend.
+ *
+ * Casos cobertos:
+ * - path absoluto do container: `/deps/backend/outputs/images/X.png`
+ * - host inventado pelo LLM: `https://your-frontend.com/api/images/X.png`
+ * - qualquer origem absoluta terminando em `/api/images/X.png`
+ *
+ * Sem isso, o `<img>` tenta um host inexistente e o chat mostra
+ * "[Imagem não carregada]" mesmo com a PNG salva e o usuário autenticado.
  */
 function normalizeImagePaths(markdown: string): string {
-  // Regex para capturar markdown images com paths absolutos que contêm "outputs/images/"
-  // Captura tanto ![alt](path) quanto <img src="path" ...>
   return markdown
     .replace(
       /!\[([^\]]*)\]\(([^)]+\/(?:backend\/)?outputs\/images\/([^/)]+\.png))\)/gi,
@@ -28,8 +44,20 @@ function normalizeImagePaths(markdown: string): string {
       }
     )
     .replace(
+      /!\[([^\]]*)\]\(https?:\/\/[^)\s]+\/api\/images\/([^/)]+\.png)\)/gi,
+      (_match, alt, filename) => {
+        return `![${alt}](/api/images/${filename})`;
+      }
+    )
+    .replace(
       /<img[^>]*src=["']([^"']+\/(?:backend\/)?outputs\/images\/([^"/]+\.png))["'][^>]*>/gi,
       (_match, _fullPath, filename) => {
+        return `<img src="/api/images/${filename}" />`;
+      }
+    )
+    .replace(
+      /<img[^>]*src=["']https?:\/\/[^"']+\/api\/images\/([^"/]+\.png)["'][^>]*>/gi,
+      (_match, filename) => {
         return `<img src="/api/images/${filename}" />`;
       }
     );
@@ -129,9 +157,24 @@ function DocumentDownloadChip({
 }
 
 export const MarkdownContent = React.memo<MarkdownContentProps>(
-  ({ content, className = "" }) => {
+  ({ content, className = "", isStreaming = false }) => {
     // Normaliza paths de imagem e de documentos antes de renderizar
     const normalizedContent = normalizeDocumentPaths(normalizeImagePaths(content));
+
+    // Lightbox state — null = modal fechado. Quando o user clica numa imagem,
+    // `AuthenticatedImage` invoca `onImageClick` com a blob URL já carregada
+    // (evita refetch e funciona offline-friendly enquanto o blob viver).
+    const [zoomSrc, setZoomSrc] = React.useState<string | null>(null);
+    const [zoomAlt, setZoomAlt] = React.useState<string>("");
+
+    const handleImageClick = React.useCallback((src: string, alt: string) => {
+      setZoomSrc(src);
+      setZoomAlt(alt);
+    }, []);
+
+    const handleZoomClose = React.useCallback((open: boolean) => {
+      if (!open) setZoomSrc(null);
+    }, []);
 
     return (
       <div
@@ -154,6 +197,15 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
               children?: React.ReactNode;
             }) {
               const match = /language-(\w+)/.exec(className || "");
+              if (!inline && match && match[1] === "mermaid") {
+                return (
+                  <MermaidDiagram
+                    code={String(children).replace(/\n$/, "")}
+                    isStreaming={isStreaming}
+                    onImageClick={handleImageClick}
+                  />
+                );
+              }
               return !inline && match ? (
                 <SyntaxHighlighter
                   style={oneDark}
@@ -255,24 +307,31 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
               alt?: string;
             }) {
               const url = typeof src === "string" ? src : undefined;
-              const isGeneratedImage = url?.startsWith("/api/images/");
+              const altText = alt || "";
+              // Rotas de mídia do backend exigem cookie de sessão — bare
+              // `<img src>` quebra no split frontend (:3002) / API (:8001).
+              const needsAuth =
+                !!url &&
+                (url.startsWith("/api/images/") ||
+                  url.startsWith("/api/references/"));
+              if (needsAuth && url) {
+                return (
+                  <AuthenticatedImage
+                    src={url}
+                    alt={altText}
+                    isStreaming={isStreaming}
+                    onImageClick={handleImageClick}
+                    className="max-w-full rounded-lg shadow-md hover:shadow-lg transition-shadow duration-200 cursor-pointer"
+                  />
+                );
+              }
               return (
                 <img
                   src={url}
-                  alt={alt || ""}
-                  className={cn(
-                    "max-w-full rounded-lg",
-                    isGeneratedImage && "shadow-md hover:shadow-lg transition-shadow duration-200 cursor-pointer"
-                  )}
+                  alt={altText}
+                  className="max-w-full rounded-lg cursor-pointer"
                   loading="lazy"
-                  onError={(e) => {
-                    const target = e.target as HTMLImageElement;
-                    target.style.display = "none";
-                    const fallback = document.createElement("div");
-                    fallback.className = "text-muted-foreground text-sm p-4 border border-dashed border-border rounded-lg";
-                    fallback.textContent = alt ? `[Imagem não carregada: ${alt}]` : "[Imagem não carregada]";
-                    target.parentNode?.appendChild(fallback);
-                  }}
+                  onClick={() => url && handleImageClick(url, altText)}
                 />
               );
             },
@@ -289,6 +348,11 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
         >
           {normalizedContent}
         </ReactMarkdown>
+        <ImageZoomModal
+          src={zoomSrc}
+          alt={zoomAlt}
+          onOpenChange={handleZoomClose}
+        />
       </div>
     );
   }

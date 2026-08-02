@@ -119,7 +119,7 @@ The safety model. `build_interrupt_on()` turns the declarative registry into the
 
 ### Image generation
 
-Image requests go to `image_design_subagent`, which presents a design plan; `interrupt_on` pauses before `create_image_from_prompt` runs. On approval the image is generated via Gemini and saved to `backend/outputs/images/`; the approved style is stored per-thread via `save_design_style` for reuse. The tool returns `{path, url, metadata}` — **always use `url` in markdown, never `path`.**
+Image requests go to `image_design_subagent`, which presents a design plan and then calls `create_image_from_prompt` immediately (no HITL `interrupt_on` on image generation). The image is generated via Gemini and saved to `backend/outputs/images/`; the style is stored per-thread via `save_design_style` after a successful generation. The tool returns `{path, url, metadata}` — **always use `url` in markdown, never `path`.**
 
 ### Office documents
 
@@ -157,6 +157,10 @@ Required in `backend/.env`:
 
 Optional: `TAVILY_API_KEY` (web search) · `GOOGLE_API_KEY` (Gemini) · `LANGSMITH_API_KEY` (tracing)
 - `JEFF_AI_TZ` (opcional) — IANA timezone name (e.g., `America/Sao_Paulo`). Default: `UTC`. Usado pelo `current-date-context` para preencher o system prompt com a data local.
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_AUTHORIZED_CHAT_ID` (integracao-telegram) — token do bot Telegram e o único `chat_id` autorizado (allowlist single-user). Exigidas pelo processo `telegram_gateway.py`; sem elas o gateway não sobe.
+- `EVOLUTION_API_URL` / `EVOLUTION_API_KEY` / `EVOLUTION_INSTANCE_NAME` (whatsapp-evolution-channel, em implementação) — URL da Evolution API (`http://evolution_api:8080` dentro da rede Docker, ou a porta host `8085` fora dela), chave `AUTHENTICATION_API_KEY` configurada no container `evolution_api`, e o nome da instância única (número central do WhatsApp). **Vivem no `.env` da raiz do projeto** (mesmo tratamento de `REDIS_PASSWORD` — a substituição `${...}` do `docker-compose.yml` não lê `backend/.env`), propagadas ao container `backend` via `environment:`. Hoje (`task-infra-1`) só configuram o container `evolution_api`; o código do backend que as consome (webhook e tool de envio) ainda não existe — ver `task-channel-1`/`task-tools-1` do change.
+- `EVOLUTION_POSTGRES_PASSWORD` / `EVOLUTION_REDIS_PASSWORD` (whatsapp-evolution-channel) — credenciais do Postgres/Redis dedicados da Evolution API (`docker-compose.yml`, serviços `evolution_postgres`/`evolution_redis`). Também no `.env` da raiz, gerados localmente, não versionados — mesmo padrão de `REDIS_PASSWORD`.
+- `INTEGRATION_CREDENTIALS_KEY` (user-integration-credentials) — chave simétrica Fernet para cifra em repouso de `user_integrations.config` (Telegram, WhatsApp Business, SMTP). Gerar com `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
 
 ---
 
@@ -193,3 +197,65 @@ Search for existing specs first: `search_semantic(query="<topic>", project_slug=
 ```
 /opsr:propose → /opsr:spec → /opsr:design → /opsr:tasks → /opsr:apply → /opsr:archive
 ```
+<!-- opensddrag:start -->
+---
+
+## OpenSddRag — SDD + Harness
+
+This project uses **OpenSddRag** for Spec-Driven Development with persistent semantic memory.
+
+- **MCP server name:** `opensddrag` (http://localhost:8000) — configured in `.mcp.json`
+- **Project slug:** `jeff-ai`
+- **Skills:** `.claude/skills/opensddrag-*/SKILL.md`
+- **Commands:** `.claude/commands/opsr/`
+
+### MCP Tools (opensddrag server)
+
+The `opensddrag` MCP server exposes these tools — they appear in your tool list under the `opensddrag` namespace:
+
+| Tool | Purpose |
+|------|---------|
+| `create_artifact` | Create proposals, specs, designs, tasks |
+| `read_artifact` | Read an artifact by name |
+| `list_artifacts` | List artifacts with type/status filters |
+| `update_artifact` | Update content or status |
+| `validate_artifact` | Check spec structure |
+| `link_artifacts` | Link artifacts (implements / depends_on / relates_to) |
+| `get_relationships` | Get linked artifacts |
+| `search_semantic` | Semantic search via pgvector |
+| `recall_episodes` | Find past agent actions (episodic memory) |
+| `get_working_context` | Get active session context |
+| `update_working_context` | Update session context |
+| `record_trace` | Log an action to episodic memory |
+
+> If these tools are NOT in your active tool list, the server is not connected.
+> Start it with `docker compose up -d` and reload the project. Do not attempt to work around a missing server.
+
+### Before implementing any feature
+
+Always search for existing specs first:
+
+```
+search_semantic(query="<topic>", project_slug="jeff-ai")
+```
+
+### SDD Commands
+
+| Command | When to use |
+|---------|-------------|
+| `/opsr:propose` | Start here — capture intent and scope before any code |
+| `/opsr:spec` | Formalize requirements (Purpose / SHALL / Scenarios) |
+| `/opsr:design` | Document technical decisions and trade-offs |
+| `/opsr:tasks` | Decompose spec into atomic tasks (< 4h each) |
+| `/opsr:apply` | Implement the next pending task against spec criteria |
+| `/opsr:flow` | Run the full flow end-to-end for a feature |
+| `/opsr:search` | Semantic search over specs and past work |
+| `/opsr:status` | Show what's in progress and what's done |
+| `/opsr:archive` | Mark a completed feature as archived |
+
+### SDD Flow
+
+```
+/opsr:propose → /opsr:spec → /opsr:design → /opsr:tasks → /opsr:apply → /opsr:archive
+```
+<!-- opensddrag:end -->

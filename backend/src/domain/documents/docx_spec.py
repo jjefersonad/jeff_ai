@@ -73,6 +73,8 @@ class DocxSpec:
             raise DomainError("DocxSpec.title é obrigatório e não pode ser vazio.")
         object.__setattr__(self, "title", self.title.strip())
         blocks = tuple(self.blocks)
+        if not blocks:
+            raise DomainError("DocxSpec.blocks deve conter ao menos um bloco.")
         allowed = (Heading, Paragraph, ListBlock, Table, ImageRef)
         if not all(isinstance(block, allowed) for block in blocks):
             raise DomainError("DocxSpec.blocks contém um tipo de bloco não suportado.")

@@ -22,28 +22,60 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 
+from src.infrastructure.attachments.schema import (
+    ensure_schema as ensure_attachments_schema,
+)
 from src.infrastructure.auth.db import close_pool, init_pool
 from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.schema import init_auth_schema
 from src.infrastructure.ownership.schema import ensure_schema as ensure_ownership_schema
+from src.infrastructure.persistence.telegram_link_codes_schema import (
+    ensure_schema as ensure_telegram_link_codes_schema,
+)
+from src.infrastructure.persistence.user_integrations_schema import (
+    ensure_schema as ensure_user_integrations_schema,
+)
+from src.infrastructure.persistence.whatsapp_link_codes_schema import (
+    ensure_schema as ensure_whatsapp_link_codes_schema,
+)
+from src.infrastructure.usage.schema import ensure_schema as ensure_usage_schema
+from src.infrastructure.web.attachments_router import router as attachments_router
 from src.infrastructure.web.auth_router import router as auth_router
 from src.infrastructure.web.documents_router import router as documents_router
 from src.infrastructure.web.images_router import router as images_router
+from src.infrastructure.web.integrations_router import router as integrations_router
+from src.infrastructure.web.usage_router import router as usage_router
+from src.infrastructure.web.whatsapp_webhook_router import (
+    router as whatsapp_webhook_router,
+)
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Garante as tabelas `users`/`sessions`/`generated_files`, o bootstrap do admin e o pool de auth.
+    """Garante as tabelas `users`/`sessions`/`generated_files`/`chat_attachments`/`token_usage_events`/`user_integrations`/`telegram_link_codes`/`whatsapp_link_codes`, o bootstrap do admin e o pool de auth.
 
     Falha o startup com erro explícito se `POSTGRES_URI` ou as credenciais de
     admin (`ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH`) estiverem ausentes numa
     tabela `users` vazia — não deve haver um fallback silencioso sem admin.
-    `generated_files` depende de `users` já existir (FK), por isso roda depois
-    de `init_auth_schema`.
+    `generated_files` e `chat_attachments` dependem de `users` já existir (FK),
+    por isso rodam depois de `init_auth_schema`. `token_usage_events` não tem
+    FK; sobe aqui para existir antes dos primeiros records do callback.
+    `user_integrations`/`telegram_link_codes` também dependem de `users` (FK)
+    — schemas do change `user-integration-credentials`, nunca chamados aqui
+    antes (`whatsapp-evolution-channel-task-prereq-1`), o que deixava
+    `integrations_router` funcionalmente quebrado mesmo montado.
+    `whatsapp_link_codes` (`whatsapp-evolution-channel-task-linking-2`) segue
+    o mesmo motivo de `telegram_link_codes`: sem o schema, o endpoint de
+    geração de código de vínculo WhatsApp quebraria no primeiro INSERT.
     """
     conninfo = os.environ["POSTGRES_URI"]
     init_auth_schema(conninfo)
     ensure_ownership_schema(conninfo)
+    ensure_attachments_schema(conninfo)
+    ensure_usage_schema(conninfo)
+    ensure_user_integrations_schema(conninfo)
+    ensure_telegram_link_codes_schema(conninfo)
+    ensure_whatsapp_link_codes_schema(conninfo)
     await init_pool(conninfo)
     try:
         yield
@@ -66,3 +98,16 @@ app.include_router(images_router)
 
 # Rotas de download de documentos Office (docx/xlsx/pptx).
 app.include_router(documents_router)
+
+# Rota de upload de anexos de chat (imagem/pdf/docx/xlsx/csv/txt).
+app.include_router(attachments_router)
+
+# Agregação admin de uso de tokens (GET /api/usage).
+app.include_router(usage_router)
+
+# CRUD de credenciais de integração por usuário (Telegram, WhatsApp Business,
+# SMTP) + geração de código de vínculo do Telegram/WhatsApp.
+app.include_router(integrations_router)
+
+# Webhook da Evolution API (canal WhatsApp, número central — Modelo B).
+app.include_router(whatsapp_webhook_router)

@@ -332,6 +332,15 @@ TOOL_EFFECTS: Final[Mapping[str, tuple[Any, ...]]] = {
     "merge_generated_files": _write_new(),
     "create_feature_directory": _write_new(),
     "save_generated_tool": _write_new(),
+    # --- Telegram (Tier 2, integracao-telegram) -------------------------
+    # Chamam a Bot API do Telegram sobre HTTPS (`Capability.NETWORK`).
+    # Conteúdo é o que o próprio agente decidiu gerar/enviar — Tier 2
+    # (sem `interrupt_on`) é coerente com a política de rede do envelope
+    # (piso `NETWORK` no `FLOOR_CAPABILITIES`, sem exigência de concessão
+    # explícita por tool de Tier 1/2).
+    "send_telegram_message": _network(),
+    "send_telegram_photo": _network(),
+    "send_telegram_document": _network(),
     # `write_file` é o caso dinâmico: path novo = write_new, path
     # existente = write_existing.
     "write_file": _dynamic_write_file(),

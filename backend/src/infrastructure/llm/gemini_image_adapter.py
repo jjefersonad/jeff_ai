@@ -4,20 +4,27 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 from google import genai
 from google.genai import types
+from langgraph.config import get_config
 
 from src.application.ports.image_gen import GeneratedImage, ImageGenPort
 from src.domain.imaging import ImageDesign
 from src.infrastructure.media.image_signatures import sniff_image_mime
+from src.infrastructure.usage.repository import UsageRepository
+from src.infrastructure.usage.user_key import resolve_user_key
 
 # backend/outputs/images (mesmo destino do comportamento legado).
 _DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parents[3] / "outputs" / "images"
 _DEFAULT_MODEL = "gemini-3.1-flash-image"
+_PROVIDER = "gemini"
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiImageAdapter(ImageGenPort):
@@ -34,12 +41,14 @@ class GeminiImageAdapter(ImageGenPort):
         output_dir: Path | None = None,
         url_prefix: str = "/api/images",
         model: str = _DEFAULT_MODEL,
+        usage_repository: UsageRepository | None = None,
     ) -> None:
         """Configura o cliente Gemini e o destino das imagens (secrets ficam aqui)."""
         self._client = genai.Client(api_key=api_key or os.getenv("GOOGLE_API_KEY"))
         self._output_dir = output_dir or _DEFAULT_OUTPUT_DIR
         self._url_prefix = url_prefix.rstrip("/")
         self._model = model
+        self._usage_repository = usage_repository
 
     async def generate(self, design: ImageDesign) -> GeneratedImage:
         """Gera a imagem do `design`, envolvendo a chamada síncrona do SDK em thread."""
@@ -67,6 +76,8 @@ class GeminiImageAdapter(ImageGenPort):
             with open(sidecar_path, "w", encoding="utf-8") as sidecar:
                 json.dump(metadata, sidecar, ensure_ascii=False, indent=2)
 
+            self._record_image_usage(response)
+
             return GeneratedImage(
                 path=str(image_path),
                 url=f"{self._url_prefix}/{image_name}",
@@ -74,6 +85,54 @@ class GeminiImageAdapter(ImageGenPort):
             )
 
         raise RuntimeError("A API Gemini não retornou nenhuma imagem na resposta.")
+
+    def _record_image_usage(self, response: Any) -> None:
+        """Persiste usage de imagem quando o SDK reporta; omitir se ausente (fail-open)."""
+        if self._usage_repository is None:
+            return
+        usage = getattr(response, "usage_metadata", None)
+        if usage is None:
+            return
+
+        prompt_tokens = getattr(usage, "prompt_token_count", None)
+        completion_tokens = getattr(usage, "candidates_token_count", None)
+        total_tokens = getattr(usage, "total_token_count", None)
+        if (
+            prompt_tokens is None
+            and completion_tokens is None
+            and total_tokens is None
+        ):
+            return
+
+        try:
+            configurable = self._run_configurable()
+            auth_user = configurable.get("langgraph_auth_user") or {}
+            owner = configurable.get("owner") or auth_user.get("identity")
+            self._usage_repository.record(
+                user_key=resolve_user_key(
+                    user_key=configurable.get("user_key"),
+                    owner=owner,
+                ),
+                thread_id=configurable.get("thread_id"),
+                provider=_PROVIDER,
+                model=self._model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                source="image",
+            )
+        except Exception:
+            # Fail-open: metering never blocks returning GeneratedImage (REQ-004).
+            logger.exception("Failed to record image token usage")
+
+    @staticmethod
+    def _run_configurable() -> dict[str, Any]:
+        """Lê `configurable` do run atual; vazio se o runtime não tiver contexto."""
+        try:
+            config = get_config()
+        except Exception:
+            return {}
+        return (config or {}).get("configurable") or {}
 
     def _build_contents(self, design: ImageDesign) -> list[Any]:
         """Monta o `contents` da chamada: imagens de referência ANTES do prompt.

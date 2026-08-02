@@ -9,6 +9,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { AuthenticatedImage } from "@/app/components/AuthenticatedImage";
 
 export interface GalleryImage {
   filename: string;
@@ -55,7 +56,7 @@ function ImageModal({
           Imagem gerada em {formatTimestamp(image.timestamp)}
         </DialogDescription>
         <div className="relative flex items-center justify-center">
-          <img
+          <AuthenticatedImage
             src={image.url}
             alt={image.filename}
             className="max-w-full max-h-[85vh] rounded-lg object-contain"
@@ -76,15 +77,10 @@ export const ImageGrid = React.memo<ImageGridProps>(
       null
     );
     const [modalOpen, setModalOpen] = useState(false);
-    const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
 
     const openModal = useCallback((image: GalleryImage) => {
       setSelectedImage(image);
       setModalOpen(true);
-    }, []);
-
-    const handleImageLoad = useCallback((filename: string) => {
-      setLoadedImages((prev) => new Set(prev).add(filename));
     }, []);
 
     if (isLoading) {
@@ -115,41 +111,32 @@ export const ImageGrid = React.memo<ImageGridProps>(
     return (
       <>
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {images.map((image) => {
-            const isLoaded = loadedImages.has(image.filename);
-            return (
-              <div
-                key={image.filename}
-                className={cn(
-                  "group cursor-pointer rounded-lg border border-border bg-background overflow-hidden transition-all duration-200 hover:border-primary/50 hover:shadow-md",
-                  !isLoaded && "opacity-0"
-                )}
-                onClick={() => openModal(image)}
-                style={{ opacity: isLoaded ? 1 : 0 }}
-              >
-                <div className="relative aspect-square overflow-hidden bg-muted">
-                  {!isLoaded && (
-                    <Skeleton className="absolute inset-0 aspect-square" />
-                  )}
-                  <img
-                    src={image.url}
-                    alt={image.filename}
-                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                    loading="lazy"
-                    onLoad={() => handleImageLoad(image.filename)}
-                  />
-                </div>
-                <div className="p-2">
-                  <p className="text-xs font-mono text-foreground truncate">
-                    {image.filename}
-                  </p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                    {formatTimestamp(image.timestamp)}
-                  </p>
-                </div>
+          {images.map((image) => (
+            <div
+              key={image.filename}
+              className={cn(
+                "group cursor-pointer rounded-lg border border-border bg-background overflow-hidden transition-all duration-200 hover:border-primary/50 hover:shadow-md"
+              )}
+              onClick={() => openModal(image)}
+            >
+              <div className="relative aspect-square overflow-hidden bg-muted">
+                <AuthenticatedImage
+                  src={image.url}
+                  alt={image.filename}
+                  className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                  loading="lazy"
+                />
               </div>
-            );
-          })}
+              <div className="p-2">
+                <p className="text-xs font-mono text-foreground truncate">
+                  {image.filename}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {formatTimestamp(image.timestamp)}
+                </p>
+              </div>
+            </div>
+          ))}
         </div>
 
         <ImageModal

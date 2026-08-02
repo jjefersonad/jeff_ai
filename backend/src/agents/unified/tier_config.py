@@ -100,6 +100,21 @@ TIER_2_TOOLS: tuple[str, ...] = (
     # exige que um humano revise, adicione o nome a `approved.json` e reinicie.
     # Esse gate fora-de-banda é o que a mantém em Tier 2 e não em Tier 3.
     "save_generated_tool",
+    # Telegram (integracao-telegram, REQ-001 / telegram-tools-spec) — envio
+    # ativo para um chat de Telegram. Execução direta (sem `interrupt_on`):
+    # o canal é single-user (allowlist de 1 `chat_id`) e o `path` de foto/
+    # documento é validado contra a allowlist `backend/outputs/` pela
+    # própria tool (REQ-004 / telegram-tools-spec) — gate humano não
+    # acrescenta proteção real.
+    "send_telegram_message",
+    "send_telegram_photo",
+    "send_telegram_document",
+    # WhatsApp (whatsapp-evolution-channel, REQ-001 / whatsapp-tools-spec) —
+    # envio ativo via Evolution API (número central, Modelo B). Execução
+    # direta pelo mesmo raciocínio do Telegram: destino resolvido por vínculo
+    # em `user_integrations` (não por env var), e sem I/O de arquivo local —
+    # gate humano não acrescenta proteção real.
+    "send_whatsapp_message",
 )
 
 # Tier 3 — Edição de EXISTENTES + commit (interrupt_on com diff preview).

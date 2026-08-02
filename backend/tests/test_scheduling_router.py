@@ -1,0 +1,259 @@
+"""Testes de `GET`/`POST`/`PATCH`/`DELETE /api/scheduled-tasks` (agendamento-jeff-cli-frontend).
+
+Cobre REQ-001 (listagem escopada por papel), REQ-002 (criação com dono
+resolvido da sessão), REQ-003 (edição restrita a tarefas SCHEDULED) e REQ-004
+(exclusão via cancelamento existente) do spec `scheduled-tasks-rest-api`.
+Persistência e scheduler são fakes injetados via override de dependency —
+mesmo padrão de `test_list_and_cancel_scheduled_tasks.py`/`test_usage_router.py`.
+"""
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+from fastapi.testclient import TestClient
+
+import src.infrastructure.web.scheduling_router as scheduling_router
+import src.infrastructure.web.webapp as webapp
+from src.application.ports.scheduled_task_repository import ScheduledTaskRepositoryPort
+from src.application.ports.task_scheduler import TaskSchedulerPort
+from src.domain.scheduling import Schedule, ScheduledTask, TaskStatus
+from src.infrastructure.auth.dependencies import require_auth
+from src.infrastructure.auth.users import User
+
+_ADMIN = User(id="admin-1", username="alice", password_hash="h", role="admin", is_active=True)
+_USER_A = User(id="user-a", username="bob", password_hash="h", role="user", is_active=True)
+
+
+class _FakeRepository(ScheduledTaskRepositoryPort):
+    def __init__(self) -> None:
+        self._store: dict[str, ScheduledTask] = {}
+
+    async def save(self, task: ScheduledTask) -> None:
+        self._store[task.id] = task
+
+    async def get(self, task_id: str) -> ScheduledTask | None:
+        return self._store.get(task_id)
+
+    async def list_all(self) -> list[ScheduledTask]:
+        return list(self._store.values())
+
+    async def list_by_owner(self, owner_user_key: str) -> list[ScheduledTask]:
+        return [t for t in self._store.values() if t.owner_user_key == owner_user_key]
+
+    async def delete(self, task_id: str) -> None:
+        self._store.pop(task_id, None)
+
+
+class _FakeScheduler(TaskSchedulerPort):
+    def __init__(self) -> None:
+        self.scheduled: list[str] = []
+        self.unscheduled: list[str] = []
+
+    async def schedule(self, task: ScheduledTask) -> None:
+        self.scheduled.append(task.id)
+
+    async def unschedule(self, task_id: str) -> None:
+        self.unscheduled.append(task_id)
+
+
+def _make_task(*, id_: str, owner: str) -> ScheduledTask:
+    return ScheduledTask(
+        id=id_,
+        prompt="x",
+        thread_id="th-1",
+        schedule=Schedule(kind="once", expr="2026-12-31T23:59:00"),
+        owner_user_key=owner,
+    )
+
+
+@pytest.fixture
+def repo() -> _FakeRepository:
+    return _FakeRepository()
+
+
+@pytest.fixture
+def scheduler() -> _FakeScheduler:
+    return _FakeScheduler()
+
+
+@pytest.fixture
+def client(repo: _FakeRepository, scheduler: _FakeScheduler):
+    """Cliente do webapp com repo/scheduler/auth sobrescritos pelo teste."""
+    webapp.app.dependency_overrides[scheduling_router._scheduled_task_repository] = (
+        lambda: repo
+    )
+    webapp.app.dependency_overrides[scheduling_router._task_scheduler_dependency] = (
+        lambda: scheduler
+    )
+    try:
+        yield TestClient(webapp.app)
+    finally:
+        webapp.app.dependency_overrides.pop(require_auth, None)
+        webapp.app.dependency_overrides.pop(
+            scheduling_router._scheduled_task_repository, None
+        )
+        webapp.app.dependency_overrides.pop(
+            scheduling_router._task_scheduler_dependency, None
+        )
+
+
+def _as(user: User) -> None:
+    webapp.app.dependency_overrides[require_auth] = lambda: user
+
+
+def test_get_non_admin_returns_only_own_tasks(
+    client: TestClient, repo: _FakeRepository
+) -> None:
+    """Unit-1 / REQ-001: não-admin vê só as tarefas com owner_user_key == 'web:<id>'."""
+    asyncio.run(repo.save(_make_task(id_="t-a", owner="web:user-a")))
+    asyncio.run(repo.save(_make_task(id_="t-b", owner="web:user-b")))
+
+    _as(_USER_A)
+    resp = client.get("/api/scheduled-tasks")
+
+    assert resp.status_code == 200, resp.text
+    ids = sorted(t["id"] for t in resp.json())
+    assert ids == ["t-a"]
+
+
+def test_get_admin_returns_all_tasks(client: TestClient, repo: _FakeRepository) -> None:
+    """Unit-2 / REQ-001: admin vê todas as tarefas, independente do owner_user_key."""
+    asyncio.run(repo.save(_make_task(id_="t-a", owner="web:user-a")))
+    asyncio.run(repo.save(_make_task(id_="t-b", owner="web:user-b")))
+
+    _as(_ADMIN)
+    resp = client.get("/api/scheduled-tasks")
+
+    assert resp.status_code == 200, resp.text
+    ids = sorted(t["id"] for t in resp.json())
+    assert ids == ["t-a", "t-b"]
+
+
+def test_post_persists_owner_from_session_ignoring_body_field(
+    client: TestClient, repo: _FakeRepository, scheduler: _FakeScheduler
+) -> None:
+    """Unit-3 / REQ-002: dono vem da sessão; campo do corpo é ignorado; trigger registrado."""
+    _as(_USER_A)
+
+    resp = client.post(
+        "/api/scheduled-tasks",
+        json={
+            "prompt": "diga oi",
+            "schedule_kind": "once",
+            "schedule_expr": "2026-12-31T23:59:00",
+            "owner_user_key": "web:someone-else",
+        },
+    )
+
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["owner_user_key"] == "web:user-a"
+
+    saved = repo._store[body["id"]]
+    assert saved.owner_user_key == "web:user-a"
+    assert scheduler.scheduled == [body["id"]]
+
+
+def test_patch_owner_updates_scheduled_task(
+    client: TestClient, repo: _FakeRepository
+) -> None:
+    """Unit-1 / REQ-003: dono edita a própria tarefa SCHEDULED → 200, campos atualizados."""
+    asyncio.run(repo.save(_make_task(id_="t-a", owner="web:user-a")))
+    _as(_USER_A)
+
+    resp = client.patch("/api/scheduled-tasks/t-a", json={"prompt": "novo prompt"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["prompt"] == "novo prompt"
+    assert repo._store["t-a"].prompt == "novo prompt"
+
+
+def test_patch_non_owner_non_admin_forbidden(
+    client: TestClient, repo: _FakeRepository
+) -> None:
+    """Unit-2 / REQ-003: não-dono não-admin → 403, tarefa permanece inalterada."""
+    asyncio.run(repo.save(_make_task(id_="t-a", owner="web:user-b")))
+    _as(_USER_A)
+
+    resp = client.patch("/api/scheduled-tasks/t-a", json={"prompt": "novo prompt"})
+
+    assert resp.status_code == 403
+    assert repo._store["t-a"].prompt == "x"
+
+
+def test_patch_non_scheduled_task_rejected(
+    client: TestClient, repo: _FakeRepository
+) -> None:
+    """Unit-3 / REQ-003: tarefa fora de SCHEDULED → 409/422, permanece inalterada."""
+    task = _make_task(id_="t-a", owner="web:user-a")
+    task.status = TaskStatus.RUNNING
+    asyncio.run(repo.save(task))
+    _as(_USER_A)
+
+    resp = client.patch("/api/scheduled-tasks/t-a", json={"prompt": "novo prompt"})
+
+    assert resp.status_code in (409, 422)
+    assert repo._store["t-a"].prompt == "x"
+
+
+def test_delete_owner_removes_task_and_unschedules(
+    client: TestClient, repo: _FakeRepository, scheduler: _FakeScheduler
+) -> None:
+    """Unit-1 / REQ-004: dono exclui a própria tarefa → removida, trigger desagendado."""
+    asyncio.run(repo.save(_make_task(id_="t-a", owner="web:user-a")))
+    _as(_USER_A)
+
+    resp = client.delete("/api/scheduled-tasks/t-a")
+
+    assert resp.status_code == 204, resp.text
+    assert "t-a" not in repo._store
+    assert scheduler.unscheduled == ["t-a"]
+
+
+def test_delete_non_owner_non_admin_forbidden(
+    client: TestClient, repo: _FakeRepository
+) -> None:
+    """Unit-2 / REQ-004: não-dono não-admin → 403, tarefa não removida."""
+    asyncio.run(repo.save(_make_task(id_="t-a", owner="web:user-b")))
+    _as(_USER_A)
+
+    resp = client.delete("/api/scheduled-tasks/t-a")
+
+    assert resp.status_code == 403
+    assert "t-a" in repo._store
+
+
+def test_patch_ignores_client_supplied_ownership_and_admin_override(
+    client: TestClient, repo: _FakeRepository
+) -> None:
+    """Unit-1 / REQ-005: campos de spoof no corpo do PATCH são ignorados — 403 persiste."""
+    asyncio.run(repo.save(_make_task(id_="t-a", owner="web:user-b")))
+    _as(_USER_A)
+
+    resp = client.patch(
+        "/api/scheduled-tasks/t-a",
+        json={
+            "prompt": "tentando escalar",
+            "owner_user_key": "web:user-b",
+            "is_admin": True,
+        },
+    )
+
+    assert resp.status_code == 403
+    assert repo._store["t-a"].prompt == "x"
+
+
+def test_get_ignores_client_supplied_admin_query_param(
+    client: TestClient, repo: _FakeRepository
+) -> None:
+    """Unit-1 / REQ-005: `?is_admin=true` na query string não eleva privilégio."""
+    asyncio.run(repo.save(_make_task(id_="t-a", owner="web:user-a")))
+    asyncio.run(repo.save(_make_task(id_="t-b", owner="web:user-b")))
+    _as(_USER_A)
+
+    resp = client.get("/api/scheduled-tasks?is_admin=true")
+
+    assert resp.status_code == 200, resp.text
+    ids = sorted(t["id"] for t in resp.json())
+    assert ids == ["t-a"]

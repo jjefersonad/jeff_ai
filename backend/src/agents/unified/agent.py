@@ -34,7 +34,7 @@ A função `_resolve_tz()` é reusada pela tool `internet_search` (ver
 ## Subagentes
 
 `_UNIFIED_SUBAGENTS` contém exatamente um subagente: `image_design_subagent`
-(contexto isolado, gate `interrupt_on` próprio, memória de estilo por thread —
+(contexto isolado, geração sem gate de aprovação, memória de estilo por thread —
 a única razão legítima para um subagente neste produto). SDD e requisitos são
 entregues como skills (`backend/skills/{sdd,requirements}/SKILL.md`), não
 subagentes — ver task `skills-4` e a spec `skill-based-capabilities`.
@@ -56,6 +56,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError  # noqa: F401  (re-export)
 
 from deepagents import create_deep_agent
 from dotenv import load_dotenv
+from langgraph.store.base import BaseStore
+from langgraph.types import Checkpointer
 
 from src.agents.subagents.image_design import image_design_subagent
 from src.agents.unified.datetime_utils import (
@@ -70,6 +72,8 @@ from src.agents.unified.mcp_tools_middleware import McpToolsMiddleware
 from src.agents.unified.scoped_skills_middleware import ScopedSkillsMiddleware
 from src.agents.unified.tier_config import build_interrupt_on
 from src.composition.backends import FsRoute, make_backend_factory
+from src.infrastructure.usage.callback import UsageRecordingCallback
+from src.infrastructure.usage.repository import UsageRepository
 from src.models.fallback_model import unified_model
 from src.tools.code_editing_tools import (
     edit_file,
@@ -122,7 +126,13 @@ from src.tools.self_extension import (
 )
 from src.tools.tavily_tool import internet_search
 from src.tools.technical_spec_tools import merge_generated_files
+from src.tools.telegram_tools import (
+    send_telegram_document,
+    send_telegram_message,
+    send_telegram_photo,
+)
 from src.tools.test_runner_tools import run_tests
+from src.tools.whatsapp_tools import send_whatsapp_message
 
 load_dotenv()
 
@@ -191,11 +201,17 @@ usuário.
    `get_date_time_current()` **apenas** se precisar de precisão de
    minutos/segundos (ex.: timestamp exato, logs, agendamento). Para data em
    formato dia, use a data no topo do prompt — não custa tool call.
-5. **Imagens**: SEMPRE delegue para `image_design_subagent` (que tem
-   gate de aprovação próprio). Nunca gere imagens diretamente.
+5. **Imagens**: SEMPRE delegue para `image_design_subagent` (planeja e
+   gera sem gate de aprovação). Nunca gere imagens diretamente.
 6. **Documentos Office**: use as tools nativas (`create_docx_document`,
    `create_xlsx_spreadsheet`, `create_pptx_presentation`) — cada uma
     devolve `{{path, url, metadata}}`. Use SEMPRE `url` no markdown.
+    SEMPRE popule `blocks` (docx) e as linhas de cada aba (xlsx) com o
+    conteúdo real pedido pelo usuário — nunca chame `create_docx_document`
+    com `blocks` vazio/omitido nem `create_xlsx_spreadsheet` com uma aba sem
+    linhas; ambos os casos são rejeitados com `error`. Uma string simples
+    não é mais um atalho válido para `create_docx_document` — a tool exige
+    `DocxDocumentInput` estruturado.
 7. **Auto-extensão**: skills em `/skills/<nome>/SKILL.md` (carregam ao
    vivo). Tools Python via `save_generated_tool` (precisa aprovação
    humana + restart).
@@ -209,12 +225,23 @@ usuário.
    `propose_envelope` pedindo as capabilities necessárias
    (`write_existing`, `vcs`, `shell`, `network`, ...) com uma
    justificativa de 1 linha cada, e declare em `excluded_capabilities`
-   as que você NÃO precisa. Tools de leitura/pesquisa (Tier 1) e criação
-   de arquivo NOVO (Tier 2) não precisam disso — chamar sem propor
+   as que você NÃO precisa. `required_capabilities` é uma lista de
+   objetos `{{"capability": ..., "justification": ...}}` — NUNCA
+   `{{nome_da_capability: justificativa}}`. Exemplo correto:
+   `required_capabilities=[{{"capability": "write_existing", "justification": "Editar main.py"}}]`.
+   Tools de leitura/pesquisa (Tier 1) e criação de arquivo NOVO (Tier 2)
+   não precisam disso — chamar sem propor
    envelope é normal para elas. Uma tool de Tier 3+/4 chamada SEM
    envelope concedido é BLOQUEADA antes de executar; se isso acontecer,
    chame `propose_envelope` pedindo a capability que faltou — não tente
    outra tool para o mesmo efeito, e não finja que a ação foi concluída.
+10. **Diagramas**: ao explicar arquitetura, um fluxo com passos/decisões,
+    uma sequência de chamadas entre sistemas, ou relacionamento entre
+    entidades, prefira emitir um bloco ```mermaid``` (o frontend renderiza
+    automaticamente como SVG inline) em vez de, ou além de, prosa. É só
+    formatação de saída — sem tool call, sem gate de aprovação. Consulte a
+    skill `diagram-creator` para os tipos de diagrama suportados e um guia
+    de sintaxe.
 
 ## Diretórios
 - Repositório real: `{REPO_ROOT}` (código-fonte)
@@ -273,6 +300,12 @@ _UNIFIED_TOOLS: list = [
     create_docx_document,
     create_xlsx_spreadsheet,
     create_pptx_presentation,
+    # --- Telegram (Tier 2, integracao-telegram) ---------------------------- #
+    send_telegram_message,
+    send_telegram_photo,
+    send_telegram_document,
+    # --- WhatsApp (Tier 2, whatsapp-evolution-channel) ---------------------- #
+    send_whatsapp_message,
     # --- Documentos Office/PDF (markitdown) --------------------------------- #
     # Substitui a change `document-reading-tools`. Tier 1 (auto): só leitura.
     read_document,
@@ -318,7 +351,7 @@ _UNIFIED_TOOLS: list = [
 # deletados — SDD e requisitos são entregues como skills
 # (`backend/skills/{sdd,requirements}/SKILL.md`), com paridade de output
 # confirmada em `skills-3-rerun` (design, Addendum 3). `image_design_subagent`
-# é a única exceção legítima: contexto isolado, gate `interrupt_on` próprio
+# é a única exceção legítima: contexto isolado, geração imediata (sem interrupt)
 # e memória de estilo por thread.
 _UNIFIED_SUBAGENTS: list = [
     image_design_subagent,
@@ -389,7 +422,10 @@ _interrupt_on = build_interrupt_on(_TOOL_NAMES)
 # --------------------------------------------------------------------------- #
 # Construção do grafo
 # --------------------------------------------------------------------------- #
-def build_unified():
+def build_unified(
+    checkpointer: Checkpointer | None = None,
+    store: BaseStore | None = None,
+):
     """Constrói o grafo `unified`. Usado no import deste módulo e por testes.
 
     O retorno é um grafo LangGraph configurado com `recursion_limit=1000`.
@@ -407,6 +443,15 @@ def build_unified():
     as 11 skills inteiras em todo turno; a variante escopada só injeta as
     relevantes à conversa. Passada explicitamente em `middleware=[...]` em vez
     do atalho `skills=` para poder trocar a classe sem mexer no resto.
+
+    Os parâmetros `checkpointer` e `store` são opcionais (default `None`):
+    quando omitidos, o grafo é compilado sem eles e a plataforma LangGraph os
+    anexa a partir de `langgraph.json` no momento do import — é o que acontece
+    em `unified = build_unified()` no fim deste módulo. Quando fornecidos
+    (caso de `jeff_cli.py`, que roda fora da plataforma), os objetos passados
+    são os anexados — sem fallback para env vars, para que o caller tenha
+    controle total. Aditivo, não muda o comportamento da chamada sem
+    argumentos (delta `agendamento-jeff-cli-unified-agent-graph-spec`).
     """
     backend_factory = _build_backend_factory()
     graph = create_deep_agent(
@@ -422,14 +467,41 @@ def build_unified():
             EnvelopeMiddleware(),
             ScopedSkillsMiddleware(backend=backend_factory, sources=["/skills/"]),
         ],
+        checkpointer=checkpointer,
+        store=store,
     )
-    return graph.with_config({"recursion_limit": 1000})
+    return graph.with_config(_unified_run_config())
+
+
+def _unified_run_config() -> dict:
+    """Config default anexada ao grafo (recursion_limit + usage callback).
+
+    Decisão web (track-user-token-usage recording-5): callback GLOBAL no grafo
+    compilado, não per-run via `@auth.on.threads.create_run`. O LangGraph
+    Server serializa o config do create_run como JSON na fila — instâncias
+    Python de `BaseCallbackHandler` não sobrevivem nesse caminho. Anexar
+    aqui cobre runs web e o DirectRunner (Telegram/CLI), que reusa
+    `build_unified`. Não anexar também um callback per-run no DirectRunner,
+    senão cada model call grava o evento duas vezes.
+    """
+    config: dict = {"recursion_limit": 1000}
+    postgres_uri = os.getenv("POSTGRES_URI")
+    if postgres_uri:
+        config["callbacks"] = [
+            UsageRecordingCallback(UsageRepository(postgres_uri)),
+        ]
+    return config
 
 
 # Grafo default usado quando o LangGraph API sobe o `unified`. Um
 # `configurable.mode` que um frontend antigo ainda envie em tempo de invoke
 # é ignorado silenciosamente — nada aqui lê essa chave.
-unified = build_unified()
+# `checkpointer`/`store` ficam explícitos em `None` para documentar que esta
+# chamada NÃO anexa nada — é a plataforma LangGraph que injeta os objetos
+# reais a partir de `langgraph.json` no momento do import. (Sem essa
+# explicitação, uma futura lógica de fallback para env dentro de
+# `build_unified` alteraria inadvertidamente o grafo de produção.)
+unified = build_unified(checkpointer=None, store=None)
 
 
 __all__ = [
