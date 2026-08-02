@@ -26,7 +26,7 @@ import os
 from dataclasses import dataclass
 from typing import Protocol
 
-from dotenv import load_dotenv
+from src.composition.env import load_env
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ def main() -> int:
     """Entry-point do processo `telegram_gateway`.
 
     Ordem deliberada:
-    1. `load_dotenv()` — carrega `backend/.env` para o ambiente.
+    1. `load_env()` — carrega `backend/.env` e, por cima, `./.env` (raiz).
     2. `bootstrap_config()` — falha rápido se faltarem env vars (NÃO chama
        `run_polling`).
     3. `ensure_telegram_threads_schema()` — DDL idempotente.
@@ -140,7 +140,7 @@ def main() -> int:
     bootstrap. Exceções não-tratadas durante o polling são logadas e
     propagadas (o supervisor externo cuida do restart).
     """
-    load_dotenv()
+    load_env()
 
     try:
         config = bootstrap_config()

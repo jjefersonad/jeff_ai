@@ -5,10 +5,11 @@ O modelo padrão é `mxbai-embed-large` (1024 dimensões).
 """
 import os
 
-from dotenv import load_dotenv
 from langchain_ollama import OllamaEmbeddings
 
-load_dotenv()
+from src.composition.env import load_env
+
+load_env()
 
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "mxbai-embed-large")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
