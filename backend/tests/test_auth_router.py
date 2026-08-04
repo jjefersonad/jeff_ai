@@ -164,7 +164,7 @@ def test_logout_without_cookie_is_a_noop_and_clears_cookie(
 def test_me_with_valid_session_returns_username_and_role(
     monkeypatch: pytest.MonkeyPatch, client: TestClient
 ) -> None:
-    """GET /api/me com sessão válida → 200 {username, role}."""
+    """GET /api/me com sessão válida → 200 {id, username, role}."""
     import src.infrastructure.auth.dependencies as deps
     import src.infrastructure.auth.session_resolver as resolver
 
@@ -177,7 +177,11 @@ def test_me_with_valid_session_returns_username_and_role(
     response = client.get("/api/me")
 
     assert response.status_code == 200
-    assert response.json() == {"username": "alice", "role": "admin"}
+    assert response.json() == {
+        "id": "user-1",
+        "username": "alice",
+        "role": "admin",
+    }
 
 
 def test_me_without_session_returns_401(

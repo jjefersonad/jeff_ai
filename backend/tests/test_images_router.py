@@ -272,3 +272,84 @@ def test_serve_reference_404_when_missing(client: TestClient):
     """Reference inexistente → 404."""
     resp = client.get("/api/references/ghost.png")
     assert resp.status_code == 404
+
+
+# ---------- Ownership isolation (fix-image-list-user-isolation) ----------
+
+
+_USER = User(
+    id="user-u",
+    username="alice",
+    password_hash="x",
+    role="user",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
+
+
+@pytest.fixture
+def user_client(images_root: Path, monkeypatch: pytest.MonkeyPatch):
+    """Cliente autenticado como role=user (não admin)."""
+    webapp.app.dependency_overrides[require_auth] = lambda: _USER
+    try:
+        yield TestClient(webapp.app)
+    finally:
+        webapp.app.dependency_overrides.pop(require_auth, None)
+
+
+def test_list_images_user_only_sees_owned(
+    user_client: TestClient, images_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """REQ-003: role=user lista só filenames em generated_files."""
+    (images_root / "owned.png").write_bytes(_PNG_1X1)
+    (images_root / "other.png").write_bytes(_PNG_1X1)
+    (images_root / "orphan.png").write_bytes(_PNG_1X1)
+
+    async def _owned(*, kind: str, user_id: str):
+        assert kind == "image"
+        assert user_id == "user-u"
+        return frozenset({"owned.png"})
+
+    monkeypatch.setattr(images_router, "list_owned_filenames", _owned)
+
+    resp = user_client.get("/api/images")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert [i["filename"] for i in body["images"]] == ["owned.png"]
+
+
+def test_serve_image_user_denied_for_foreign(
+    user_client: TestClient, images_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """REQ-002: get de imagem alheia → 404 opaco."""
+    name = "foreign.png"
+    (images_root / name).write_bytes(_PNG_1X1)
+
+    async def _deny(*, kind: str, filename: str, user: User):
+        assert kind == "image"
+        assert filename == name
+        assert user.id == "user-u"
+        return False
+
+    monkeypatch.setattr(images_router, "is_authorized", _deny)
+
+    resp = user_client.get(f"/api/images/{name}")
+    assert resp.status_code == 404
+    assert resp.content != _PNG_1X1
+
+
+def test_serve_image_user_allowed_for_own(
+    user_client: TestClient, images_root: Path, monkeypatch: pytest.MonkeyPatch
+):
+    name = "mine.png"
+    (images_root / name).write_bytes(_PNG_1X1)
+
+    async def _allow(*, kind: str, filename: str, user: User):
+        return True
+
+    monkeypatch.setattr(images_router, "is_authorized", _allow)
+
+    resp = user_client.get(f"/api/images/{name}")
+    assert resp.status_code == 200
+    assert resp.content == _PNG_1X1

@@ -4,7 +4,9 @@ A tool agora traduz a entrada para o domínio e delega ao caso de uso
 PlanAndCreateImage. O cliente Gemini e o Store são mockados — nenhum teste faz
 chamada real nem requer GOOGLE_API_KEY/Postgres.
 """
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 import src.composition.dependencies as dep
 import src.infrastructure.llm.gemini_image_adapter as gmod
@@ -76,6 +78,8 @@ async def test_tool_delegates_and_returns_path_url_metadata(monkeypatch, tmp_pat
     monkeypatch.setattr(gmod, "_DEFAULT_OUTPUT_DIR", tmp_path)
     # A injeção do adapter/Store agora vive em composition.dependencies.
     monkeypatch.setattr(dep, "get_store", lambda: MagicMock())
+    stamp = AsyncMock()
+    monkeypatch.setattr(gt, "record_ownership", stamp)
 
     result = await gt.create_image_from_prompt.coroutine("um gato astronauta")
 
@@ -83,4 +87,29 @@ async def test_tool_delegates_and_returns_path_url_metadata(monkeypatch, tmp_pat
     assert result["url"].startswith("/api/images/") and result["url"].endswith(".png")
     assert result["metadata"]["prompt"] == "um gato astronauta"
     assert result["metadata"]["art_style"] is None
-    assert (tmp_path / result["url"].split("/")[-1]).exists()
+    filename = result["url"].split("/")[-1]
+    assert (tmp_path / filename).exists()
+    stamp.assert_awaited_once_with(kind="image", filename=filename)
+
+
+async def test_tool_propagates_record_ownership_failure(monkeypatch, tmp_path):
+    """REQ-ADD-001: falha no stamp não devolve URL de arquivo órfão."""
+    part = MagicMock()
+    part.inline_data = object()
+    image = MagicMock()
+    image.save.side_effect = lambda p: open(p, "wb").write(b"PNG")
+    part.as_image.return_value = image
+    response = MagicMock()
+    response.parts = [part]
+    client = MagicMock()
+    client.models.generate_content.return_value = response
+
+    monkeypatch.setattr(gmod.genai, "Client", lambda *a, **k: client)
+    monkeypatch.setattr(gmod, "_DEFAULT_OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(dep, "get_store", lambda: MagicMock())
+    monkeypatch.setattr(
+        gt, "record_ownership", AsyncMock(side_effect=RuntimeError("db down"))
+    )
+
+    with pytest.raises(RuntimeError, match="db down"):
+        await gt.create_image_from_prompt.coroutine("x")

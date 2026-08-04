@@ -41,6 +41,8 @@ services:
       # Espelha a seção "http" do langgraph.json — ver docker-compose.yml para
       # a nota completa sobre por que essa var é obrigatória.
       LANGGRAPH_HTTP: '{"app": "./src/infrastructure/web/webapp.py:app", "cors": {"allow_origins": ["${FRONTEND_ORIGIN:-http://localhost:3002}"], "allow_credentials": true, "allow_methods": ["*"], "allow_headers": ["*"]}}'
+      # Espelha auth.path do langgraph.json — ver docker-compose.yml (LANGGRAPH_AUTH).
+      LANGGRAPH_AUTH: '{"path": "./src/infrastructure/web/auth.py:auth"}'
       CORS_ALLOW_ORIGINS: ${FRONTEND_ORIGIN:-http://localhost:3002}
     volumes:
       - ./backend/outputs:/deps/backend/outputs

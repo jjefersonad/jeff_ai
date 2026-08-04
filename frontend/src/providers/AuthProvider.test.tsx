@@ -26,7 +26,10 @@ describe("AuthProvider session rehydration (auth-session-rehydration-task-fronte
     const fetchMock = vi
       .fn()
       .mockResolvedValue(
-        new Response(JSON.stringify({ username: "alice", role: "admin" }), { status: 200 })
+        new Response(
+          JSON.stringify({ id: "user-1", username: "alice", role: "admin" }),
+          { status: 200 }
+        )
       );
     global.fetch = fetchMock;
 
@@ -37,7 +40,11 @@ describe("AuthProvider session rehydration (auth-session-rehydration-task-fronte
     });
 
     expect(result.current.isAuthenticated).toBe(true);
-    expect(result.current.user).toEqual({ username: "alice", role: "admin" });
+    expect(result.current.user).toEqual({
+      id: "user-1",
+      username: "alice",
+      role: "admin",
+    });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("http://backend.test/api/me");
     expect(init.credentials).toBe("include");

@@ -45,10 +45,14 @@ import {
   parseErrorMessage,
   setUnauthorizedHandler,
 } from "@/lib/api";
+import { clearImagesSwrCache } from "@/app/hooks/imagesSwrCache";
+import { clearThreadsSwrCache } from "@/app/hooks/threadsSwrCache";
 
 export type AuthRole = "admin" | "user";
 
 export interface AuthUser {
+  /** `users.id` — usado na key SWR de threads (isolamento de cache). */
+  id: string;
   username: string;
   role: AuthRole;
 }
@@ -71,7 +75,7 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-/** Non-secret mirror of `{username, role}` so admin nav survives remounts / hard reload while `/api/me` is in flight. */
+/** Non-secret mirror of `{id, username, role}` so admin nav survives remounts / hard reload while `/api/me` is in flight. */
 const AUTH_USER_STORAGE_KEY = "jeff_ai.auth.user";
 
 interface AuthProviderProps {
@@ -80,12 +84,18 @@ interface AuthProviderProps {
 
 function parseAuthUser(data: unknown): AuthUser | null {
   if (!data || typeof data !== "object") return null;
-  const { username, role } = data as { username?: unknown; role?: unknown };
+  const { id, username, role } = data as {
+    id?: unknown;
+    username?: unknown;
+    role?: unknown;
+  };
   if (
+    typeof id === "string" &&
+    id.length > 0 &&
     typeof username === "string" &&
     (role === "admin" || role === "user")
   ) {
-    return { username, role };
+    return { id, username, role };
   }
   return null;
 }
@@ -209,10 +219,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
         if (response.ok) {
           const parsed = parseAuthUser(await response.json());
           if (parsed) {
+            // Drop thread/image pages from any previous session before applying user.
+            await clearThreadsSwrCache();
+            await clearImagesSwrCache();
             applyUser(parsed);
             return { ok: true };
           }
-          // Defensive: backend should always return username+role, but if a
+          // Defensive: backend should always return id+username+role, but if a
           // future change breaks the contract, treat it as a hard failure
           // rather than half-authenticating.
           return { ok: false, error: "Malformed login response" };
@@ -237,6 +250,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // Even if the call fails (e.g. backend already down), we still want
       // to clear local state and route the user to /public/login.
     }
+    await clearThreadsSwrCache();
+    await clearImagesSwrCache();
     applyUser(null);
     router.replace("/public/login");
   }, [router, applyUser]);

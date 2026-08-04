@@ -2,18 +2,26 @@
 
 Portado 1:1 de `backend/image_server.py` para ser montado como `APIRouter`
 pelo `http.app` do backend LangGraph (`src/infrastructure/web/webapp.py`).
+
+Listagem e serve de PNGs geradas respeitam `generated_files`
+(`media-ownership-authorization` / `fix-image-list-user-isolation`):
+`role=user` só vê/baixa o que possui; `role=admin` vê o diretório completo;
+órfãs (sem linha) são invisíveis a user.
 """
 
 from datetime import datetime as dt
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 
+from src.infrastructure.auth.dependencies import require_auth
+from src.infrastructure.auth.users import User
 from src.infrastructure.media.reference_store import (
     ReferenceUploadError,
     store_reference_bytes,
 )
+from src.infrastructure.ownership.store import is_authorized, list_owned_filenames
 
 router = APIRouter()
 
@@ -34,17 +42,25 @@ _REFERENCE_MEDIA_TYPES = {
 @router.get("/api/images")
 async def list_images(
     limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0)
+    offset: int = Query(0, ge=0),
+    user: User | None = Depends(require_auth),
 ):
-    """List generated images with pagination"""
+    """List generated images with pagination (scoped by ownership for role=user)."""
+    if user is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
     if not IMAGES_DIR.exists():
-        return {"images": [], "total": 0}
+        return {"images": [], "total": 0, "limit": limit, "offset": offset}
 
     png_files = [
         f for f in IMAGES_DIR.iterdir()
         if f.is_file() and f.suffix.lower() == ".png"
     ]
     png_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+
+    if user.role != "admin":
+        owned = await list_owned_filenames(kind="image", user_id=user.id)
+        png_files = [f for f in png_files if f.name in owned]
 
     total = len(png_files)
     paginated_files = png_files[offset:offset + limit]
@@ -74,8 +90,14 @@ async def list_images(
 
 
 @router.get("/api/images/{filename}")
-async def serve_image(filename: str):
-    """Serve a generated image file"""
+async def serve_image(
+    filename: str,
+    user: User | None = Depends(require_auth),
+):
+    """Serve a generated image file (ownership-gated for role=user)."""
+    if user is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
@@ -93,6 +115,9 @@ async def serve_image(filename: str):
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     if not image_path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    if not await is_authorized(kind="image", filename=filename, user=user):
         raise HTTPException(status_code=404, detail="Image not found")
 
     return FileResponse(

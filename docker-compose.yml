@@ -41,6 +41,12 @@ services:
       # /public/logout, rotas de imagens/documentos) nunca é montado (achado
       # empírico 2026-07-16, change autenticacao-jwt-rotas-protegidas).
       LANGGRAPH_HTTP: '{"app": "./src/infrastructure/web/webapp.py:app", "cors": {"allow_origins": ["${FRONTEND_ORIGIN:-http://localhost:3002}"], "allow_credentials": true, "allow_methods": ["*"], "allow_headers": ["*"]}}'
+      # Espelha a seção "auth" do langgraph.json — a imagem langgraph-api não
+      # aplica `auth.path` do json em runtime (só LANGGRAPH_*). Sem esta var,
+      # LANGGRAPH_AUTH_TYPE fica "noop", USES_CUSTOM_AUTH=false, e o filtro
+      # metadata.owner nunca roda (fix-thread-list-user-isolation diag-1:
+      # role=user via todas as threads; create não carimba owner).
+      LANGGRAPH_AUTH: '{"path": "./src/infrastructure/web/auth.py:auth"}'
       # LANGSERVE_CORS_ALLOW_ORIGINS/LANGSERVE_CORS_ALLOW_CREDENTIALS não são lidas
       # por `langgraph_api` (nenhum env var com esse prefixo existe para cors no
       # pacote instalado, achado empírico 2026-07-16) — eram config morta desde

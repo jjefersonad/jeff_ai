@@ -110,11 +110,18 @@ class WhatsAppChannel(ChatChannelPort):
     async def _send_attachment_safe(
         self, phone: str, attachment: OutputAttachment, *, caption: str | None
     ) -> None:
-        media_base64 = base64.b64encode(Path(attachment.path).read_bytes()).decode()
         try:
+            media_base64 = base64.b64encode(Path(attachment.path).read_bytes()).decode()
             await evolution_client.send_image(self._instance, phone, media_base64, caption=caption)
-        except httpx.HTTPStatusError as exc:
-            self._log_failure(phone, evolution_client.classify_send_error(exc))
+        except Exception as exc:  # noqa: BLE001 — REQ-005: deliver nunca propaga
+            if isinstance(exc, httpx.HTTPStatusError):
+                self._log_failure(phone, evolution_client.classify_send_error(exc))
+            else:
+                logger.warning(
+                    "WhatsAppChannel.deliver falhou: phone=%s error_kind=unexpected",
+                    phone,
+                    exc_info=True,
+                )
 
     def _log_failure(self, phone: str, classified: dict) -> None:
         logger.warning(

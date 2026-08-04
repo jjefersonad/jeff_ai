@@ -7,10 +7,11 @@ Cria/revoga sessões server-side (task-rest-1, ver design da mudança
 e entrega um cookie de sessão opaco (`sessions.create_session`); logout revoga
 a sessão imediatamente (`sessions.revoke_session`) e limpa o cookie.
 
-`GET /api/me` (auth-session-rehydration) devolve `{username, role}` a partir
+`GET /api/me` (auth-session-rehydration) devolve `{id, username, role}` a partir
 do cookie de sessão — usado pelo `AuthProvider` no mount para rehidratar o
 estado React após hard reload (sem isso, páginas admin como `/admin/users`
-ficam sem `user.role` e nunca disparam o fetch).
+ficam sem `user.role` e nunca disparam o fetch). O `id` (`users.id`) isola o
+cache SWR de threads entre sessões (`fix-thread-list-user-isolation`).
 """
 
 from __future__ import annotations
@@ -58,7 +59,7 @@ async def login(payload: LoginRequest, response: Response) -> dict[str, str]:
         secure=True,
         samesite="strict",
     )
-    return {"username": user.username, "role": user.role}
+    return {"id": user.id, "username": user.username, "role": user.role}
 
 
 @router.post("/public/logout")
@@ -73,11 +74,11 @@ async def logout(request: Request, response: Response) -> dict[str, str]:
 
 @router.get("/api/me")
 async def me(user: User | None = Depends(require_auth)) -> dict[str, str]:
-    """Devolve o usuário da sessão corrente (`username` + `role`).
+    """Devolve o usuário da sessão corrente (`id` + `username` + `role`).
 
     401 quando não há cookie/sessão válida — o frontend trata isso como
     "não autenticado" sem redirecionar (probe de rehidratação).
     """
     if user is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    return {"username": user.username, "role": user.role}
+    return {"id": user.id, "username": user.username, "role": user.role}

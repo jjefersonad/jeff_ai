@@ -116,6 +116,59 @@ async def test_deliver_image_attachment_calls_send_image_with_base64_and_caption
 
 
 @pytest.mark.asyncio
+async def test_deliver_attachment_swallows_missing_file_and_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    channel = WhatsAppChannel(instance="jeff-ai-central")
+    attachment = OutputAttachment(
+        path="/nonexistent/foo.png", mime="image/png", display_name="foo.png"
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await channel.deliver(
+            user_key="whatsapp:5511999998888",
+            text="Aqui está",
+            attachments=(attachment,),
+            kind="normal",
+        )
+
+    assert any(
+        "error_kind=unexpected" in record.message and record.levelno == logging.WARNING
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_deliver_attachment_swallows_network_error_and_logs_warning(
+    caplog: pytest.LogCaptureFixture, tmp_path
+) -> None:
+    image_path = tmp_path / "foo.png"
+    image_path.write_bytes(b"fake-png-bytes")
+    channel = WhatsAppChannel(instance="jeff-ai-central")
+    attachment = OutputAttachment(path=str(image_path), mime="image/png", display_name="foo.png")
+
+    with (
+        patch(
+            "src.infrastructure.channels.whatsapp_channel.evolution_client.send_image",
+            new_callable=AsyncMock,
+            side_effect=httpx.ConnectError("connection refused"),
+        ),
+        caplog.at_level(logging.WARNING),
+    ):
+        await channel.deliver(
+            user_key="whatsapp:5511999998888",
+            text="Aqui está",
+            attachments=(attachment,),
+            kind="normal",
+        )
+
+    assert any(
+        "error_kind=unexpected" in record.message and record.levelno == logging.WARNING
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
 async def test_deliver_interruption_sends_approval_pending_text() -> None:
     channel = WhatsAppChannel(instance="jeff-ai-central")
 
