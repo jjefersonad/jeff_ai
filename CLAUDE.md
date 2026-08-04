@@ -170,7 +170,15 @@ instances (no local `jeff_ia_postgres`/`jeff_ia_redis` containers), plus `NEXT_P
 `current-date-context`), `SKILLS_ALLOWLIST`, `EVOLUTION_API_URL`/`EVOLUTION_API_KEY`/
 `EVOLUTION_INSTANCE_NAME`/`EVOLUTION_WEBHOOK_TOKEN` (whatsapp-evolution-channel — the backend
 client at `src/infrastructure/whatsapp/evolution_client.py` and the `send_whatsapp_message` tool
-are both implemented; without these four the WhatsApp channel doesn't authenticate).
+are both implemented; without these four the WhatsApp channel doesn't authenticate). Dev-local
+only (`docker-compose.yml`/`docker-compose.evolution.yml`/`docker-compose.ollama.yml`, ignored by
+`docker-compose.prod.yml` which has no local Postgres/pgAdmin containers): `POSTGRES_DB`/
+`POSTGRES_USER`/`POSTGRES_PASSWORD` (credentials for the local `jeff_ia_postgres` container —
+default `jeff_ia`/`jeff_ia`/`jeff_ia`, and `POSTGRES_URI`'s own default derives from these same
+three variables, so overriding one doesn't desync the connection string from the container) and
+`PGADMIN_DEFAULT_EMAIL`/`PGADMIN_DEFAULT_PASSWORD` (login for the `jeff_ia_pgadmin` container,
+port 5050, `admin` profile — default `admin@admin.local`/`admin123`, insecure by design for
+local dev, override before exposing that port beyond localhost).
 `EVOLUTION_WEBHOOK_TOKEN` is embedded directly in the webhook URL registered with the Evolution
 API instance (`/api/webhooks/whatsapp/<token>`) — it's the route's actual authentication
 mechanism, since `/api/webhooks/whatsapp/` is exempt from session-cookie `require_auth`
@@ -198,6 +206,10 @@ see `frontend/Dockerfile.frontend`) and brings up `backend`, `frontend`, `telegr
 the Evolution API bundle (`evolution_postgres`/`evolution_redis`/`evolution_api`). Postgres/Redis
 for the Jeff AI app itself are expected to already exist (managed instances) — `POSTGRES_URI`/
 `REDIS_URI` have no fallback default in this file and the compose fails fast if either is unset.
+`backend` and `telegram_gateway` declare `env_file: backend/.env` here too (fixed in
+`unificar-env-vars-docker-compose` — this file previously omitted it, unlike `docker-compose.yml`,
+so `GOOGLE_API_KEY`/`TAVILY_API_KEY`/`TELEGRAM_BOT_TOKEN`/etc. never reached the production
+containers).
 
 ---
 

@@ -222,8 +222,129 @@ async def test_fails_closed_without_resolvable_user(monkeypatch, call):
     s = InMemoryStore()
     monkeypatch.setattr(mt, "get_store", lambda: s)
     monkeypatch.setattr(mt, "resolve_user_id", AsyncMock(return_value=None))
+    monkeypatch.setattr(mt, "get_config", lambda: {"configurable": {}}, raising=False)
 
     out = await call()
 
-    assert out == mt._NO_USER_MESSAGE
+    assert out in (mt._NO_IDENTITY_MESSAGE, mt._CHANNEL_UNLINKED_MESSAGE)
     assert list(s.search(mt.MEMORY_NAMESPACE)) == []
+
+
+async def test_search_memory_channel_unlinked_typed_message(monkeypatch):
+    """fix-memory-access-user-identity memory-1 unit-1: canal sem vínculo."""
+    store_calls: list[object] = []
+
+    def _get_store() -> None:
+        store_calls.append(object())
+        raise AssertionError("Store não deve ser consultado sem user_id")
+
+    monkeypatch.setattr(mt, "get_store", _get_store)
+    monkeypatch.setattr(mt, "resolve_user_id", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        mt,
+        "get_config",
+        lambda: {"configurable": {"user_key": "telegram:12345"}},
+        raising=False,
+    )
+
+    out = await mt.search_memory.ainvoke({"query": "Conexão Elite"})
+
+    assert out == mt._CHANNEL_UNLINKED_MESSAGE
+    assert "vincular" in out.lower() or "Vincule" in out
+    assert store_calls == []
+
+
+async def test_search_memory_no_user_key_typed_message(monkeypatch):
+    """fix-memory-access-user-identity memory-1 unit-2: sem user_key / unknown."""
+    store_calls: list[object] = []
+
+    def _get_store() -> None:
+        store_calls.append(object())
+        raise AssertionError("Store não deve ser consultado sem user_id")
+
+    monkeypatch.setattr(mt, "get_store", _get_store)
+    monkeypatch.setattr(mt, "resolve_user_id", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        mt,
+        "get_config",
+        lambda: {"configurable": {"user_key": "unknown"}},
+        raising=False,
+    )
+
+    out = await mt.search_memory.ainvoke({"query": "x"})
+
+    assert out == mt._NO_IDENTITY_MESSAGE
+    assert "não autenticada" in out.lower() or "identidade" in out.lower()
+    assert store_calls == []
+
+    monkeypatch.setattr(mt, "get_config", lambda: {"configurable": {}}, raising=False)
+    out_missing = await mt.search_memory.ainvoke({"query": "x"})
+    assert out_missing == mt._NO_IDENTITY_MESSAGE
+    assert store_calls == []
+
+
+# --------------------------------------------------------------------------- #
+# Happy path com identidade resolvida (fix-memory-access-user-identity memory-2)
+# --------------------------------------------------------------------------- #
+async def test_search_memory_web_authenticated_returns_content(monkeypatch):
+    """memory-2 unit-1: web:<uuid> → namespace do usuário, sem mensagem de falha."""
+    from src.infrastructure.ownership import store as ownership_store
+
+    user_id = "web-user-uuid"
+    namespace = (*mt.MEMORY_NAMESPACE, user_id)
+    s = InMemoryStore()
+    await s.aput(
+        namespace, "k1", {"content": "fato sobre Conexão Elite", "kind": "semantic"}
+    )
+    monkeypatch.setattr(mt, "get_store", lambda: s)
+    monkeypatch.setattr(
+        ownership_store,
+        "get_config",
+        lambda: {"configurable": {"user_key": f"web:{user_id}"}},
+    )
+
+    out = await mt.search_memory.ainvoke({"query": "Conexão Elite"})
+
+    assert "Conexão Elite" in out
+    assert out != mt._NO_IDENTITY_MESSAGE
+    assert out != mt._CHANNEL_UNLINKED_MESSAGE
+
+
+async def test_search_memory_telegram_legacy_bridge_returns_content(monkeypatch):
+    """memory-2 unit-2: allowlist + TELEGRAM_LEGACY_OWNER_USER_ID → busca no dono."""
+    from src.domain.integrations import UserIntegration
+    from src.infrastructure.ownership import store as ownership_store
+
+    legacy_owner = "legacy-owner-uuid"
+    chat_id = "12345"
+    namespace = (*mt.MEMORY_NAMESPACE, legacy_owner)
+    s = InMemoryStore()
+    await s.aput(
+        namespace, "k1", {"content": "memória do Conexão Elite", "kind": "semantic"}
+    )
+    monkeypatch.setattr(mt, "get_store", lambda: s)
+    monkeypatch.setattr(
+        ownership_store,
+        "get_config",
+        lambda: {"configurable": {"user_key": f"telegram:{chat_id}"}},
+    )
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", chat_id)
+    monkeypatch.setenv("TELEGRAM_LEGACY_OWNER_USER_ID", legacy_owner)
+    monkeypatch.setenv("POSTGRES_URI", "postgresql://fake")
+
+    class _FakeRepository:
+        def __init__(self, conninfo: str) -> None:
+            self.conninfo = conninfo
+
+        async def list_all(self) -> list[UserIntegration]:
+            return []
+
+    monkeypatch.setattr(
+        ownership_store, "PostgresUserIntegrationRepository", _FakeRepository
+    )
+
+    out = await mt.search_memory.ainvoke({"query": "Conexão Elite"})
+
+    assert "Conexão Elite" in out
+    assert out != mt._NO_IDENTITY_MESSAGE
+    assert out != mt._CHANNEL_UNLINKED_MESSAGE

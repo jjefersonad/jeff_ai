@@ -10,9 +10,11 @@ do run (contextvar do LangGraph, stampado server-side em
 Decision 4 de `user-integration-credentials`): `web:<uuid>` retorna o uuid
 direto; `telegram:<chat_id>` e `whatsapp:<phone_number>` consultam
 `user_integrations` (`task store-2` / `whatsapp-evolution-channel-task
-resolve-1`) por um vínculo ativo, e retornam `None` sem vínculo (mesmo
-comportamento "zero servidores" de antes, agora estendido ao Telegram e
-ao WhatsApp).
+resolve-1`) por um vínculo ativo. Para Telegram, se não houver vínculo e
+o `chat_id` for o allowlist legado (`TELEGRAM_AUTHORIZED_CHAT_ID`) com
+`TELEGRAM_LEGACY_OWNER_USER_ID` setada, usa esse UUID como ponte de
+memória/ownership (`fix-memory-access-user-identity`). Sem vínculo e
+sem ponte, retorna `None`.
 
 `is_authorized` (REQ-002 de `media-ownership-authorization`) é usada pelos
 routers HTTP (`documents_router.py`, `images_router.py`) para decidir se o
@@ -54,8 +56,24 @@ async def resolve_user_id() -> str | None:
     return None
 
 
+def _legacy_telegram_owner_user_id(chat_id: str) -> str | None:
+    """Ponte allowlist legado → `users.id` para memória/ownership.
+
+    Só aplica quando `chat_id` é exatamente `TELEGRAM_AUTHORIZED_CHAT_ID` e
+    `TELEGRAM_LEGACY_OWNER_USER_ID` está setada (UUID do dono). Vínculo em
+    `user_integrations` tem precedência — esta função só é consultada depois.
+    """
+    authorized_chat_id = os.environ.get("TELEGRAM_AUTHORIZED_CHAT_ID", "")
+    legacy_owner = os.environ.get("TELEGRAM_LEGACY_OWNER_USER_ID", "").strip()
+    if not chat_id or not authorized_chat_id or not legacy_owner:
+        return None
+    if chat_id != authorized_chat_id:
+        return None
+    return legacy_owner
+
+
 async def resolve_telegram_user_id(chat_id: str) -> str | None:
-    """Vínculo `chat_id → user_id` via `user_integrations`.
+    """Vínculo `chat_id → user_id` via `user_integrations`, com ponte legado.
 
     Resolvedor canônico reaproveitado também por
     `telegram/authorization.py` (task `channel-1`) para decidir a
@@ -65,7 +83,8 @@ async def resolve_telegram_user_id(chat_id: str) -> str | None:
 
     `config` é cifrado em repouso (task `store-2`), então não dá para
     filtrar por `chat_id` em SQL — decifra cada entrada `telegram` (via o
-    repositório, que já decifra) e compara em Python.
+    repositório, que já decifra) e compara em Python. Sem vínculo, cai na
+    ponte `TELEGRAM_LEGACY_OWNER_USER_ID` se o chat for o da allowlist.
     """
     repository = PostgresUserIntegrationRepository(os.environ["POSTGRES_URI"])
     for integration in await repository.list_all():
@@ -74,7 +93,7 @@ async def resolve_telegram_user_id(chat_id: str) -> str | None:
             and integration.config.get("chat_id") == chat_id
         ):
             return integration.user_id
-    return None
+    return _legacy_telegram_owner_user_id(chat_id)
 
 
 async def resolve_whatsapp_user_id(phone_number: str) -> str | None:

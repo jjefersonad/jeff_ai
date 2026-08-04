@@ -9,7 +9,7 @@ services:
     env_file:
       - backend/.env
     environment:
-      POSTGRES_URI: ${POSTGRES_URI:-postgresql://jeff_ia:jeff_ia@jeff_ia_postgres:5432/jeff_ia}
+      POSTGRES_URI: ${POSTGRES_URI:-postgresql://${POSTGRES_USER:-jeff_ia}:${POSTGRES_PASSWORD:-jeff_ia}@jeff_ia_postgres:5432/${POSTGRES_DB:-jeff_ia}}
       REDIS_URI: ${REDIS_URI:-redis://:${REDIS_PASSWORD}@jeff_ia_redis:6379/0}
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY}
       LANGCHAIN_TRACING_V2: true
@@ -82,7 +82,6 @@ services:
     ports:
       - "3002:3000"
     environment:
-      LANGSERVE_URL: http://localhost:8001
       # Origem fixa do backend, usada pelo browser (cross-origin, com cookies
       # via credentials:'include') — não mais configurável por usuário via
       # Settings (ver frontend/src/lib/api.ts:getApiBaseUrl). NEXT_PUBLIC_*
@@ -104,15 +103,15 @@ services:
     image: pgvector/pgvector:pg15
     container_name: jeff_ia_postgres
     environment:
-      POSTGRES_DB: jeff_ia
-      POSTGRES_USER: jeff_ia
-      POSTGRES_PASSWORD: jeff_ia
+      POSTGRES_DB: ${POSTGRES_DB:-jeff_ia}
+      POSTGRES_USER: ${POSTGRES_USER:-jeff_ia}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jeff_ia}
     ports:
       - "5436:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U jeff_ia -d jeff_ia"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jeff_ia} -d ${POSTGRES_DB:-jeff_ia}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -139,8 +138,8 @@ services:
     image: dpage/pgadmin4:8
     container_name: jeff_ia_pgadmin
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.local
-      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@admin.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin123}
       PGADMIN_CONFIG_SERVER_MODE: 'False'
     ports:
       - "5050:80"
@@ -191,7 +190,7 @@ services:
       # seria redundante.
       # Mesmo fallback do serviço `backend`: usa o host interno do Postgres
       # na rede docker, não o mapeamento de porta do host.
-      POSTGRES_URI: ${POSTGRES_URI:-postgresql://jeff_ia:jeff_ia@jeff_ia_postgres:5432/jeff_ia}
+      POSTGRES_URI: ${POSTGRES_URI:-postgresql://${POSTGRES_USER:-jeff_ia}:${POSTGRES_PASSWORD:-jeff_ia}@jeff_ia_postgres:5432/${POSTGRES_DB:-jeff_ia}}
       REDIS_URI: ${REDIS_URI:-redis://:${REDIS_PASSWORD}@jeff_ia_redis:6379/0}
       # === Telegram Gateway (change telegram-slash-commands) ===
       # Token e chat_id são propagados pelo `env_file: backend/.env` (linha 192).

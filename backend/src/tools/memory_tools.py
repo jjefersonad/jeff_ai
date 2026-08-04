@@ -44,7 +44,7 @@ nenhum efeito sobre o que o agente pode de fato executar. Ver
 import uuid
 
 from langchain_core.tools import tool
-from langgraph.config import get_store
+from langgraph.config import get_config, get_store
 
 from src.infrastructure.ownership.store import resolve_user_id
 
@@ -53,12 +53,30 @@ from src.infrastructure.ownership.store import resolve_user_id
 # operação é `MEMORY_NAMESPACE + (user_id,)` (ver `_resolve_namespace`).
 MEMORY_NAMESPACE = ("memories",)
 
-_NO_USER_MESSAGE = (
-    "Não foi possível identificar o usuário desta sessão para acessar a "
-    "memória de longo prazo. Isso acontece em sessões não autenticadas ou "
-    "num canal (ex.: Telegram) ainda não vinculado a uma conta — vincule a "
-    "conta antes de usar esta ferramenta."
+_NO_IDENTITY_MESSAGE = (
+    "Não foi possível acessar a memória de longo prazo: esta sessão não tem "
+    "identidade de usuário (não autenticada). Faça login na web antes de usar "
+    "esta ferramenta."
 )
+
+_CHANNEL_UNLINKED_MESSAGE = (
+    "Não foi possível acessar a memória de longo prazo: este canal "
+    "(Telegram/WhatsApp) ainda não está vinculado a uma conta. Vincule a "
+    "conta nas integrações antes de usar esta ferramenta."
+)
+
+# Alias legado — preferir `_message_for_unresolved_user()`.
+_NO_USER_MESSAGE = _NO_IDENTITY_MESSAGE
+
+
+def _message_for_unresolved_user() -> str:
+    """Mensagem tipada quando `resolve_user_id()` é `None` (REQ-004 delta)."""
+    user_key = get_config().get("configurable", {}).get("user_key")
+    if isinstance(user_key, str) and (
+        user_key.startswith("telegram:") or user_key.startswith("whatsapp:")
+    ):
+        return _CHANNEL_UNLINKED_MESSAGE
+    return _NO_IDENTITY_MESSAGE
 
 
 async def _resolve_namespace() -> tuple[str, ...] | None:
@@ -111,7 +129,7 @@ async def save_memory(content: str) -> str:
         )
     namespace = await _resolve_namespace()
     if namespace is None:
-        return _NO_USER_MESSAGE
+        return _message_for_unresolved_user()
     store = get_store()
     key = str(uuid.uuid4())
     await store.aput(namespace, key, {"content": content, "kind": "semantic"})
@@ -130,7 +148,7 @@ async def search_memory(query: str, limit: int = 5) -> str:
     """
     namespace = await _resolve_namespace()
     if namespace is None:
-        return _NO_USER_MESSAGE
+        return _message_for_unresolved_user()
     store = get_store()
     results = await store.asearch(namespace, query=query, limit=limit)
     if not results:
@@ -160,7 +178,7 @@ async def log_episode(decision: str, reasoning: str) -> str:
         )
     namespace = await _resolve_namespace()
     if namespace is None:
-        return _NO_USER_MESSAGE
+        return _message_for_unresolved_user()
     store = get_store()
     key = str(uuid.uuid4())
     await store.aput(namespace, key, {"content": content, "kind": "episodic"})
@@ -176,7 +194,7 @@ async def list_memories(limit: int = 20) -> str:
     """
     namespace = await _resolve_namespace()
     if namespace is None:
-        return _NO_USER_MESSAGE
+        return _message_for_unresolved_user()
     store = get_store()
     results = await store.asearch(namespace, limit=limit)
     if not results:
@@ -201,7 +219,7 @@ async def delete_memory(memory_id: str) -> str:
     """
     namespace = await _resolve_namespace()
     if namespace is None:
-        return _NO_USER_MESSAGE
+        return _message_for_unresolved_user()
     store = get_store()
     existing = await store.aget(namespace, memory_id)
     if existing is None:

@@ -153,6 +153,60 @@ async def test_resolve_user_id_telegram_unlinked_returns_none(
     assert await store.resolve_user_id() is None
 
 
+async def test_resolve_telegram_user_id_link_precedes_legacy_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fix-memory-access-user-identity ownership-1 unit-1: vínculo ganha da env."""
+    _patch_integration_repository(
+        monkeypatch, [_telegram_integration(user_id="linked-user", chat_id="12345")]
+    )
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "12345")
+    monkeypatch.setenv("TELEGRAM_LEGACY_OWNER_USER_ID", "legacy-owner")
+
+    assert await store.resolve_telegram_user_id("12345") == "linked-user"
+    _patch_config(monkeypatch, "telegram:12345")
+    assert await store.resolve_user_id() == "linked-user"
+
+
+async def test_resolve_telegram_user_id_legacy_allowlist_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fix-memory-access-user-identity ownership-1 unit-2: ponte allowlist → owner."""
+    _patch_integration_repository(monkeypatch, [])
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "12345")
+    monkeypatch.setenv("TELEGRAM_LEGACY_OWNER_USER_ID", "legacy-owner")
+
+    assert await store.resolve_telegram_user_id("12345") == "legacy-owner"
+    _patch_config(monkeypatch, "telegram:12345")
+    assert await store.resolve_user_id() == "legacy-owner"
+
+
+async def test_resolve_telegram_user_id_no_bridge_without_legacy_owner_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ownership-1 unit-3: allowlist sozinha, sem TELEGRAM_LEGACY_OWNER_USER_ID → None."""
+    _patch_integration_repository(monkeypatch, [])
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "12345")
+    monkeypatch.delenv("TELEGRAM_LEGACY_OWNER_USER_ID", raising=False)
+
+    assert await store.resolve_telegram_user_id("12345") is None
+    _patch_config(monkeypatch, "telegram:12345")
+    assert await store.resolve_user_id() is None
+
+
+async def test_resolve_telegram_user_id_no_bridge_when_chat_not_allowlisted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ownership-1 unit-3: env setada mas chat ≠ allowlist → None."""
+    _patch_integration_repository(monkeypatch, [])
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "12345")
+    monkeypatch.setenv("TELEGRAM_LEGACY_OWNER_USER_ID", "legacy-owner")
+
+    assert await store.resolve_telegram_user_id("99999") is None
+    _patch_config(monkeypatch, "telegram:99999")
+    assert await store.resolve_user_id() is None
+
+
 async def test_resolve_user_id_telegram_ignores_other_chat_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
