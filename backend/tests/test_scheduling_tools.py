@@ -16,6 +16,7 @@ depende de Postgres nem de um runtime LangGraph ativo.
 from __future__ import annotations
 
 import inspect
+from datetime import datetime, timezone
 
 import pytest
 
@@ -27,6 +28,9 @@ from src.application.use_cases.create_scheduled_task import CreateScheduledTask
 from src.application.use_cases.list_scheduled_tasks import ListScheduledTasks
 from src.domain.scheduling import Schedule, ScheduledTask
 from src.infrastructure.auth.users import User
+
+
+_PLACEHOLDER_CREATED_AT = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 class _FakeRepository(ScheduledTaskRepositoryPort):
@@ -90,7 +94,14 @@ def _stub_resolved_user_id(monkeypatch: pytest.MonkeyPatch, user_id: str | None)
 
 def _no_admins(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _fake_get_user_by_id(user_id: str) -> User | None:
-        return User(id=user_id, username="u", password_hash="h", role="user", is_active=True)
+        return User(
+            id=user_id,
+            username="u",
+            password_hash="h",
+            role="user",
+            is_active=True,
+            created_at=_PLACEHOLDER_CREATED_AT,
+        )
 
     monkeypatch.setattr(st, "get_user_by_id", _fake_get_user_by_id)
 
@@ -98,8 +109,22 @@ def _no_admins(monkeypatch: pytest.MonkeyPatch) -> None:
 def _admin_user(monkeypatch: pytest.MonkeyPatch, *, user_id: str) -> None:
     async def _fake_get_user_by_id(uid: str) -> User | None:
         if uid == user_id:
-            return User(id=uid, username="a", password_hash="h", role="admin", is_active=True)
-        return User(id=uid, username="u", password_hash="h", role="user", is_active=True)
+            return User(
+                id=uid,
+                username="a",
+                password_hash="h",
+                role="admin",
+                is_active=True,
+                created_at=_PLACEHOLDER_CREATED_AT,
+            )
+        return User(
+            id=uid,
+            username="u",
+            password_hash="h",
+            role="user",
+            is_active=True,
+            created_at=_PLACEHOLDER_CREATED_AT,
+        )
 
     monkeypatch.setattr(st, "get_user_by_id", _fake_get_user_by_id)
 

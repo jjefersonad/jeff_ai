@@ -3,9 +3,15 @@
 Responsabilidades cobertas por esta task (`whatsapp-evolution-channel-task-channel-1`):
 
 - `bootstrap_config()` — lê e valida `EVOLUTION_API_URL`/`EVOLUTION_API_KEY`/
-  `EVOLUTION_INSTANCE_NAME` do ambiente, falhando rápido (com mensagem citando
-  todas as env vars faltantes de uma vez) antes de qualquer chamada HTTP.
-  Mesmo contrato fail-fast de `telegram_gateway.bootstrap_config`.
+  `EVOLUTION_INSTANCE_NAME`/`EVOLUTION_WEBHOOK_TOKEN` do ambiente, falhando
+  rápido (com mensagem citando todas as env vars faltantes de uma vez) antes
+  de qualquer chamada HTTP. Mesmo contrato fail-fast de
+  `telegram_gateway.bootstrap_config`. `EVOLUTION_WEBHOOK_TOKEN` foi
+  adicionada depois (achado de teste manual, não fazia parte do escopo
+  original desta task): sem ela, o webhook não tinha nenhum mecanismo de
+  autenticação além do `require_auth` global — inviável para um chamador
+  servidor-a-servidor sem cookie de sessão — nem validava a origem da
+  chamada, permitindo forjar `phone_number` de qualquer usuário já vinculado.
 - `parse_inbound_message()` — extrai `{phone_number, text}` de um payload de
   webhook `messages.upsert` da Evolution API.
 
@@ -59,6 +65,7 @@ class EvolutionConfig:
     api_url: str
     api_key: str
     instance_name: str
+    webhook_token: str
 
 
 @dataclass(frozen=True)
@@ -85,7 +92,12 @@ def bootstrap_config() -> EvolutionConfig:
     vez, para o operador corrigir numa única passada.
     """
     missing = _collect_missing_envs(
-        ("EVOLUTION_API_URL", "EVOLUTION_API_KEY", "EVOLUTION_INSTANCE_NAME")
+        (
+            "EVOLUTION_API_URL",
+            "EVOLUTION_API_KEY",
+            "EVOLUTION_INSTANCE_NAME",
+            "EVOLUTION_WEBHOOK_TOKEN",
+        )
     )
 
     if missing:
@@ -100,6 +112,7 @@ def bootstrap_config() -> EvolutionConfig:
         api_url=os.environ["EVOLUTION_API_URL"],
         api_key=os.environ["EVOLUTION_API_KEY"],
         instance_name=os.environ["EVOLUTION_INSTANCE_NAME"],
+        webhook_token=os.environ["EVOLUTION_WEBHOOK_TOKEN"],
     )
 
 
@@ -170,6 +183,34 @@ async def send_text(instance: str, phone_number: str, text: str) -> None:
         response = await client.post(
             url,
             json={"number": phone_number, "text": text},
+            headers={"apikey": config.api_key},
+        )
+        response.raise_for_status()
+
+
+async def send_image(
+    instance: str, phone_number: str, media_base64: str, *, caption: str | None = None
+) -> None:
+    """Envia uma imagem a `phone_number` via `POST /message/sendImage/{instance}`.
+
+    Mesmo contrato de `send_text`: chama `bootstrap_config()` a cada envio e
+    propaga `httpx.HTTPError` em vez de engolir — o chamador (`WhatsAppChannel`)
+    decide como tratar a falha via `classify_send_error`.
+    """
+    config = bootstrap_config()
+    url = f"{config.api_url}/message/sendImage/{instance}"
+    payload: dict[str, Any] = {
+        "number": phone_number,
+        "mediatype": "image",
+        "media": media_base64,
+    }
+    if caption is not None:
+        payload["caption"] = caption
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            url,
+            json=payload,
             headers={"apikey": config.api_key},
         )
         response.raise_for_status()

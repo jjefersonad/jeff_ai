@@ -1,11 +1,19 @@
-"""Ferramentas de memória de longo prazo, compartilhada entre TODAS as threads.
+"""Ferramentas de memória de longo prazo, compartilhada entre threads do mesmo usuário.
 
 Usam o Store do LangGraph (Postgres/pgvector). A busca é semântica quando o
 `store.index` está configurado com embeddings (ver `langgraph.json` e
 `src/models/ollama_embeddings.py`).
 
-O namespace é fixo e global (`("memories",)`), então uma memória salva numa
-thread pode ser recuperada em qualquer outra.
+O namespace é `("memories", <user_id>)` (task `user-integration-credentials-
+task-resolve-3`, REQ-006 do delta `telegram-channel`) — uma memória salva
+numa thread pode ser recuperada em qualquer outra thread do MESMO usuário,
+nunca de outro. `<user_id>` vem de `ownership.store.resolve_user_id()`, o
+resolvedor canônico `user_key → user_id` (mesmo usado por `record_ownership`
+e pelo middleware de MCP) — funciona tanto para sessões `web:` quanto para
+uma sessão `telegram:<chat_id>` já vinculada via `user_integrations`. Sem
+`user_id` resolvível (sessão não-autenticada ou chat Telegram ainda não
+vinculado), as tools falham fechado: recusam a operação em vez de cair de
+volta a um namespace compartilhado.
 
 ## Camadas (`agent-memory` REQ-003, task `memory-2`)
 
@@ -38,8 +46,32 @@ import uuid
 from langchain_core.tools import tool
 from langgraph.config import get_store
 
-# Namespace cross-thread: memórias salvas aqui não são presas a um thread_id.
+from src.infrastructure.ownership.store import resolve_user_id
+
+# Prefixo do namespace cross-thread: memórias salvas aqui não são presas a um
+# thread_id, mas SÃO presas a um usuário — o namespace efetivo de cada
+# operação é `MEMORY_NAMESPACE + (user_id,)` (ver `_resolve_namespace`).
 MEMORY_NAMESPACE = ("memories",)
+
+_NO_USER_MESSAGE = (
+    "Não foi possível identificar o usuário desta sessão para acessar a "
+    "memória de longo prazo. Isso acontece em sessões não autenticadas ou "
+    "num canal (ex.: Telegram) ainda não vinculado a uma conta — vincule a "
+    "conta antes de usar esta ferramenta."
+)
+
+
+async def _resolve_namespace() -> tuple[str, ...] | None:
+    """Namespace efetivo desta chamada, ou `None` se não há usuário resolvível.
+
+    Fail-closed (REQ-006 cenário 2): nenhuma tool deste módulo cai de volta a
+    `MEMORY_NAMESPACE` sozinho quando `resolve_user_id()` devolve `None`.
+    """
+    user_id = await resolve_user_id()
+    if user_id is None:
+        return None
+    return (*MEMORY_NAMESPACE, user_id)
+
 
 # `store.aput` roda `content` pelo modelo de embedding (`mxbai-embed-large`,
 # ver `src/models/ollama_embeddings.py`) para indexar a memória. Esse modelo
@@ -64,7 +96,7 @@ async def save_memory(content: str) -> str:
 
     Use quando o usuário informar algo que valha a pena lembrar em conversas
     futuras (nomes, preferências, decisões de projeto, contexto recorrente).
-    A memória fica disponível em QUALQUER thread futura via `search_memory`.
+    A memória fica disponível em QUALQUER thread futura SUA via `search_memory`.
 
     `content` deve ser um resumo conciso (até ~1000 caracteres) — não o
     despejo bruto de uma página, documento ou resposta longa. Para indexar
@@ -77,9 +109,12 @@ async def save_memory(content: str) -> str:
             "memória não processa textos longos. Resuma para um fato, decisão "
             "ou preferência conciso e tente salvar de novo."
         )
+    namespace = await _resolve_namespace()
+    if namespace is None:
+        return _NO_USER_MESSAGE
     store = get_store()
     key = str(uuid.uuid4())
-    await store.aput(MEMORY_NAMESPACE, key, {"content": content, "kind": "semantic"})
+    await store.aput(namespace, key, {"content": content, "kind": "semantic"})
     return f"Memória salva com sucesso (id: {key})."
 
 
@@ -93,8 +128,11 @@ async def search_memory(query: str, limit: int = 5) -> str:
     episódios registrados (`log_episode`) — não é preciso escolher qual tool
     usou para escrever a memória que você está procurando.
     """
+    namespace = await _resolve_namespace()
+    if namespace is None:
+        return _NO_USER_MESSAGE
     store = get_store()
-    results = await store.asearch(MEMORY_NAMESPACE, query=query, limit=limit)
+    results = await store.asearch(namespace, query=query, limit=limit)
     if not results:
         return "Nenhuma memória relevante encontrada."
     return "\n".join(f"- {item.value.get('content', '')}" for item in results)
@@ -120,9 +158,12 @@ async def log_episode(decision: str, reasoning: str) -> str:
             f"ERRO: decisão + raciocínio têm {len(content)} caracteres, acima do "
             f"limite de {MAX_MEMORY_CHARS}. Resuma e tente registrar de novo."
         )
+    namespace = await _resolve_namespace()
+    if namespace is None:
+        return _NO_USER_MESSAGE
     store = get_store()
     key = str(uuid.uuid4())
-    await store.aput(MEMORY_NAMESPACE, key, {"content": content, "kind": "episodic"})
+    await store.aput(namespace, key, {"content": content, "kind": "episodic"})
     return f"Episódio registrado com sucesso (id: {key})."
 
 
@@ -133,8 +174,11 @@ async def list_memories(limit: int = 20) -> str:
     Use para auditar o que está guardado — antes de decidir remover uma entrada
     incorreta ou desatualizada com `delete_memory`.
     """
+    namespace = await _resolve_namespace()
+    if namespace is None:
+        return _NO_USER_MESSAGE
     store = get_store()
-    results = await store.asearch(MEMORY_NAMESPACE, limit=limit)
+    results = await store.asearch(namespace, limit=limit)
     if not results:
         return "Nenhuma memória armazenada."
     items = sorted(results, key=lambda item: item.created_at, reverse=True)
@@ -155,9 +199,12 @@ async def delete_memory(memory_id: str) -> str:
     de uma entrada incorreta, desatualizada, ou que o usuário pediu para
     esquecer.
     """
+    namespace = await _resolve_namespace()
+    if namespace is None:
+        return _NO_USER_MESSAGE
     store = get_store()
-    existing = await store.aget(MEMORY_NAMESPACE, memory_id)
+    existing = await store.aget(namespace, memory_id)
     if existing is None:
         return f"Nenhuma memória encontrada com id '{memory_id}'."
-    await store.adelete(MEMORY_NAMESPACE, memory_id)
+    await store.adelete(namespace, memory_id)
     return f"Memória '{memory_id}' removida."

@@ -1,11 +1,15 @@
-"""Simplified tests for `McpToolsMiddleware` (task `unified-agent-realignment-task-mcp-2`).
+"""Tests for `McpToolsMiddleware` (task `unified-agent-realignment-task-mcp-2`,
+revisado pela task `user-scoped-mcp-config-storage-task-middleware-1`).
 
-Covers the core acceptance criteria using async-only approach to avoid event loop issues.
+Covers the core acceptance criteria using async-only approach to avoid event
+loop issues, plus one sync-path regression test. Since `McpToolsMiddleware`
+now resolves the running session's `user_id` via `resolve_user_id()` instead
+of reading a `config_path`, every test here mocks `resolve_user_id` (and
+`load_mcp_server_config`/`list_mcp_tools`, as before) rather than writing a
+JSON file to disk.
 """
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -49,6 +53,13 @@ def _mock_mcp_tool(name: str) -> BaseTool:
     return mock_tool
 
 
+def _patch_resolve_user_id(user_id: str | None):
+    return patch(
+        "src.agents.unified.mcp_tools_middleware.resolve_user_id",
+        new=AsyncMock(return_value=user_id),
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Core tests
 # --------------------------------------------------------------------------- #
@@ -67,18 +78,35 @@ def test_qualify_tool_names():
 
 
 @pytest.mark.asyncio
-async def test_mcp_tools_injected_async():
-    """REQ-002: Tools MCP adicionadas ao request."""
-    config = {"mcpServers": {"test": {"command": "node", "args": ["server.js"]}}}
-    config_path = "/tmp/test_mcp.json"
-    Path(config_path).write_text(json.dumps(config))
+async def test_mcp_tools_scoped_to_resolved_user() -> None:
+    """unit-1 (REQ-009): tools carregadas vêm só do `user_id` que
+    `resolve_user_id()` resolveu para a sessão corrente — um servidor de
+    outro usuário nunca entra em `list_mcp_tools`."""
+    connections_by_user = {
+        "user-a": {"srv-a": {"transport": "stdio", "command": "cmd-a"}},
+        "user-b": {"srv-b": {"transport": "stdio", "command": "cmd-b"}},
+    }
+    tool_a = _mock_mcp_tool("srv-a/tool_a")
 
-    mock_tools = [_mock_mcp_tool("test/read_db")]
-    with patch(
-        "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
-        new=AsyncMock(return_value=(mock_tools, [])),
+    async def fake_load_mcp_server_config(user_id: str, **_kwargs: object) -> dict:
+        return connections_by_user[user_id]
+
+    async def fake_list_mcp_tools(connections: dict) -> tuple[list[BaseTool], list]:
+        assert set(connections) == {"srv-a"}  # nunca vê o servidor de user-b
+        return [tool_a], []
+
+    with (
+        _patch_resolve_user_id("user-a"),
+        patch(
+            "src.agents.unified.mcp_tools_middleware.load_mcp_server_config",
+            new=fake_load_mcp_server_config,
+        ),
+        patch(
+            "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
+            new=fake_list_mcp_tools,
+        ),
     ):
-        middleware = McpToolsMiddleware(config_path=config_path)
+        middleware = McpToolsMiddleware()
         request = ModelRequest(
             model=None,  # type: ignore[arg-type]
             tools=[edit_file],
@@ -91,25 +119,85 @@ async def test_mcp_tools_injected_async():
 
         result = await middleware.awrap_model_call(request, handler)
 
-        assert len(result.tools) == 2  # 1 nativa + 1 MCP
+        assert len(result.tools) == 2  # 1 nativa + 1 MCP de user-a
         tool_names = {t.name for t in result.tools}
-        assert "edit_file" in tool_names
-        assert "mcp__test__read_db" in tool_names
+        assert tool_names == {"edit_file", "mcp__srv_a__tool_a"}
+
+
+def test_wrap_model_call_sync_path_scopes_to_resolved_user() -> None:
+    """Mesmo comportamento do teste acima, mas pela via síncrona
+    (`wrap_model_call`/`_load_mcp_tools`), que faz a ponte pro loop async
+    via `asyncio.run`."""
+    tool_a = _mock_mcp_tool("srv-a/tool_a")
+
+    with (
+        _patch_resolve_user_id("user-a"),
+        patch(
+            "src.agents.unified.mcp_tools_middleware.load_mcp_server_config",
+            new=AsyncMock(return_value={"srv-a": {"transport": "stdio", "command": "cmd-a"}}),
+        ),
+        patch(
+            "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
+            new=AsyncMock(return_value=([tool_a], [])),
+        ),
+    ):
+        middleware = McpToolsMiddleware()
+        request = ModelRequest(
+            model=None,  # type: ignore[arg-type]
+            tools=[edit_file],
+            messages=[],
+            state={},
+        )
+
+        def handler(req: ModelRequest) -> ModelRequest:
+            return req
+
+        result = middleware.wrap_model_call(request, handler)
+
+        tool_names = {t.name for t in result.tools}
+        assert tool_names == {"edit_file", "mcp__srv_a__tool_a"}
+
+
+@pytest.mark.asyncio
+async def test_unresolvable_user_loads_no_mcp_tools() -> None:
+    """unit-2 (REQ-009): `resolve_user_id()` devolvendo `None` (sessão sem
+    vínculo — ex.: canal Telegram/WhatsApp não linkado) não trava o agente:
+    zero tools MCP, tools nativas intactas, nenhuma exceção propaga."""
+    with _patch_resolve_user_id(None):
+        middleware = McpToolsMiddleware()
+        request = ModelRequest(
+            model=None,  # type: ignore[arg-type]
+            tools=[edit_file],
+            messages=[],
+            state={},
+        )
+
+        async def handler(req: ModelRequest) -> ModelRequest:
+            return req
+
+        result = await middleware.awrap_model_call(request, handler)
+
+        assert len(result.tools) == 1
+        assert result.tools[0].name == "edit_file"
+        assert middleware.connection_errors == []
 
 
 @pytest.mark.asyncio
 async def test_server_offline_graceful_degradation():
     """REQ-004: Servidor offline não trava o agente."""
-    config = {"mcpServers": {"offline": {"command": "npx", "args": ["nonexistent"]}}}
-    config_path = "/tmp/test_mcp_offline.json"
-    Path(config_path).write_text(json.dumps(config))
-
     error = McpServerConnectionError("offline", "connection refused")
-    with patch(
-        "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
-        new=AsyncMock(return_value=([], [error])),
+    with (
+        _patch_resolve_user_id("user-a"),
+        patch(
+            "src.agents.unified.mcp_tools_middleware.load_mcp_server_config",
+            new=AsyncMock(return_value={"offline": {"transport": "stdio", "command": "npx"}}),
+        ),
+        patch(
+            "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
+            new=AsyncMock(return_value=([], [error])),
+        ),
     ):
-        middleware = McpToolsMiddleware(config_path=config_path)
+        middleware = McpToolsMiddleware()
         request = ModelRequest(
             model=None,  # type: ignore[arg-type]
             tools=[edit_file],
@@ -132,17 +220,13 @@ async def test_server_offline_graceful_degradation():
 
 @pytest.mark.asyncio
 async def test_mcp_tools_subject_to_envelope(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """REQ-003 + REQ-008 (revisto por `remove-mcp-unknown-failsafe`): uma tool
     MCP sem override classifica como `NETWORK` (piso) e passa sem concessão
     explícita; uma tool MCP com override manual mais restrito continua
     exigindo concessão do envelope como qualquer outra capability fora do
     piso."""
-    config = {"mcpServers": {"hostile": {"command": "python", "args": ["hostile.py"]}}}
-    config_path = "/tmp/test_mcp_hostile.json"
-    Path(config_path).write_text(json.dumps(config))
-
     # Tool MCP desconhecida, sem override → NETWORK (piso)
     hostile_tool = _mock_mcp_tool("hostile/delete_everything")
 
@@ -156,11 +240,18 @@ async def test_mcp_tools_subject_to_envelope(
     async def handler(req: ModelRequest) -> ModelRequest:
         return req
 
-    with patch(
-        "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
-        new=AsyncMock(return_value=([hostile_tool], [])),
+    with (
+        _patch_resolve_user_id("user-a"),
+        patch(
+            "src.agents.unified.mcp_tools_middleware.load_mcp_server_config",
+            new=AsyncMock(return_value={"hostile": {"transport": "stdio", "command": "python"}}),
+        ),
+        patch(
+            "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
+            new=AsyncMock(return_value=([hostile_tool], [])),
+        ),
     ):
-        mcp_middleware = McpToolsMiddleware(config_path=config_path)
+        mcp_middleware = McpToolsMiddleware()
         # Envelope sem nenhuma concessão além do piso
         envelope_middleware = EnvelopeMiddleware(granted={Capability.READ})
 
@@ -191,9 +282,16 @@ async def test_mcp_tools_subject_to_envelope(
         path=override_path,
     )
 
-    with patch(
-        "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
-        new=AsyncMock(return_value=([hostile_tool], [])),
+    with (
+        _patch_resolve_user_id("user-a"),
+        patch(
+            "src.agents.unified.mcp_tools_middleware.load_mcp_server_config",
+            new=AsyncMock(return_value={"hostile": {"transport": "stdio", "command": "python"}}),
+        ),
+        patch(
+            "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
+            new=AsyncMock(return_value=([hostile_tool], [])),
+        ),
     ):
         after_mcp2 = await mcp_middleware.awrap_model_call(request, handler)
 
@@ -208,24 +306,3 @@ async def test_mcp_tools_subject_to_envelope(
         after_envelope3 = await envelope_with_write.awrap_model_call(after_mcp2, handler)
         assert len(after_envelope3.tools) == 1
         assert after_envelope3.tools[0].name == "mcp__hostile__delete_everything"
-
-
-@pytest.mark.asyncio
-async def test_missing_config_file():
-    """REQ-001: Config ausente não trava."""
-    middleware = McpToolsMiddleware(config_path="/nonexistent/path.json")
-    request = ModelRequest(
-        model=None,  # type: ignore[arg-type]
-        tools=[edit_file],
-        messages=[],
-        state={},
-    )
-
-    async def handler(req: ModelRequest) -> ModelRequest:
-        return req
-
-    result = await middleware.awrap_model_call(request, handler)
-
-    # Só a nativa
-    assert len(result.tools) == 1
-    assert result.tools[0].name == "edit_file"

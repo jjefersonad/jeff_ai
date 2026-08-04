@@ -24,6 +24,12 @@ services:
       EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution_api:8080}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY em .env}
       EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-jeff-ai-central}
+      # Token compartilhado embutido na URL do webhook
+      # (/api/webhooks/whatsapp/<token>) — mecanismo de autenticação real da
+      # rota, já que ela é isenta de require_auth (PUBLIC_PATHS). Configure a
+      # MESMA URL completa (com este token) como webhook da instância na
+      # Evolution API.
+      EVOLUTION_WEBHOOK_TOKEN: ${EVOLUTION_WEBHOOK_TOKEN:?defina EVOLUTION_WEBHOOK_TOKEN em .env}
       # Repos de terceiros liberados para install_external_skill (além dos defaults
       # oficiais). Lista separada por vírgula. Liberado por decisão humana (REQ-007).
       SKILLS_ALLOWLIST: ${SKILLS_ALLOWLIST:-usenotra/skills}

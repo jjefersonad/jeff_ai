@@ -1,25 +1,32 @@
-"""Rotas HTTP públicas de autenticação (`/public/login`, `/public/logout`).
+"""Rotas HTTP públicas de autenticação (`/public/login`, `/public/logout`)
+e o probe de sessão `GET /api/me`.
 
 Cria/revoga sessões server-side (task-rest-1, ver design da mudança
 `autenticacao-jwt-rotas-protegidas`): login valida credenciais via bcrypt
 (`security.verify_password`) contra a tabela `users` (`users.get_user_by_username`)
 e entrega um cookie de sessão opaco (`sessions.create_session`); logout revoga
 a sessão imediatamente (`sessions.revoke_session`) e limpa o cookie.
+
+`GET /api/me` (auth-session-rehydration) devolve `{username, role}` a partir
+do cookie de sessão — usado pelo `AuthProvider` no mount para rehidratar o
+estado React após hard reload (sem isso, páginas admin como `/admin/users`
+ficam sem `user.role` e nunca disparam o fetch).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.requests import Request
 from pydantic import BaseModel
 
+from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.security import verify_password
 from src.infrastructure.auth.sessions import (
     SESSION_COOKIE_NAME,
     create_session,
     revoke_session,
 )
-from src.infrastructure.auth.users import get_user_by_username
+from src.infrastructure.auth.users import User, get_user_by_username
 
 router = APIRouter()
 
@@ -62,3 +69,15 @@ async def logout(request: Request, response: Response) -> dict[str, str]:
         await revoke_session(token)
     response.delete_cookie(SESSION_COOKIE_NAME)
     return {"detail": "logged out"}
+
+
+@router.get("/api/me")
+async def me(user: User | None = Depends(require_auth)) -> dict[str, str]:
+    """Devolve o usuário da sessão corrente (`username` + `role`).
+
+    401 quando não há cookie/sessão válida — o frontend trata isso como
+    "não autenticado" sem redirecionar (probe de rehidratação).
+    """
+    if user is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return {"username": user.username, "role": user.role}

@@ -10,6 +10,7 @@ tempo os use cases (application) e os adapters concretos (infrastructure).
 from __future__ import annotations
 
 import os
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from langgraph.config import get_store
@@ -22,6 +23,10 @@ from src.application.use_cases import (
     GetNextFeatureNumber,
     PlanAndCreateImage,
 )
+from src.infrastructure.channels.registry import ChannelRegistry
+from src.infrastructure.channels.telegram_channel import TelegramChannel
+from src.infrastructure.channels.web_channel import WebChannel
+from src.infrastructure.channels.whatsapp_channel import WhatsAppChannel
 from src.infrastructure.documents import DocxWriter
 from src.infrastructure.filesystem.filesystem_document_sink import (
     FilesystemDocumentSink,
@@ -33,6 +38,42 @@ from src.infrastructure.llm.gemini_image_adapter import GeminiImageAdapter
 from src.infrastructure.persistence.store_style_repository import StoreStyleRepository
 from src.infrastructure.usage.repository import UsageRepository
 from src.infrastructure.web.httpx_reference_image_fetch import HttpxReferenceImageFetch
+
+
+async def _noop_web_emit(_event: dict) -> None:
+    """Sink padrão do `WebChannel` até o composition root injetar um transporte SSE real.
+
+    O canal web ainda conversa direto com o LangGraph Platform na maioria dos
+    caminhos (ver design `unify-message-delivery-pipeline`); o registry precisa
+    do adapter registrado mesmo assim para `send_message` / fail-fast.
+    """
+    return None
+
+
+def build_dependencies(
+    *,
+    telegram_bot: object | None = None,
+    whatsapp_instance: str | None = None,
+    web_emit: Callable[[dict], Awaitable[None]] | None = None,
+) -> None:
+    """Popula o `ChannelRegistry` do processo webapp (REQ-002 chat-channel-port).
+
+    Registra `WebChannel`, `TelegramChannel` e `WhatsAppChannel` antes do
+    primeiro request. Args opcionais permitem injeção em testes; em produção
+    o bot Telegram e a instance WhatsApp vêm do ambiente.
+    """
+    if telegram_bot is None:
+        from telegram import Bot
+
+        telegram_bot = Bot(
+            token=os.environ.get("TELEGRAM_BOT_TOKEN", "unconfigured")
+        )
+    if whatsapp_instance is None:
+        whatsapp_instance = os.environ.get("EVOLUTION_INSTANCE_NAME", "unconfigured")
+
+    ChannelRegistry.register(WebChannel(emit=web_emit or _noop_web_emit))
+    ChannelRegistry.register(TelegramChannel(bot=telegram_bot))
+    ChannelRegistry.register(WhatsAppChannel(instance=whatsapp_instance))
 
 
 def build_plan_and_create_image() -> PlanAndCreateImage:

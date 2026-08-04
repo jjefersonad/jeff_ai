@@ -47,6 +47,7 @@ def test_webapp_lifespan_calls_usage_ensure_schema(
     monkeypatch.setattr(webapp, "ensure_user_integrations_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_telegram_link_codes_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_whatsapp_link_codes_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_whatsapp_threads_schema", lambda conninfo: None)
 
     async def _fake_init_pool(conninfo: str) -> None:
         calls.append(f"pool:{conninfo}")
@@ -54,8 +55,14 @@ def test_webapp_lifespan_calls_usage_ensure_schema(
     async def _fake_close_pool() -> None:
         calls.append("close_pool")
 
+    async def _fake_reschedule_pending_tasks(conninfo: str) -> None:
+        return None
+
     monkeypatch.setattr(webapp, "init_pool", _fake_init_pool)
     monkeypatch.setattr(webapp, "close_pool", _fake_close_pool)
+    monkeypatch.setattr(webapp, "_reschedule_pending_tasks", _fake_reschedule_pending_tasks)
+    monkeypatch.setattr(webapp.task_scheduler, "start", lambda: None)
+    monkeypatch.setattr(webapp.task_scheduler, "shutdown", lambda wait=True: None)
 
     with TestClient(webapp.app):
         pass
@@ -98,6 +105,7 @@ def test_webapp_lifespan_calls_user_integrations_and_telegram_link_codes_ensure_
     # aqui (coberta em test_webapp_lifespan_calls_whatsapp_link_codes_ensure_schema
     # abaixo) — só precisa não tentar conectar de verdade.
     monkeypatch.setattr(webapp, "ensure_whatsapp_link_codes_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_whatsapp_threads_schema", lambda conninfo: None)
 
     async def _fake_init_pool(conninfo: str) -> None:
         calls.append(f"pool:{conninfo}")
@@ -105,8 +113,14 @@ def test_webapp_lifespan_calls_user_integrations_and_telegram_link_codes_ensure_
     async def _fake_close_pool() -> None:
         return None
 
+    async def _fake_reschedule_pending_tasks(conninfo: str) -> None:
+        return None
+
     monkeypatch.setattr(webapp, "init_pool", _fake_init_pool)
     monkeypatch.setattr(webapp, "close_pool", _fake_close_pool)
+    monkeypatch.setattr(webapp, "_reschedule_pending_tasks", _fake_reschedule_pending_tasks)
+    monkeypatch.setattr(webapp.task_scheduler, "start", lambda: None)
+    monkeypatch.setattr(webapp.task_scheduler, "shutdown", lambda wait=True: None)
 
     with TestClient(webapp.app):
         pass
@@ -137,6 +151,7 @@ def test_webapp_lifespan_calls_whatsapp_link_codes_ensure_schema(
         "ensure_whatsapp_link_codes_schema",
         lambda conninfo: calls.append(f"whatsapp_link_codes:{conninfo}"),
     )
+    monkeypatch.setattr(webapp, "ensure_whatsapp_threads_schema", lambda conninfo: None)
 
     async def _fake_init_pool(conninfo: str) -> None:
         calls.append(f"pool:{conninfo}")
@@ -144,8 +159,14 @@ def test_webapp_lifespan_calls_whatsapp_link_codes_ensure_schema(
     async def _fake_close_pool() -> None:
         return None
 
+    async def _fake_reschedule_pending_tasks(conninfo: str) -> None:
+        return None
+
     monkeypatch.setattr(webapp, "init_pool", _fake_init_pool)
     monkeypatch.setattr(webapp, "close_pool", _fake_close_pool)
+    monkeypatch.setattr(webapp, "_reschedule_pending_tasks", _fake_reschedule_pending_tasks)
+    monkeypatch.setattr(webapp.task_scheduler, "start", lambda: None)
+    monkeypatch.setattr(webapp.task_scheduler, "shutdown", lambda wait=True: None)
 
     with TestClient(webapp.app):
         pass
@@ -153,6 +174,53 @@ def test_webapp_lifespan_calls_whatsapp_link_codes_ensure_schema(
     assert "whatsapp_link_codes:postgresql://linking-2-bootstrap" in calls
     assert calls.index("whatsapp_link_codes:postgresql://linking-2-bootstrap") < calls.index(
         "pool:postgresql://linking-2-bootstrap"
+    )
+
+
+def test_webapp_lifespan_calls_whatsapp_threads_ensure_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`ensure_whatsapp_threads_schema` existia mas nunca era chamada pelo lifespan:
+    `get_or_create_thread_id` quebrava com `UndefinedTable` na primeira mensagem
+    recebida após o vínculo do número (tabela `whatsapp_threads` nunca criada).
+    """
+    calls: list[str] = []
+    monkeypatch.setenv("POSTGRES_URI", "postgresql://threads-bootstrap")
+
+    monkeypatch.setattr(webapp, "init_auth_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_ownership_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_attachments_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_usage_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_user_integrations_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_telegram_link_codes_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_whatsapp_link_codes_schema", lambda conninfo: None)
+    monkeypatch.setattr(
+        webapp,
+        "ensure_whatsapp_threads_schema",
+        lambda conninfo: calls.append(f"whatsapp_threads:{conninfo}"),
+    )
+
+    async def _fake_init_pool(conninfo: str) -> None:
+        calls.append(f"pool:{conninfo}")
+
+    async def _fake_close_pool() -> None:
+        return None
+
+    async def _fake_reschedule_pending_tasks(conninfo: str) -> None:
+        return None
+
+    monkeypatch.setattr(webapp, "init_pool", _fake_init_pool)
+    monkeypatch.setattr(webapp, "close_pool", _fake_close_pool)
+    monkeypatch.setattr(webapp, "_reschedule_pending_tasks", _fake_reschedule_pending_tasks)
+    monkeypatch.setattr(webapp.task_scheduler, "start", lambda: None)
+    monkeypatch.setattr(webapp.task_scheduler, "shutdown", lambda wait=True: None)
+
+    with TestClient(webapp.app):
+        pass
+
+    assert "whatsapp_threads:postgresql://threads-bootstrap" in calls
+    assert calls.index("whatsapp_threads:postgresql://threads-bootstrap") < calls.index(
+        "pool:postgresql://threads-bootstrap"
     )
 
 

@@ -79,8 +79,8 @@ EXPECTED_AGENT_TOOLS: frozenset[str] = frozenset(
         "create_docx_document",
         "create_xlsx_spreadsheet",
         "create_pptx_presentation",
-        # Telegram (Tier 2, integracao-telegram)
-        "send_telegram_message",
+        # Entrega canal-agnóstica + mídia Telegram restante
+        "send_message",
         "send_telegram_photo",
         "send_telegram_document",
         # Filesystem

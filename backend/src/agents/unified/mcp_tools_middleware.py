@@ -7,8 +7,13 @@ injetadas a cada chamada do modelo, em runtime.
 
 ## Responsabilidades
 
-1. **Carregar servidores MCP** configurados em `backend/mcp_servers.json` via
-   `load_mcp_server_config()` do `mcp_client`.
+1. **Resolver o `user_id` da sessão** via `resolve_user_id()`
+   (`src/infrastructure/ownership/store.py`) e **carregar os servidores MCP**
+   daquele usuário (Postgres, `user_mcp_servers`) via `load_mcp_server_config()`
+   do `mcp_client` — revisado pela task `user-scoped-mcp-config-storage-task-middleware-1`
+   (REQ-009); antes lia um `backend/mcp_servers.json` único e compartilhado.
+   `user_id` não resolvido (sessão sem vínculo, ex.: canal Telegram/WhatsApp
+   ainda não linkado) → zero servidores carregados, sem erro.
 2. **Listar as tools** de cada servidor via `list_mcp_tools()`.
 3. **Injetar as tools MCP** no `ModelRequest.tools` via `wrap_model_call`,
    qualificando o nome por servidor de origem para evitar colisão com tools
@@ -45,9 +50,9 @@ a classificação manual continua tendo precedência sobre o default
 ## REQ-005: carregamento em runtime, sem restart
 
 Como este middleware roda a cada `wrap_model_call`, adicionar um servidor
-novo ao `mcp_servers.json` torna suas tools disponíveis **na próxima chamada
-do modelo** — sem rebuild do grafo, sem restart do backend. A prova está no
-teste `test_mcp_tools_middleware_hot_reload`.
+novo para um usuário (via a API administrativa, `mcp_admin_api.py`) torna
+suas tools disponíveis **na próxima chamada do modelo daquele usuário** —
+sem rebuild do grafo, sem restart do backend.
 
 ## Qualificação de nomes (REQ-002)
 
@@ -92,11 +97,11 @@ from langchain.agents.middleware.types import ModelRequest
 from langchain_core.tools import BaseTool
 
 from src.agents.unified.mcp_client import (
-    DEFAULT_CONFIG_PATH,
     McpServerConnectionError,
     list_mcp_tools,
     load_mcp_server_config,
 )
+from src.infrastructure.ownership.store import resolve_user_id
 
 _audit_log = logging.getLogger("jeff_ai.mcp_tools_middleware")
 
@@ -104,18 +109,15 @@ _audit_log = logging.getLogger("jeff_ai.mcp_tools_middleware")
 class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
     """Injeta tools de servidores MCP no set do modelo via `wrap_model_call`.
 
-    A instanciação é trivial — sem parâmetros, sem estado mutável. O
-    middleware lê `backend/mcp_servers.json` a cada `wrap_model_call` e
-    carrega as tools dos servidores configurados. Isto permite hot-reload
-    (REQ-005): adicionar um servidor novo torna suas tools disponíveis na
-    próxima chamada do modelo, sem restart.
+    A instanciação é trivial — sem parâmetros obrigatórios, sem estado
+    mutável. A cada `wrap_model_call`, o middleware resolve o `user_id` da
+    sessão corrente (`resolve_user_id()`) e carrega os servidores MCP
+    daquele usuário. Isto permite hot-reload (REQ-005): adicionar um
+    servidor novo para um usuário torna suas tools disponíveis na próxima
+    chamada do modelo daquele usuário, sem restart.
 
     Parameters
     ----------
-    config_path:
-        Caminho do arquivo de configuração de servidores MCP. Default:
-        `backend/mcp_servers.json`. Útil para testes que queiram
-        substituir o config real por um mock.
     qualify_names:
         Se `True` (default), qualifica os nomes das tools MCP por servidor
         de origem (`mcp__servidor__tool`). Se `False`, usa o nome original
@@ -131,7 +133,6 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
 
     def __init__(
         self,
-        config_path: str | None = None,
         *,
         qualify_names: bool = True,
     ) -> None:
@@ -140,59 +141,43 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
         Ver a docstring da classe para os parâmetros.
         """
         super().__init__()
-        self._config_path = config_path or str(DEFAULT_CONFIG_PATH)
         self._qualify_names = qualify_names
         # Lista de falhas do último carregamento (REQ-004 auditoria).
         self.connection_errors: list[McpServerConnectionError] = []
 
-    def _load_mcp_tools(self) -> list[BaseTool]:
-        """Carrega tools de todos os servidores MCP configurados.
+    async def _aload_mcp_tools(self) -> list[BaseTool]:
+        """Resolve o `user_id` da sessão corrente e carrega as tools MCP dele.
+
+        Compartilhado entre a via síncrona (`_load_mcp_tools`, via
+        `asyncio.run`) e a assíncrona (`awrap_model_call`, `await` direto) —
+        uma única implementação da resolução de identidade + carregamento
+        (REQ-009), sem duplicar a lógica entre as duas.
+
+        `resolve_user_id()` devolvendo `None` (sessão sem vínculo resolvido,
+        ex.: canal Telegram/WhatsApp ainda não linkado) é o mesmo estado
+        default de "nenhum servidor configurado" — zero tools, sem erro.
 
         Servidores offline/lentos são isolados — um servidor ruim não
         impede os demais de conectar. Falhas são acumuladas em
         `self.connection_errors` para auditoria (REQ-004).
 
         Returns:
-            Lista de tools de TODOS os servidores que conectaram com
-            sucesso, com nomes qualificados por servidor de origem
-            (se `qualify_names=True`).
+            Lista de tools de TODOS os servidores do usuário que
+            conectaram com sucesso, com nomes qualificados por servidor de
+            origem (se `qualify_names=True`).
         """
-        try:
-            connections = load_mcp_server_config(self._config_path)
-        except Exception as exc:
-            # Config inválida ou arquivo faltando/malformado. Loga mas não trava.
-            _audit_log.error(
-                "mcp_tools_middleware event=config_load_failed error=%s",
-                str(exc),
-                exc_info=True,
-            )
+        user_id = await resolve_user_id()
+        if user_id is None:
             self.connection_errors = []
             return []
 
+        connections = await load_mcp_server_config(user_id)
         if not connections:
-            # Nenhum servidor configurado — estado default de um Jeff AI
-            # recém-instalado (REQ-001). Não é erro.
+            # Usuário sem nenhum servidor configurado. Não é erro.
             self.connection_errors = []
             return []
 
-        # `list_mcp_tools` é async — precisa rodar num event loop.
-        # Como `wrap_model_call` é síncrono, sempre usa `asyncio.run`
-        # para criar um loop temporário. Se houver um loop já rodando
-        # (caso raro em sync path), tenta usar nest_asyncio ou fallback.
-        try:
-            tools, errors = asyncio.run(list_mcp_tools(connections))
-        except RuntimeError as e:
-            if "already running" in str(e):
-                # Loop já rodando — não deveria acontecer em sync path,
-                # mas se acontecer, devolve vazio e loga o erro.
-                _audit_log.error(
-                    "mcp_tools_middleware event=sync_in_async_context "
-                    "error=cannot_run_async_in_sync_wrapper"
-                )
-                tools, errors = [], []
-            else:
-                raise
-
+        tools, errors = await list_mcp_tools(connections)
         self.connection_errors = errors
 
         # Loga servidores que falharam (REQ-004 "informar qual e por quê").
@@ -213,6 +198,35 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
             len(errors),
         )
         return tools
+
+    def _load_mcp_tools(self) -> list[BaseTool]:
+        """Versão síncrona de `_aload_mcp_tools`, para `wrap_model_call`.
+
+        `_aload_mcp_tools` é async — precisa rodar num event loop. Como
+        `wrap_model_call` é síncrono, sempre usa `asyncio.run` para criar
+        um loop temporário.
+        """
+        try:
+            return asyncio.run(self._aload_mcp_tools())
+        except RuntimeError as e:
+            if "already running" in str(e):
+                # Loop já rodando — não deveria acontecer em sync path,
+                # mas se acontecer, devolve vazio e loga o erro.
+                _audit_log.error(
+                    "mcp_tools_middleware event=sync_in_async_context "
+                    "error=cannot_run_async_in_sync_wrapper"
+                )
+                self.connection_errors = []
+                return []
+            raise
+        except Exception as exc:  # noqa: BLE001 — REQ-004: falha de resolução/config não pode travar o agente
+            _audit_log.error(
+                "mcp_tools_middleware event=config_load_failed error=%s",
+                str(exc),
+                exc_info=True,
+            )
+            self.connection_errors = []
+            return []
 
     def wrap_model_call(
         self,
@@ -237,10 +251,9 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
         quebra em toda chamada de modelo. Ver `EnvelopeMiddleware` para
         o mesmo padrão.
         """
-        # Versão async de `_load_mcp_tools`: chama `list_mcp_tools` direto.
         try:
-            connections = load_mcp_server_config(self._config_path)
-        except Exception as exc:
+            mcp_tools = await self._aload_mcp_tools()
+        except Exception as exc:  # noqa: BLE001 — REQ-004: falha de resolução/config não pode travar o agente
             _audit_log.error(
                 "mcp_tools_middleware event=config_load_failed error=%s",
                 str(exc),
@@ -249,30 +262,7 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
             self.connection_errors = []
             return await handler(request)
 
-        if not connections:
-            self.connection_errors = []
-            return await handler(request)
-
-        tools, errors = await list_mcp_tools(connections)
-        self.connection_errors = errors
-
-        for err in errors:
-            _audit_log.warning(
-                "mcp_tools_middleware event=server_failed server=%r error=%s",
-                err.server_name,
-                str(err),
-            )
-
-        if self._qualify_names:
-            tools = _qualify_tool_names(tools, connections)
-
-        _audit_log.info(
-            "mcp_tools_middleware event=tools_loaded tool_count=%d server_errors=%d",
-            len(tools),
-            len(errors),
-        )
-
-        combined = list(request.tools or []) + tools
+        combined = list(request.tools or []) + mcp_tools
         return await handler(request.override(tools=combined))
 
 

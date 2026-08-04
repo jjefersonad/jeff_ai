@@ -118,12 +118,14 @@ def test_bootstrap_config_returns_config_when_env_complete(
     monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
     monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
     monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
+    monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", "fake-webhook-token")
 
     config = evolution_client.bootstrap_config()
 
     assert config.api_url == "http://evolution_api:8080"
     assert config.api_key == "fake-key"
     assert config.instance_name == "jeff-ai-central"
+    assert config.webhook_token == "fake-webhook-token"
 
 
 @respx.mock
@@ -134,6 +136,7 @@ async def test_send_text_posts_to_send_text_endpoint(
     monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
     monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
     monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
+    monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", "fake-webhook-token")
 
     route = respx.post(
         "http://evolution_api:8080/message/sendText/jeff-ai-central"
@@ -146,4 +149,34 @@ async def test_send_text_posts_to_send_text_endpoint(
     body = json.loads(request.content)
     assert body["number"] == "5511999998888"
     assert body["text"] == "oi, tudo bem?"
+    assert request.headers["apikey"] == "fake-key"
+
+
+@respx.mock
+async def test_send_image_posts_to_send_image_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """unify-message-delivery-pipeline-task-adapters-2: `send_image` monta o POST
+    esperado pela Evolution API para envio de mídia, com o mesmo contrato de
+    fail-fast/`apikey` de `send_text`."""
+    monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
+    monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
+    monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
+    monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", "fake-webhook-token")
+
+    route = respx.post(
+        "http://evolution_api:8080/message/sendImage/jeff-ai-central"
+    ).mock(return_value=httpx.Response(200, json={"key": {"id": "msg-1"}}))
+
+    await evolution_client.send_image(
+        "jeff-ai-central", "5511999998888", "ZmFrZS1wbmc=", caption="olha só"
+    )
+
+    assert route.called
+    request = route.calls[0].request
+    body = json.loads(request.content)
+    assert body["number"] == "5511999998888"
+    assert body["mediatype"] == "image"
+    assert body["media"] == "ZmFrZS1wbmc="
+    assert body["caption"] == "olha só"
     assert request.headers["apikey"] == "fake-key"

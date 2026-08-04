@@ -9,19 +9,18 @@ user, then an authorized message from the linked chat_id is checked against
 and `ownership.store.record_ownership` (generated-file ownership).
 
 Only the Postgres boundary is faked (`ownership.store.
-PostgresUserIntegrationRepository` + `ownership.store.get_config`) — every
-other piece (`RedeemTelegramLinkCode`, `authorization.resolve_authorization`,
-`resolve_user_id()`, the middleware, the memory tools, `record_ownership`)
-runs its real code path. This is what closes the gap described in the
+PostgresUserIntegrationRepository`, `ownership.store.get_config`, and
+`mcp_config_store.PostgresMcpServerRepository`) — every other piece
+(`RedeemTelegramLinkCode`, `authorization.resolve_authorization`,
+`resolve_user_id()`, the middleware, `mcp_config_store.add_server`, the
+memory tools, `record_ownership`) runs its real code path. This is what closes the gap described in the
 design: a Telegram session that never resolved a `user_id`, so
 `mcp__zernio__posts_create` (and memory, and ownership) were invisible to a
 linked user.
 """
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -30,7 +29,9 @@ from langchain_core.tools import BaseTool, tool
 from langgraph.store.memory import InMemoryStore
 
 import src.tools.memory_tools as memory_tools
+from src.agents.unified import mcp_config_store
 from src.agents.unified.mcp_tools_middleware import McpToolsMiddleware
+from src.application.ports.mcp_server_repository import McpServerRepositoryPort
 from src.application.ports.telegram_link_code_repository import (
     TelegramLinkCodeRepositoryPort,
 )
@@ -39,6 +40,7 @@ from src.application.ports.user_integration_repository import (
 )
 from src.application.use_cases.redeem_telegram_link_code import RedeemTelegramLinkCode
 from src.domain.integrations import TelegramLinkCode, UserIntegration
+from src.domain.mcp import McpServerConfig
 from src.infrastructure.ownership import store as ownership_store
 from src.infrastructure.telegram import authorization
 from src.infrastructure.usage.user_key import telegram_user_key
@@ -155,11 +157,42 @@ def linked_repository(monkeypatch: pytest.MonkeyPatch) -> _FakeUserIntegrationRe
     return integrations
 
 
+@pytest.fixture
+def mcp_repository(monkeypatch: pytest.MonkeyPatch) -> dict[tuple[str, str], McpServerConfig]:
+    """Wires `mcp_config_store.PostgresMcpServerRepository` to an in-memory
+    fake — so `add_server` (below) and `load_mcp_server_config` (called
+    inside `McpToolsMiddleware`, resolve-2) share the same backing store
+    without touching real Postgres. Mirrors `linked_repository` above."""
+    rows: dict[tuple[str, str], McpServerConfig] = {}
+
+    class _McpRepositoryAdapter(McpServerRepositoryPort):
+        def __init__(self, conninfo: str) -> None:
+            self.conninfo = conninfo
+
+        async def save(self, server: McpServerConfig) -> None:
+            rows[(server.user_id, server.name)] = server
+
+        async def get(self, user_id: str, name: str) -> McpServerConfig | None:
+            return rows.get((user_id, name))
+
+        async def list_by_user(self, user_id: str) -> list[McpServerConfig]:
+            return [s for (uid, _name), s in rows.items() if uid == user_id]
+
+        async def list_all(self) -> list[McpServerConfig]:
+            return list(rows.values())
+
+        async def delete(self, user_id: str, name: str) -> None:
+            rows.pop((user_id, name), None)
+
+    monkeypatch.setattr(mcp_config_store, "PostgresMcpServerRepository", _McpRepositoryAdapter)
+    return rows
+
+
 @pytest.mark.asyncio
 async def test_linked_telegram_session_gets_user_scoped_tools_memory_and_ownership(
     monkeypatch: pytest.MonkeyPatch,
     linked_repository: _FakeUserIntegrationRepository,
-    tmp_path: Path,
+    mcp_repository: dict[tuple[str, str], McpServerConfig],
 ) -> None:
     """REQ-006 (telegram-channel delta), task `verify-1`, unit `verify-1-unit-1`.
 
@@ -196,17 +229,18 @@ async def test_linked_telegram_session_gets_user_scoped_tools_memory_and_ownersh
     )
 
     # 3. resolve-2: mcp_tools_middleware exposes the user's MCP tools within
-    #    the same run — this is the bug reported in production.
-    mcp_config = {"mcpServers": {_USER_ID: {"zernio": {"command": "node", "args": ["server.js"]}}}}
-    config_path = str(tmp_path / "mcp_servers.json")
-    Path(config_path).write_text(json.dumps(mcp_config))
+    #    the same run — this is the bug reported in production. Uses the
+    #    real `mcp_config_store.add_server` (Postgres-backed, per
+    #    `user-scoped-mcp-config-storage`), not a hand-edited config file —
+    #    that file-partitioned shape was the very bug this test closes.
+    await mcp_config_store.add_server(_USER_ID, "zernio", command="node", args=["server.js"])
 
     mock_tools = [_mock_mcp_tool("zernio/posts_create")]
     with patch(
         "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
         new=AsyncMock(return_value=(mock_tools, [])),
     ):
-        middleware = McpToolsMiddleware(config_path=config_path)
+        middleware = McpToolsMiddleware()
         request = ModelRequest(model=None, tools=[], messages=[], state={})  # type: ignore[arg-type]
 
         async def handler(req: ModelRequest) -> ModelRequest:

@@ -179,7 +179,7 @@ class ScheduledTask:
     schedule: Schedule
     tool_scope: ToolScope = ToolScope.RESTRICTED
     skills: tuple[str, ...] = ()
-    created_by: str | None = None
+    owner_user_key: str | None = None
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     status: TaskStatus = TaskStatus.SCHEDULED
     started_at: datetime | None = None

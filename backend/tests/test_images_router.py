@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import io
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -31,7 +32,14 @@ import src.infrastructure.web.webapp as webapp
 from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.users import User
 
-_FAKE_USER = User(id="test-user", username="tester", password_hash="x", role="admin", is_active=True)
+_FAKE_USER = User(
+    id="test-user",
+    username="tester",
+    password_hash="x",
+    role="admin",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
 
 # 1x1 PNG transparente — passa no `sniff_image_mime` do `reference_store`.
 _PNG_1X1 = base64.b64decode(

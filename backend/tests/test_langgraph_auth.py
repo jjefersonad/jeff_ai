@@ -17,6 +17,7 @@ Cobre REQ-001/REQ-002/REQ-003 de `langgraph-native-auth-middleware` (change
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,14 @@ from src.infrastructure.auth.users import User
 from src.infrastructure.web.auth import authenticate
 
 _VALID_SESSION = Session(token="tok", user_id="user-1", expires_at=None)  # type: ignore[arg-type]
-_ADMIN_USER = User(id="user-1", username="alice", password_hash="h", role="admin", is_active=True)
+_ADMIN_USER = User(
+    id="user-1",
+    username="alice",
+    password_hash="h",
+    role="admin",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
 
 
 def _request(path: str, cookie: str | None = None) -> Request:

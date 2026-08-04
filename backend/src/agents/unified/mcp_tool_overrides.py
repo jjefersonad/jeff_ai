@@ -17,12 +17,16 @@ sub-representa o efeito real dela.
 ## A classificação é um ato HUMANO
 
 Este módulo só é chamado pela API administrativa (`mcp_admin_api.py`),
-servida pelo `image_server.py` — um processo HTTP separado do grafo do
-agente. **Nenhuma tool do agente escreve neste arquivo.** É assim que a
-regra "nenhuma heurística do agente pode rebaixar a capacidade de uma
-tool" (task-mcp-3, último critério de aceite) é satisfeita por construção:
-o agente não tem, e não pode ganhar, acesso de escrita a
-`mcp_tool_overrides.json` através de nenhuma tool registrada nele.
+montada em `webapp.py` e alcançável apenas via sessão de usuário autenticada
+(`require_auth` — desde `retire-image-server-task-core-1`; antes era
+`image_server.py`, processo separado, hoje aposentado). **Nenhuma tool do
+agente escreve neste arquivo.** É assim que a regra "nenhuma heurística do
+agente pode rebaixar a capacidade de uma tool" (task-mcp-3, último critério
+de aceite) é satisfeita por construção: o agente não tem, e não pode ganhar,
+acesso de escrita a `mcp_tool_overrides.json` através de nenhuma tool
+registrada nele — nenhuma delas tem o cookie de sessão do browser, e
+`test_mcp_admin_import_boundary.py` bloqueia qualquer tentativa de importar
+este módulo fora dos dois arquivos admin.
 
 ## Formato de `mcp_tool_overrides.json`
 

@@ -2,18 +2,21 @@
  * Types and fetch helpers for the MCP server admin UI
  * (task `unified-agent-realignment-task-mcp-3`).
  *
- * All requests go through the Next.js rewrite `/api/mcp/*` →
- * `image-server:8080/api/mcp/*` (see `next.config.ts`). That process is
- * separate from the agent graph — the admin API it exposes is never
- * reachable by any agent tool (REQ-001 of `mcp-client`: the agent cannot
- * self-configure servers).
+ * All requests go through the Next.js rewrite `/api/mcp/*` → the backend
+ * (`BACKEND_INTERNAL_URL`, see `next.config.ts`) — same process as the
+ * agent graph since `retire-image-server` retired the separate
+ * `image-server` container. The admin API is still never reachable by any
+ * agent tool (REQ-001/REQ-008 of `mcp-client`): that guarantee now comes
+ * from `require_auth` (no agent tool has the browser's session cookie),
+ * not process isolation.
  *
  * Note: these calls do NOT go through the `AuthProvider`'s 401 interceptor
- * (the MCP admin server is intentionally a separate process, outside the
- * Jeff AI backend's auth surface — see Open Question in the design doc).
- * We still set `credentials: 'include'` so the httpOnly session cookie
- * travels if the MCP admin process ever needs it in the future; the cookie
- * is just ignored today.
+ * — they use a bare `fetch`, not `apiFetch`. A 401 here (e.g. expired
+ * session while the MCP admin dialog is open) surfaces as a thrown `Error`
+ * to the caller instead of redirecting to `/public/login`. Wiring this
+ * into the shared interceptor is a reasonable follow-up, not done here.
+ * We set `credentials: 'include'` so the httpOnly session cookie travels
+ * with every request, same as `apiFetch`.
  */
 
 export interface McpServerSummary {
@@ -71,11 +74,36 @@ export async function fetchCapabilities(): Promise<string[]> {
   return data.capabilities;
 }
 
-export interface ServerWritePayload {
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-}
+/**
+ * Body of `POST /api/mcp/servers` and `PUT /api/mcp/servers/{name}`.
+ *
+ * Discriminated by `transport` — every variant carries ONLY the fields
+ * its transport actually uses. Mirrors the backend's `ServerWriteRequest`
+ * (see `mcp_admin_api.py`) and `user-mcp-server-store` (table
+ * `user_mcp_servers`).
+ *
+ * - `stdio` (`REQ-004` of `user-scoped-mcp-config-storage`, proposal Impact):
+ *   a local process spawned via `command` + `args`; `env` maps each server
+ *   key to an env var NAME (the resolved secret never crosses the wire —
+ *   see REQ-007).
+ * - `http`: a remote MCP endpoint at `url`; `headers` is the same
+ *   `${VAR}` reference convention as `env` — values are stored encrypted
+ *   server-side, never sent in plaintext over the form. This is the shape
+ *   Zernio needs; it was previously hand-edited into `mcp_servers.json`,
+ *   which the rest of this change retires.
+ */
+export type ServerWritePayload =
+  | {
+      transport: "stdio";
+      command: string;
+      args: string[];
+      env: Record<string, string>;
+    }
+  | {
+      transport: "http";
+      url: string;
+      headers: Record<string, string>;
+    };
 
 export async function createServer(
   name: string,

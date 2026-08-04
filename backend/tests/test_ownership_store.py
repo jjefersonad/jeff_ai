@@ -5,6 +5,8 @@ fake para não depender de Postgres real.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from src.domain.integrations import UserIntegration
@@ -264,9 +266,30 @@ async def test_record_ownership_propagates_db_errors(
 
 # --- REQ-002: is_authorized (documents_router / images_router) ---------------
 
-_OWNER = User(id="owner-1", username="owner", password_hash="x", role="user", is_active=True)
-_OTHER = User(id="other-1", username="other", password_hash="x", role="user", is_active=True)
-_ADMIN = User(id="admin-1", username="admin", password_hash="x", role="admin", is_active=True)
+_OWNER = User(
+    id="owner-1",
+    username="owner",
+    password_hash="x",
+    role="user",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
+_OTHER = User(
+    id="other-1",
+    username="other",
+    password_hash="x",
+    role="user",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
+_ADMIN = User(
+    id="admin-1",
+    username="admin",
+    password_hash="x",
+    role="admin",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
 
 
 async def test_is_authorized_true_for_owner(monkeypatch: pytest.MonkeyPatch) -> None:

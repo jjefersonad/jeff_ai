@@ -15,6 +15,7 @@ quanto no `jeff_cli` subprocess.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import psycopg
@@ -24,6 +25,8 @@ from src.application.ports.user_integration_repository import (
 )
 from src.domain.integrations import UserIntegration
 from src.infrastructure.persistence.credentials_crypto import decrypt, encrypt
+
+logger = logging.getLogger(__name__)
 
 _COLUMNS = "id, user_id, integration_type, config, created_at, updated_at"
 
@@ -48,17 +51,22 @@ _ENVELOPE_KEY = "__enc__"
 
 
 def _encrypt_config(config: dict[str, object]) -> dict[str, object]:
-    """Cifra cada valor string de `config`, embrulhando em `{__enc__: ct}`.
+    """Cifra cada valor de `config`, embrulhando em `{__enc__: ct}`.
 
-    Valores não-string são serializados como JSON antes de cifrar (a coluna é
-    JSONB; a forma do envelope precisa continuar parseável). Mantemos as
-    chaves do dict intactas para que a validação de schema Pydantic do use
-    case siga funcionando — só o valor sensível muda.
+    SEMPRE serializa o valor via `json.dumps` antes de cifrar — inclusive
+    strings — para que `_decrypt_config` possa desfazer com `json.loads` sem
+    ambiguidade. Bug real encontrado em produção (2026-08-03): a versão
+    anterior só serializava valores NÃO-string, deixando strings puramente
+    numéricas (`chat_id`/`phone_number`, ex. "556199976245") indistinguíveis
+    de um número JSON — `json.loads("556199976245")` devolve o `int`
+    556199976245, quebrando toda comparação `== phone_number` downstream em
+    `resolve_whatsapp_user_id`/`resolve_telegram_user_id`. Serializar SEMPRE
+    (`json.dumps("556199976245")` → `'"556199976245"'`) remove a ambiguidade:
+    o tipo original é sempre recuperável.
     """
     encrypted: dict[str, object] = {}
     for key, value in config.items():
-        plaintext = value if isinstance(value, str) else json.dumps(value)
-        encrypted[key] = {_ENVELOPE_KEY: encrypt(plaintext)}
+        encrypted[key] = {_ENVELOPE_KEY: encrypt(json.dumps(value))}
     return encrypted
 
 
@@ -67,7 +75,11 @@ def _decrypt_config(config: dict[str, object]) -> dict[str, object]:
 
     Valores que NÃO estão no envelope são passados adiante como estão
     (defensivo: protege contra dados legados não-encriptados ou chaves
-    diferentes misturadas na mesma linha).
+    diferentes misturadas na mesma linha). Linhas cifradas pela versão
+    anterior (string crua, sem `json.dumps`) continuam parseáveis pelo
+    fallback abaixo, mas para valores puramente numéricos ainda voltam como
+    `int` — dados legados precisam ser regravados (basta salvar de novo)
+    para se beneficiar do formato sem ambiguidade.
     """
     decrypted: dict[str, object] = {}
     for key, value in config.items():
@@ -81,7 +93,7 @@ def _decrypt_config(config: dict[str, object]) -> dict[str, object]:
             try:
                 decrypted[key] = json.loads(plaintext)
             except (TypeError, ValueError):
-                # Não era JSON — era string mesmo.
+                # Formato legado que não era JSON válido — era string crua mesmo.
                 decrypted[key] = plaintext
         else:
             decrypted[key] = value
@@ -98,6 +110,32 @@ def _row_to_integration(row: tuple[Any, ...]) -> UserIntegration:
         created_at=created_at,
         updated_at=updated_at,
     )
+
+
+def _rows_to_integrations_skipping_undecryptable(
+    rows: list[tuple[Any, ...]],
+) -> list[UserIntegration]:
+    """Decifra cada linha; uma linha com ciphertext que não bate com a chave
+    ATIVA (`INTEGRATION_CREDENTIALS_KEY` rotacionada/perdida, dado órfão) é
+    logada e pulada, em vez de derrubar a leitura de todas as outras linhas.
+
+    Achado em produção (2026-08-03): `resolve_whatsapp_user_id`/
+    `resolve_telegram_user_id` varrem TODAS as linhas num loop de busca — uma
+    única linha corrompida em qualquer canto da tabela travava a resolução de
+    QUALQUER usuário, incluindo vínculos recém-criados e válidos.
+    """
+    integrations: list[UserIntegration] = []
+    for row in rows:
+        try:
+            integrations.append(_row_to_integration(row))
+        except ValueError:
+            integration_id = row[0]
+            logger.warning(
+                "user_integrations id=%s não pôde ser decifrada com a chave "
+                "ativa — pulada (não derruba as demais linhas).",
+                integration_id,
+            )
+    return integrations
 
 
 class PostgresUserIntegrationRepository(UserIntegrationRepositoryPort):
@@ -134,23 +172,29 @@ class PostgresUserIntegrationRepository(UserIntegrationRepositoryPort):
         return _row_to_integration(row) if row is not None else None
 
     async def list_by_user(self, user_id: str) -> list[UserIntegration]:
-        """Retorna as entradas do `user_id`, decifradas (REQ-001)."""
+        """Retorna as entradas do `user_id`, decifradas (REQ-001).
+
+        Uma linha undecryptável com a chave ativa é pulada (logada), em vez
+        de derrubar a listagem inteira do usuário.
+        """
         async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(_SELECT_BY_USER, (user_id,))
                 rows = await cur.fetchall()
-        return [_row_to_integration(row) for row in rows]
+        return _rows_to_integrations_skipping_undecryptable(rows)
 
     async def list_all(self) -> list[UserIntegration]:
         """Retorna TODAS as entradas, decifradas, de todos os usuários (REQ-004).
 
-        A checagem `role=admin` é responsabilidade do use case chamador.
+        A checagem `role=admin` é responsabilidade do use case chamador. Uma
+        linha undecryptável com a chave ativa é pulada (logada) — ver
+        `_rows_to_integrations_skipping_undecryptable`.
         """
         async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(_SELECT_ALL)
                 rows = await cur.fetchall()
-        return [_row_to_integration(row) for row in rows]
+        return _rows_to_integrations_skipping_undecryptable(rows)
 
     async def delete(self, integration_id: str) -> None:
         """Remove a entrada; tolerante a `integration_id` inexistente (no-op)."""

@@ -9,6 +9,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+from src.domain.channels import OutputAttachment
 from src.domain.scheduling import ToolScope
 
 
@@ -40,6 +41,21 @@ class InterruptInfo:
 
 
 @dataclass(frozen=True)
+class AgentRunOutcome:
+    """Output do agente capturado pelo `LangGraphDirectAgentRunner`.
+
+    Definido pela spec `agent-output-capture`, para entrega via
+    `ChatChannelPort`. `text` é o último `AIMessage` do turno (pode ser `None` para entregas
+    puramente multimodais ou quando a captura não encontrou um `AIMessage`
+    final). `attachments` são os arquivos gerados no turno atual — tupla
+    vazia é válida.
+    """
+
+    text: str | None
+    attachments: tuple[OutputAttachment, ...]
+
+
+@dataclass(frozen=True)
 class AgentRunResult:
     """Resultado de uma execução agendada do agente.
 
@@ -56,12 +72,20 @@ class AgentRunResult:
     `interrupt` é `None`. Default `None` preserva a assinatura dos
     call sites existentes (`RunScheduledTask`, `jeff_cli`, testes) sem
     precisar atualizá-los.
+
+    `output` é o campo aditivo introduzido pela change
+    `unify-message-delivery-pipeline` (spec `agent-runner` REQ-002):
+    carrega o `AgentRunOutcome` capturado pelo `LangGraphDirectAgentRunner`
+    em sucesso, para que `HandleChatMessage` entregue a resposta ao canal
+    sem reconstruir estado do grafo. Default `None` preserva a assinatura
+    de todo caller existente — nenhum precisa saber que este campo existe.
     """
 
     thread_id: str
     status: str
     error: str | None = None
     interrupt: InterruptInfo | None = None
+    output: AgentRunOutcome | None = None
 
 
 class AgentRunnerPort(ABC):

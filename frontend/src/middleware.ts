@@ -38,5 +38,8 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
-};
+  // Skip Next auth redirect for `/api/*` — those are proxied to the backend
+  // (see `next.config.ts` rewrites). A missing cookie must become a JSON 401
+  // from FastAPI, not an HTML redirect to `/public/login`.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/).*)"],
+}

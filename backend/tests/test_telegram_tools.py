@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from src.application.ports.agent_runner import InterruptInfo
+from src.application.ports.chat_channel import ChatChannelPort, DeliveryKind
+from src.domain.channels import ChannelKind, OutputAttachment
+from src.infrastructure.channels.registry import ChannelRegistry
 from src.tools import telegram_tools
 
 
@@ -31,6 +35,27 @@ class _FakeBot:
         return "document-sent"
 
 
+class _RecordingTelegramChannel(ChatChannelPort):
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    @property
+    def channel_kind(self) -> ChannelKind:
+        return ChannelKind.TELEGRAM
+
+    async def deliver(
+        self,
+        *,
+        user_key: str,
+        text: str | None,
+        attachments: tuple[OutputAttachment, ...],
+        kind: DeliveryKind,
+        interrupt: InterruptInfo | None = None,
+        thread_id: str | None = None,
+    ) -> None:
+        self.calls.append({"user_key": user_key, "text": text, "kind": kind})
+
+
 _SENT_MESSAGES: list[tuple[str, str]] = []
 _SENT_PHOTOS: list[tuple[str, bytes, str | None]] = []
 _SENT_DOCUMENTS: list[tuple[str, bytes, str, str | None]] = []
@@ -41,30 +66,37 @@ def _fake_bot(monkeypatch: pytest.MonkeyPatch) -> None:
     _SENT_MESSAGES.clear()
     _SENT_PHOTOS.clear()
     _SENT_DOCUMENTS.clear()
+    ChannelRegistry.reset()
     monkeypatch.setattr(telegram_tools, "Bot", _FakeBot)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy-token")
     monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "12345")
+    yield
+    ChannelRegistry.reset()
 
 
 async def test_send_telegram_message_without_chat_id_uses_authorized_chat_id() -> None:
+    channel = _RecordingTelegramChannel()
+    ChannelRegistry.register(channel)
+
     await telegram_tools.send_telegram_message.ainvoke({"text": "oi"})
 
-    assert len(_SENT_MESSAGES) == 1
-    assert _SENT_MESSAGES[0] == ("12345", "oi")
+    assert channel.calls == [
+        {"user_key": "telegram:12345", "text": "oi", "kind": "normal"}
+    ]
 
 
-async def test_send_telegram_message_splits_long_text_preserving_order_and_content() -> None:
+async def test_send_telegram_message_with_explicit_chat_id_delegates_once() -> None:
+    channel = _RecordingTelegramChannel()
+    ChannelRegistry.register(channel)
     long_text = "".join(f"{i:04d}-" for i in range(1800))  # ~9000 chars
-    assert len(long_text) > 4096
 
     await telegram_tools.send_telegram_message.ainvoke(
         {"text": long_text, "chat_id": "999"}
     )
 
-    assert len(_SENT_MESSAGES) > 1
-    assert all(chat_id == "999" for chat_id, _ in _SENT_MESSAGES)
-    assert all(len(chunk) <= 4096 for _, chunk in _SENT_MESSAGES)
-    assert "".join(chunk for _, chunk in _SENT_MESSAGES) == long_text
+    assert len(channel.calls) == 1
+    assert channel.calls[0]["user_key"] == "telegram:999"
+    assert channel.calls[0]["text"] == long_text
 
 
 def test_resolve_allowed_output_path_rejects_path_outside_outputs_root() -> None:

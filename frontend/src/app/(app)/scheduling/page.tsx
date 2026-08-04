@@ -194,7 +194,7 @@ export default function SchedulingPage() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  disabled={task.status !== "SCHEDULED"}
+                  disabled={task.status !== "scheduled"}
                   onClick={() => openEditDialog(task)}
                 >
                   Editar

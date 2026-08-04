@@ -168,9 +168,13 @@ instances (no local `jeff_ia_postgres`/`jeff_ia_redis` containers), plus `NEXT_P
 `EVOLUTION_POSTGRES_PASSWORD`, `EVOLUTION_REDIS_PASSWORD`, `EVOLUTION_SERVER_URL`. Optional:
 `JEFF_AI_TZ` (IANA timezone, e.g. `America/Sao_Paulo`, default `UTC`, used by
 `current-date-context`), `SKILLS_ALLOWLIST`, `EVOLUTION_API_URL`/`EVOLUTION_API_KEY`/
-`EVOLUTION_INSTANCE_NAME` (whatsapp-evolution-channel — the backend client at
-`src/infrastructure/whatsapp/evolution_client.py` and the `send_whatsapp_message` tool are both
-implemented; without these three the WhatsApp channel doesn't authenticate).
+`EVOLUTION_INSTANCE_NAME`/`EVOLUTION_WEBHOOK_TOKEN` (whatsapp-evolution-channel — the backend
+client at `src/infrastructure/whatsapp/evolution_client.py` and the `send_whatsapp_message` tool
+are both implemented; without these four the WhatsApp channel doesn't authenticate).
+`EVOLUTION_WEBHOOK_TOKEN` is embedded directly in the webhook URL registered with the Evolution
+API instance (`/api/webhooks/whatsapp/<token>`) — it's the route's actual authentication
+mechanism, since `/api/webhooks/whatsapp/` is exempt from session-cookie `require_auth`
+(`PUBLIC_PATHS`, added because a server-to-server webhook caller has no browser session).
 
 `backend/.env` — `GOOGLE_API_KEY`, `TAVILY_API_KEY`, `OPENROUTER_API_KEY`, `ADMIN_USERNAME` /
 `ADMIN_PASSWORD_HASH` (session-auth bootstrap), `TELEGRAM_BOT_TOKEN` / `TELEGRAM_AUTHORIZED_CHAT_ID`

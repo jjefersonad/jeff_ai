@@ -1,6 +1,6 @@
 # Stack de produção standalone: `docker compose -f docker-compose.prod.yml up -d`
-# sobe tudo (backend, frontend em build de produção, telegram_gateway,
-# Evolution API/WhatsApp) sem depender de docker-compose.yml.
+# sobe backend, frontend (build de produção) e telegram_gateway sem depender
+# de docker-compose.yml.
 #
 # Diferenças deliberadas em relação a docker-compose.yml (dev local):
 # - Sem jeff_ia_postgres/jeff_ia_redis/jeff_ia_pgadmin: Postgres/Redis do
@@ -9,8 +9,11 @@
 #   interno (falha alto e claro se ausentes).
 # - frontend builda com `target: prod` (next build && next start), não
 #   `next dev` — ver frontend/Dockerfile.frontend.
-# - evolution_postgres/evolution_redis continuam locais (bundle autocontido
-#   da Evolution API, independente do banco do Jeff AI).
+# - Evolution API (WhatsApp) NÃO é gerenciada por este compose — roda como
+#   serviço externo próprio (ver EVOLUTION_API_URL/_API_KEY/_INSTANCE_NAME/
+#   _WEBHOOK_TOKEN abaixo, que só apontam pra ela). Já foi um serviço
+#   autocontido aqui (evolution_postgres/evolution_redis/evolution_api);
+#   removido deste arquivo — não confundir com relatos antigos.
 services:
   backend:
     build:
@@ -31,6 +34,7 @@ services:
       EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution_api:8080}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY em .env}
       EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-jeff-ai-central}
+      EVOLUTION_WEBHOOK_TOKEN: ${EVOLUTION_WEBHOOK_TOKEN:?defina EVOLUTION_WEBHOOK_TOKEN em .env}
       SKILLS_ALLOWLIST: ${SKILLS_ALLOWLIST:-usenotra/skills}
       LANGGRAPH_STORE: '{"type": "postgres", "url": "$${env:POSTGRES_URI}", "index": {"embed": "./src/models/ollama_embeddings.py:embed_texts", "dims": 1024, "fields": ["content"]}}'
       LANGGRAPH_CHECKPOINTER: '{"type": "postgres", "url": "$${env:POSTGRES_URI}"}'

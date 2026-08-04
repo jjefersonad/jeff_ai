@@ -11,16 +11,22 @@ embedding `mxbai-embed-large`, janela de contexto pequena), e um conteúdo
 longo (ex.: o dump de uma página raspada) derrubava a run inteira com um 400
 cru do Ollama em vez de um erro tratado pela tool.
 """
+from unittest.mock import AsyncMock
+
 import pytest
 from langgraph.store.memory import InMemoryStore
 
 import src.tools.memory_tools as mt
+
+_TEST_USER_ID = "test-user"
+_TEST_NAMESPACE = (*mt.MEMORY_NAMESPACE, _TEST_USER_ID)
 
 
 @pytest.fixture
 def store(monkeypatch):
     s = InMemoryStore()
     monkeypatch.setattr(mt, "get_store", lambda: s)
+    monkeypatch.setattr(mt, "resolve_user_id", AsyncMock(return_value=_TEST_USER_ID))
     return s
 
 
@@ -49,7 +55,7 @@ async def test_save_rejects_content_over_limit(store):
     assert "ERRO" in result
     assert str(mt.MAX_MEMORY_CHARS) in result
     # Nada foi persistido — a rejeição acontece antes do `aput`.
-    assert list(store.search(mt.MEMORY_NAMESPACE)) == []
+    assert list(store.search(_TEST_NAMESPACE)) == []
 
 
 async def test_save_accepts_content_at_limit(store):
@@ -59,7 +65,7 @@ async def test_save_accepts_content_at_limit(store):
     result = await mt.save_memory.ainvoke({"content": exact})
 
     assert "Memória salva com sucesso" in result
-    items = list(store.search(mt.MEMORY_NAMESPACE))
+    items = list(store.search(_TEST_NAMESPACE))
     assert len(items) == 1
     assert items[0].value["kind"] == "semantic"
 
@@ -86,7 +92,7 @@ async def test_log_episode_then_search_retrieves_decision_and_reasoning(store):
 async def test_log_episode_is_tagged_as_episodic(store):
     await mt.log_episode.ainvoke({"decision": "d", "reasoning": "r"})
 
-    items = list(store.search(mt.MEMORY_NAMESPACE))
+    items = list(store.search(_TEST_NAMESPACE))
     assert len(items) == 1
     assert items[0].value["kind"] == "episodic"
 
@@ -97,7 +103,7 @@ async def test_log_episode_rejects_content_over_limit(store):
     )
 
     assert "ERRO" in result
-    assert list(store.search(mt.MEMORY_NAMESPACE)) == []
+    assert list(store.search(_TEST_NAMESPACE)) == []
 
 
 # --------------------------------------------------------------------------- #
@@ -127,7 +133,7 @@ async def test_delete_memory_removes_entry(store):
     delete_result = await mt.delete_memory.ainvoke({"memory_id": memory_id})
 
     assert memory_id in delete_result
-    assert list(store.search(mt.MEMORY_NAMESPACE)) == []
+    assert list(store.search(_TEST_NAMESPACE)) == []
 
 
 async def test_delete_memory_unknown_id_reports_not_found(store):
@@ -176,3 +182,48 @@ async def test_memory_is_not_an_escalation_vector(store):
     # E a classificação de `run_shell_command` continua Tier 4, exatamente
     # como antes de a memória envenenada existir.
     assert tier_config.get_tier("run_shell_command") == 4
+
+
+# --------------------------------------------------------------------------- #
+# Escopo por usuário — REQ-006 do delta `telegram-channel`
+# (`user-integration-credentials-task-resolve-3`)
+# --------------------------------------------------------------------------- #
+async def test_memory_is_scoped_per_user(monkeypatch):
+    """Cenário 1: usuários diferentes (`resolve_user_id()` diferente) não
+    compartilham namespace — memória de um não aparece na busca do outro."""
+    s = InMemoryStore()
+    monkeypatch.setattr(mt, "get_store", lambda: s)
+
+    monkeypatch.setattr(mt, "resolve_user_id", AsyncMock(return_value="user-a"))
+    await mt.save_memory.ainvoke({"content": "segredo do usuário A"})
+
+    monkeypatch.setattr(mt, "resolve_user_id", AsyncMock(return_value="user-b"))
+    out = await mt.search_memory.ainvoke({"query": "segredo"})
+
+    assert "Nenhuma memória relevante encontrada." in out
+    assert list(s.search((*mt.MEMORY_NAMESPACE, "user-a"))) != []
+    assert list(s.search((*mt.MEMORY_NAMESPACE, "user-b"))) == []
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: mt.save_memory.ainvoke({"content": "x"}),
+        lambda: mt.search_memory.ainvoke({"query": "x"}),
+        lambda: mt.log_episode.ainvoke({"decision": "d", "reasoning": "r"}),
+        lambda: mt.list_memories.ainvoke({}),
+        lambda: mt.delete_memory.ainvoke({"memory_id": "any"}),
+    ],
+)
+async def test_fails_closed_without_resolvable_user(monkeypatch, call):
+    """Cenário 2: sem `user_id` resolvível (sessão não autenticada, ou chat
+    Telegram ainda não vinculado), toda tool recusa em vez de cair de volta a
+    um namespace compartilhado — comportamento de segurança inalterado."""
+    s = InMemoryStore()
+    monkeypatch.setattr(mt, "get_store", lambda: s)
+    monkeypatch.setattr(mt, "resolve_user_id", AsyncMock(return_value=None))
+
+    out = await call()
+
+    assert out == mt._NO_USER_MESSAGE
+    assert list(s.search(mt.MEMORY_NAMESPACE)) == []

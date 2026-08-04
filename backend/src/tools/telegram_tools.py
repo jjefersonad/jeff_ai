@@ -4,18 +4,27 @@ Validador de path compartilhado pelas tools de envio (`send_telegram_photo`,
 `send_telegram_document`): garante que qualquer arquivo enviado ao Telegram
 resida dentro de `backend/outputs/`, mesma allowlist de raiz usada por
 `documents_router.py`/`images_router.py`.
+
+`send_telegram_message` é wrapper deprecated (cleanup-1): permanece
+importável para skills/scripts externos, mas não está em `_UNIFIED_TOOLS`.
+Delega a `ChannelRegistry` → `TelegramChannel.deliver`.
 """
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
 from langchain_core.tools import tool
 from telegram import Bot
-from telegram.constants import MessageLimit
 
+from src.domain.channels import ChannelKind
+from src.infrastructure.channels.registry import ChannelRegistry
 from src.infrastructure.telegram import bot_client
+from src.infrastructure.usage.user_key import telegram_user_key
+
+logger = logging.getLogger(__name__)
 
 # backend/outputs (backend/src/tools/telegram_tools.py -> parents[2] == backend).
 _ALLOWED_OUTPUTS_ROOT = Path(__file__).resolve().parents[2] / "outputs"
@@ -59,36 +68,31 @@ def _path_not_allowed_result(exc: TelegramPathNotAllowedError) -> dict[str, Any]
     }
 
 
-def _split_into_chunks(text: str, limit: int = MessageLimit.MAX_TEXT_LENGTH) -> list[str]:
-    """Divide `text` em pedaços de até `limit` caracteres, preservando a ordem.
-
-    A concatenação dos pedaços reconstrói `text` exatamente — sem perda nem
-    truncamento (REQ-006, telegram-tools-spec).
-    """
-    if len(text) <= limit:
-        return [text]
-    return [text[i : i + limit] for i in range(0, len(text), limit)]
-
-
 @tool
 async def send_telegram_message(text: str, chat_id: str | None = None) -> dict[str, Any]:
     """Envia uma mensagem de texto para um chat do Telegram.
 
-    Quando `chat_id` não é informado, usa `TELEGRAM_AUTHORIZED_CHAT_ID` como
-    destino padrão. Texto acima de 4096 caracteres (limite da Bot API) é
-    dividido em múltiplas mensagens sequenciais, preservando a ordem.
-    """
-    target_chat_id = chat_id or os.environ["TELEGRAM_AUTHORIZED_CHAT_ID"]
-    bot = Bot(token=os.environ["TELEGRAM_BOT_TOKEN"])
+    .. deprecated::
+        Use `send_message` (canal-agnóstica) ou o pipeline
+        `HandleChatMessage`. Este wrapper permanece por uma release para
+        skills/scripts que ainda importam a tool diretamente.
 
-    result: dict[str, Any] = {"success": True}
-    for chunk in _split_into_chunks(text):
-        result = await bot_client.call_bot_api(
-            lambda chunk=chunk: bot.send_message(chat_id=target_chat_id, text=chunk)
-        )
-        if not result["success"]:
-            return result
-    return result
+    Quando `chat_id` não é informado, usa `TELEGRAM_AUTHORIZED_CHAT_ID` como
+    destino padrão. Delega a `TelegramChannel.deliver` via `ChannelRegistry`.
+    """
+    logger.warning(
+        "send_telegram_message is deprecated; use send_message. "
+        "Will be removed after callers migrate to HandleChatMessage."
+    )
+    target_chat_id = chat_id or os.environ["TELEGRAM_AUTHORIZED_CHAT_ID"]
+    channel = ChannelRegistry.get(ChannelKind.TELEGRAM)
+    await channel.deliver(
+        user_key=telegram_user_key(target_chat_id),
+        text=text,
+        attachments=(),
+        kind="normal",
+    )
+    return {"success": True}
 
 
 @tool

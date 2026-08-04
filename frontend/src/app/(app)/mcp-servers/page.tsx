@@ -13,6 +13,7 @@ import {
   updateServer,
   deleteServer,
   type McpServerSummary,
+  type ServerWritePayload,
 } from "@/app/lib/mcp";
 
 const STATUS_STYLES: Record<McpServerSummary["status"], string> = {
@@ -50,16 +51,15 @@ export default function McpServersPage() {
   }, []);
 
   const handleSubmit = useCallback(
-    async (payload: {
-      name: string;
-      command: string;
-      args: string[];
-      env: Record<string, string>;
-    }) => {
+    async (payload: { name: string } & ServerWritePayload) => {
+      // The dialog already encodes the transport via discriminated union;
+      // strip `name` before forwarding so the API PUT body doesn't carry
+      // it (it rides in the URL path).
+      const { name, ...write } = payload;
       if (editing) {
-        await updateServer(editing.name, payload);
+        await updateServer(editing.name, write);
       } else {
-        await createServer(payload.name, payload);
+        await createServer(name, write);
       }
       await mutate();
     },

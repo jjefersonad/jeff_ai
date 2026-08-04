@@ -18,11 +18,37 @@ from __future__ import annotations
 
 import pytest
 
+from unittest.mock import AsyncMock, MagicMock
+
 from src.application.ports.agent_runner import AgentRunnerPort, AgentRunResult
 from src.application.ports.scheduled_task_repository import ScheduledTaskRepositoryPort
 from src.application.use_cases.run_scheduled_task import RunScheduledTask
 from src.domain.scheduling import Schedule, ScheduledTask, ToolScope
+from src.infrastructure.channels.registry import ChannelRegistry
+from src.infrastructure.channels.scheduled_channel import ScheduledChannel
 from src.infrastructure.cli import jeff_cli
+
+
+@pytest.fixture(autouse=True)
+def _isolated_registry():
+    ChannelRegistry.reset()
+    yield
+    ChannelRegistry.reset()
+
+
+def _make_run_scheduled_task(
+    *,
+    repository: ScheduledTaskRepositoryPort,
+    agent_runner: AgentRunnerPort,
+) -> RunScheduledTask:
+    notifier = MagicMock()
+    notifier.execute = AsyncMock()
+    return RunScheduledTask(
+        repository=repository,
+        agent_runner=agent_runner,
+        handle_chat_message=notifier,
+        notify_channel=ScheduledChannel(),
+    )
 
 
 class _FakeRepository(ScheduledTaskRepositoryPort):
@@ -107,8 +133,8 @@ def test_main_returns_1_and_skips_wiring_when_postgres_uri_missing(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.delenv("POSTGRES_URI", raising=False)
-    # main() chama load_dotenv() — sem isso, backend/.env reporia a var.
-    monkeypatch.setattr(jeff_cli, "load_dotenv", lambda: None)
+    # main() chama load_env() — sem isso, backend/.env / ./.env reporiam a var.
+    monkeypatch.setattr(jeff_cli, "load_env", lambda: None)
     called = False
 
     def _fail_if_called(*_args, **_kwargs):
@@ -117,6 +143,7 @@ def test_main_returns_1_and_skips_wiring_when_postgres_uri_missing(
         raise AssertionError("não deveria montar o composition root sem POSTGRES_URI")
 
     monkeypatch.setattr(jeff_cli, "_build_components", _fail_if_called)
+    monkeypatch.setattr(jeff_cli, "_register_channels", _fail_if_called)
 
     exit_code = jeff_cli.main(["--job-id", "job-1"])
 
@@ -128,6 +155,7 @@ def test_main_returns_run_result_when_postgres_uri_present(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setenv("POSTGRES_URI", "postgresql://fake/db")
+    monkeypatch.setattr(jeff_cli, "load_env", lambda: None)
     repo = _FakeRepository()
     task = _make_task()
     import asyncio
@@ -136,7 +164,12 @@ def test_main_returns_run_result_when_postgres_uri_present(
     monkeypatch.setattr(
         jeff_cli,
         "_build_components",
-        lambda postgres_uri: (repo, RunScheduledTask(repository=repo, agent_runner=_FakeRunner(status="ok"))),
+        lambda postgres_uri: (
+            repo,
+            _make_run_scheduled_task(
+                repository=repo, agent_runner=_FakeRunner(status="ok")
+            ),
+        ),
     )
 
     exit_code = jeff_cli.main(["--job-id", "job-1"])
@@ -153,7 +186,9 @@ def test_main_returns_run_result_when_postgres_uri_present(
 async def test_run_returns_0_when_task_succeeds():
     repo = _FakeRepository()
     await repo.save(_make_task())
-    use_case = RunScheduledTask(repository=repo, agent_runner=_FakeRunner(status="ok"))
+    use_case = _make_run_scheduled_task(
+        repository=repo, agent_runner=_FakeRunner(status="ok")
+    )
 
     exit_code = await jeff_cli._run(
         job_id="job-1", components=(repo, use_case)
@@ -166,7 +201,7 @@ async def test_run_returns_0_when_task_succeeds():
 async def test_run_returns_nonzero_when_task_fails():
     repo = _FakeRepository()
     await repo.save(_make_task())
-    use_case = RunScheduledTask(
+    use_case = _make_run_scheduled_task(
         repository=repo, agent_runner=_FakeRunner(status="error", error="boom")
     )
 
@@ -181,7 +216,9 @@ async def test_run_returns_nonzero_when_task_fails():
 async def test_run_returns_0_when_task_no_longer_exists():
     """Tarefa cancelada entre agendamento e disparo: no-op tolerante (exit 0)."""
     repo = _FakeRepository()
-    use_case = RunScheduledTask(repository=repo, agent_runner=_FakeRunner(status="ok"))
+    use_case = _make_run_scheduled_task(
+        repository=repo, agent_runner=_FakeRunner(status="ok")
+    )
 
     exit_code = await jeff_cli._run(
         job_id="does-not-exist", components=(repo, use_case)
