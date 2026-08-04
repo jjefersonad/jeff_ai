@@ -60,10 +60,10 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Any
+from typing import Any, Literal, Self
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 
 from src.agents.unified import mcp_config_store
 from src.agents.unified.effects import CAPABILITY_NAMES, classify
@@ -79,6 +79,7 @@ from src.agents.unified.mcp_tool_overrides import (
     remove_override,
     set_override,
 )
+from src.application.mcp.mcp_server_schema import McpServerEntryConfig
 from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.users import User
 
@@ -109,13 +110,32 @@ _ENV_REF_PATTERN = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 class ServerWriteRequest(BaseModel):
     """Corpo de `POST /servers` e `PUT /servers/{name}`.
 
-    `env` mapeia `{chave_no_servidor: nome_da_variavel_de_ambiente}` —
-    NUNCA o valor. Ex.: `{"API_KEY": "MEU_SERVIDOR_API_KEY"}`.
+    Discriminado por `transport` (default `stdio` para clientes legados):
+    - `stdio` — exige `command`; `args`/`env` opcionais.
+    - `http` — exige `url`; `headers` opcional (sem exigir `command`).
+
+    Regras alinhadas a `McpServerEntryConfig` / ao `ServerWritePayload` do
+    frontend (`fix-mcp-http-server-admin-api`).
     """
 
-    command: str
-    args: list[str] = []
-    env: dict[str, str] = {}
+    transport: Literal["stdio", "http"] = "stdio"
+    command: str | None = None
+    args: list[str] = Field(default_factory=list)
+    url: str | None = None
+    env: dict[str, str] = Field(default_factory=dict)
+    headers: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_transport_fields(self) -> Self:
+        McpServerEntryConfig(
+            transport=self.transport,
+            command=self.command,
+            args=self.args,
+            url=self.url,
+            env=self.env,
+            headers=self.headers,
+        )
+        return self
 
 
 class ServerCreateRequest(ServerWriteRequest):
@@ -142,6 +162,35 @@ def _env_display(raw_env: dict[str, Any]) -> dict[str, str]:
         match = _ENV_REF_PATTERN.match(value) if isinstance(value, str) else None
         display[key] = match.group(1) if match else value
     return display
+
+
+def _headers_display(raw_headers: dict[str, Any]) -> dict[str, str]:
+    """Exibe headers sem ecoar valores secretos em claro.
+
+    Referências `${VAR}` viram o nome da variável; qualquer outro valor
+    (ex.: `Bearer …` colado no form) é mascarado como `***`.
+    """
+    display: dict[str, str] = {}
+    for key, value in raw_headers.items():
+        if isinstance(value, str):
+            match = _ENV_REF_PATTERN.match(value)
+            display[key] = match.group(1) if match else "***"
+        else:
+            display[key] = "***"
+    return display
+
+
+def _server_write_response(name: str, entry: dict[str, Any]) -> dict[str, Any]:
+    """Resposta de create/update — metadados por transporte, sem segredos."""
+    return {
+        "Name": name,
+        "transport": entry.get("transport") or "stdio",
+        "command": entry.get("command") or "",
+        "args": list(entry.get("args") or []),
+        "url": entry.get("url") or "",
+        "env": _env_display(entry.get("env") or {}),
+        "headers": _headers_display(entry.get("headers") or {}),
+    }
 
 
 def _qualify(server_name: str, tool_name: str) -> str:
@@ -207,9 +256,12 @@ async def get_servers(user: User = Depends(require_auth)) -> dict[str, Any]:
         status = await _check_server(name, entry)
         return {
             "name": name,
-            "command": entry.get("command", ""),
-            "args": entry.get("args", []),
+            "transport": entry.get("transport") or "stdio",
+            "command": entry.get("command") or "",
+            "args": entry.get("args") or [],
+            "url": entry.get("url") or "",
             "env": _env_display(entry.get("env") or {}),
+            "headers": _headers_display(entry.get("headers") or {}),
             **status,
         }
 
@@ -235,11 +287,18 @@ async def create_server(
         raise HTTPException(status_code=401, detail="Unauthorized")
     try:
         entry = await mcp_config_store.add_server(
-            user.id, body.name, command=body.command, args=body.args, env=body.env
+            user.id,
+            body.name,
+            transport=body.transport,
+            command=body.command,
+            args=body.args,
+            url=body.url,
+            env=body.env,
+            headers=body.headers,
         )
     except McpServerConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"Name": body.name, "command": entry["command"], "args": entry["args"], "env": body.env}
+    return _server_write_response(body.name, entry)
 
 
 @router.put("/servers/{name}")
@@ -250,14 +309,21 @@ async def update_server(
         raise HTTPException(status_code=401, detail="Unauthorized")
     try:
         entry = await mcp_config_store.update_server(
-            user.id, name, command=body.command, args=body.args, env=body.env
+            user.id,
+            name,
+            transport=body.transport,
+            command=body.command,
+            args=body.args,
+            url=body.url,
+            env=body.env,
+            headers=body.headers,
         )
     except McpServerConfigError as exc:
         # "não existe" → 404 (scoped to user's rows); "já existe" → 400
         if "não existe" in str(exc):
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"Name": name, "command": entry["command"], "args": entry["args"], "env": body.env}
+    return _server_write_response(name, entry)
 
 
 @router.delete("/servers/{name}", status_code=204, response_model=None)

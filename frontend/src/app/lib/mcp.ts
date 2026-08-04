@@ -21,10 +21,14 @@
 
 export interface McpServerSummary {
   name: string;
+  transport: "stdio" | "http";
   command: string;
   args: string[];
+  url: string;
   /** key -> env var NAME (never the resolved secret value, see REQ-007). */
   env: Record<string, string>;
+  /** key -> var NAME or `***` (never the resolved secret value). */
+  headers: Record<string, string>;
   status: "connected" | "offline" | "error";
   message: string | null;
   tool_count: number;

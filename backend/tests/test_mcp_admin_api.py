@@ -280,6 +280,107 @@ def test_create_server_rejects_duplicate(client: TestClient) -> None:
         client.app.dependency_overrides.pop(require_auth, None)
 
 
+def test_create_http_server_without_command_returns_201(client: TestClient) -> None:
+    """fix-mcp-http-server-admin-api: payload da UI (zernio) não exige command."""
+    client.app.dependency_overrides[require_auth] = lambda: _AUTH_USER
+    try:
+        res = client.post(
+            "/api/mcp/servers",
+            json={
+                "name": "zernio",
+                "transport": "http",
+                "url": "https://mcp.zernio.com/mcp",
+                "headers": {"Authorization": "Bearer secret-token"},
+            },
+        )
+        assert res.status_code == 201, res.text
+        body = res.json()
+        assert body["transport"] == "http"
+        assert body["url"] == "https://mcp.zernio.com/mcp"
+        assert body["headers"] == {"Authorization": "***"}
+    finally:
+        client.app.dependency_overrides.pop(require_auth, None)
+
+
+def test_create_http_server_without_url_returns_422(client: TestClient) -> None:
+    client.app.dependency_overrides[require_auth] = lambda: _AUTH_USER
+    try:
+        res = client.post(
+            "/api/mcp/servers",
+            json={"name": "zernio", "transport": "http", "headers": {}},
+        )
+        assert res.status_code == 422
+    finally:
+        client.app.dependency_overrides.pop(require_auth, None)
+
+
+def test_create_stdio_without_command_returns_422(client: TestClient) -> None:
+    client.app.dependency_overrides[require_auth] = lambda: _AUTH_USER
+    try:
+        res = client.post(
+            "/api/mcp/servers",
+            json={"name": "local", "transport": "stdio", "args": [], "env": {}},
+        )
+        assert res.status_code == 422
+    finally:
+        client.app.dependency_overrides.pop(require_auth, None)
+
+
+def test_update_http_server_without_command(client: TestClient) -> None:
+    client.app.dependency_overrides[require_auth] = lambda: _AUTH_USER
+    try:
+        assert (
+            client.post(
+                "/api/mcp/servers",
+                json={
+                    "name": "remote",
+                    "transport": "http",
+                    "url": "https://example.com/mcp",
+                    "headers": {},
+                },
+            ).status_code
+            == 201
+        )
+        res = client.put(
+            "/api/mcp/servers/remote",
+            json={
+                "transport": "http",
+                "url": "https://example.com/mcp/v2",
+                "headers": {},
+            },
+        )
+        assert res.status_code == 200
+        assert res.json()["url"] == "https://example.com/mcp/v2"
+        assert res.json()["transport"] == "http"
+    finally:
+        client.app.dependency_overrides.pop(require_auth, None)
+
+
+def test_get_servers_includes_transport_and_url_for_http(client: TestClient) -> None:
+    client.app.dependency_overrides[require_auth] = lambda: _AUTH_USER
+    try:
+        client.post(
+            "/api/mcp/servers",
+            json={
+                "name": "zernio",
+                "transport": "http",
+                "url": "https://mcp.zernio.com/mcp",
+                "headers": {"Authorization": "Bearer x"},
+            },
+        )
+        res = client.get("/api/mcp/servers")
+        assert res.status_code == 200
+        servers = res.json()["servers"]
+        assert len(servers) == 1
+        assert servers[0]["name"] == "zernio"
+        assert servers[0]["transport"] == "http"
+        assert servers[0]["url"] == "https://mcp.zernio.com/mcp"
+        assert servers[0]["headers"] == {"Authorization": "***"}
+        assert servers[0]["command"] == ""
+    finally:
+        client.app.dependency_overrides.pop(require_auth, None)
+
+
 def test_update_server_changes_args(client: TestClient) -> None:
     client.app.dependency_overrides[require_auth] = lambda: _AUTH_USER
     try:

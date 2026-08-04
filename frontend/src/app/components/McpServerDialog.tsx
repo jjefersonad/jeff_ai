@@ -72,11 +72,13 @@ export function McpServerDialog({
   useEffect(() => {
     if (!open) return;
     setName(editing?.name ?? "");
-    setTransport("stdio");
+    setTransport(editing?.transport ?? "stdio");
     setCommand(editing?.command ?? "");
     setArgsText((editing?.args ?? []).join(" "));
     setEnvMap(editing?.env ?? {});
-    setUrl("");
+    setUrl(editing?.url ?? "");
+    // Headers secrets are never echoed by the API (`***` / var names only);
+    // start empty so the user re-enters values on edit.
     setHeadersMap({});
     setError(null);
   }, [open, editing]);

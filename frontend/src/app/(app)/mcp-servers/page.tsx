@@ -145,12 +145,14 @@ export default function McpServersPage() {
                     )}
                   </div>
                   <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
-                    {server.command} {server.args.join(" ")}
+                    {server.transport === "http"
+                      ? server.url
+                      : `${server.command} ${server.args.join(" ")}`.trim()}
                   </p>
                   {server.message && (
                     <p className="mt-1 text-xs text-destructive">{server.message}</p>
                   )}
-                  {Object.keys(server.env).length > 0 && (
+                  {server.transport !== "http" && Object.keys(server.env).length > 0 && (
                     <p className="mt-1 text-xs text-muted-foreground">
                       env:{" "}
                       {Object.entries(server.env)
