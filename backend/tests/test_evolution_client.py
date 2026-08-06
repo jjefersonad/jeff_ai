@@ -14,6 +14,13 @@ Cobre a task `whatsapp-evolution-channel-task-tools-1`:
 - `send_text(instance, phone_number, text)` monta e envia o `POST
   /message/sendText/{instance}` esperado pela Evolution API — verificado
   contra um transport HTTP mockado (`respx`), sem bater na rede real.
+
+Cobre a task `whatsapp-tool-approval-task-delivery-2a`:
+
+- `send_buttons(instance, phone_number, ...)` monta e envia o `POST
+  /message/sendButtons/{instance}` — payload (`type`/`id`/`text` por botão)
+  confirmado empiricamente contra a instância real pinada no spike
+  `whatsapp-tool-approval-task-spike-1` (2026-08-05).
 """
 from __future__ import annotations
 
@@ -153,23 +160,70 @@ async def test_send_text_posts_to_send_text_endpoint(
 
 
 @respx.mock
-async def test_send_image_posts_to_send_image_endpoint(
+async def test_send_buttons_posts_to_send_buttons_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """unify-message-delivery-pipeline-task-adapters-2: `send_image` monta o POST
-    esperado pela Evolution API para envio de mídia, com o mesmo contrato de
-    fail-fast/`apikey` de `send_text`."""
+    """whatsapp-tool-approval-task-delivery-2a: `send_buttons` monta o POST
+    esperado pela Evolution API — payload `type`/`id`/`text` por botão,
+    confirmado contra a instância real pinada no spike (task-spike-1)."""
     monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
     monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
     monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
     monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", "fake-webhook-token")
 
     route = respx.post(
-        "http://evolution_api:8080/message/sendImage/jeff-ai-central"
-    ).mock(return_value=httpx.Response(200, json={"key": {"id": "msg-1"}}))
+        "http://evolution_api:8080/message/sendButtons/jeff-ai-central"
+    ).mock(return_value=httpx.Response(201, json={"messageType": "conversation"}))
 
-    await evolution_client.send_image(
-        "jeff-ai-central", "5511999998888", "ZmFrZS1wbmc=", caption="olha só"
+    await evolution_client.send_buttons(
+        "jeff-ai-central",
+        "5511999998888",
+        title="Aprovação pendente",
+        description="edit_file em app.py",
+        buttons=[
+            {"type": "reply", "id": "approve", "text": "Aprovar"},
+            {"type": "reply", "id": "reject", "text": "Rejeitar"},
+            {"type": "reply", "id": "adjust", "text": "Ajustar"},
+        ],
+    )
+
+    assert route.called
+    request = route.calls[0].request
+    body = json.loads(request.content)
+    assert body["number"] == "5511999998888"
+    assert body["title"] == "Aprovação pendente"
+    assert body["description"] == "edit_file em app.py"
+    assert body["buttons"] == [
+        {"type": "reply", "id": "approve", "text": "Aprovar"},
+        {"type": "reply", "id": "reject", "text": "Rejeitar"},
+        {"type": "reply", "id": "adjust", "text": "Ajustar"},
+    ]
+    assert request.headers["apikey"] == "fake-key"
+
+
+@respx.mock
+async def test_send_media_image_posts_to_send_media_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fix-whatsapp-document-delivery-task-adapters-1-unit-1: `send_media` monta
+    o POST esperado pela Evolution API — endpoint unificado `/message/sendMedia`,
+    confirmado ao vivo contra a instância real pinada (v2.1.1): `/sendImage` e
+    `/sendDocument` não existem (404); `media` é sempre URL, nunca base64."""
+    monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
+    monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
+    monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
+    monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", "fake-webhook-token")
+
+    route = respx.post("http://evolution_api:8080/message/sendMedia/jeff-ai-central").mock(
+        return_value=httpx.Response(200, json={"key": {"id": "msg-1"}})
+    )
+
+    await evolution_client.send_media(
+        "jeff-ai-central",
+        "5511999998888",
+        "https://example.com/public/media-delivery/tok123",
+        mediatype="image",
+        caption="olha só",
     )
 
     assert route.called
@@ -177,6 +231,49 @@ async def test_send_image_posts_to_send_image_endpoint(
     body = json.loads(request.content)
     assert body["number"] == "5511999998888"
     assert body["mediatype"] == "image"
-    assert body["media"] == "ZmFrZS1wbmc="
+    assert body["media"] == "https://example.com/public/media-delivery/tok123"
     assert body["caption"] == "olha só"
+    assert "fileName" not in body
     assert request.headers["apikey"] == "fake-key"
+
+
+@respx.mock
+async def test_send_media_document_includes_filename_and_propagates_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fix-whatsapp-document-delivery-task-adapters-1-unit-2: `mediatype="document"`
+    inclui `fileName`; erro HTTP não-2xx propaga (mesmo contrato de `send_text`)."""
+    monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
+    monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
+    monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
+    monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", "fake-webhook-token")
+
+    route = respx.post("http://evolution_api:8080/message/sendMedia/jeff-ai-central").mock(
+        return_value=httpx.Response(200, json={"key": {"id": "msg-1"}})
+    )
+
+    await evolution_client.send_media(
+        "jeff-ai-central",
+        "5511999998888",
+        "https://example.com/public/media-delivery/tok456",
+        mediatype="document",
+        filename="relatorio.docx",
+        caption="Segue o relatório",
+    )
+
+    request = route.calls[0].request
+    body = json.loads(request.content)
+    assert body["mediatype"] == "document"
+    assert body["fileName"] == "relatorio.docx"
+    assert body["media"] == "https://example.com/public/media-delivery/tok456"
+
+    route.reset()
+    route.mock(return_value=httpx.Response(422, json={"error": "unsupported"}))
+    with pytest.raises(httpx.HTTPStatusError):
+        await evolution_client.send_media(
+            "jeff-ai-central",
+            "5511999998888",
+            "https://example.com/public/media-delivery/tok456",
+            mediatype="document",
+            filename="foo.docx",
+        )

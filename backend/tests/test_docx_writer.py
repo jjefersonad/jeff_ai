@@ -125,6 +125,20 @@ async def test_writer_creates_valid_docx_with_headings_and_table(writer, tmp_pat
     assert header_run.bold is True
 
 
+async def test_writer_sets_core_properties_title(writer):
+    """fix-docx-core-properties-title: sem isso, clientes que leem metadata OOXML
+    (ex.: preview de documento no WhatsApp) mostram 'Sem título'/'Untitled' —
+    reportado ao vivo em `fix-whatsapp-document-delivery` mesmo com o `fileName`
+    correto no payload de `send_media`, porque o título exibido vem do metadata
+    interno do arquivo, não do nome do arquivo."""
+    spec = DocxSpec(title="Ferramentas Disponíveis", blocks=(Paragraph(text="Lista."),))
+
+    result = await writer.write(spec)
+
+    doc = DocxReader(result.path)
+    assert doc.core_properties.title == "Ferramentas Disponíveis"
+
+
 async def test_writer_supports_ordered_list_and_image(writer, tmp_path):
     """REQ-002: lista numerada e inserção de imagem a partir de disco."""
     image_path = tmp_path / "logo.png"

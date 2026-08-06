@@ -33,6 +33,14 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
       JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
+      # Ver comentário equivalente em docker-compose.yml — sem estas duas, o
+      # processo nunca via FRONTEND_ORIGIN/DOCUMENT_BASE_URL como env var
+      # própria (só eram usadas para interpolar CORS_ALLOW_ORIGINS/LANGGRAPH_HTTP
+      # neste arquivo), e `WhatsAppChannel`/`build_create_document` caíam no
+      # fallback hardcoded `http://localhost:3000`, inalcançável por chamadores
+      # externos (Evolution API).
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
+      DOCUMENT_BASE_URL: ${DOCUMENT_BASE_URL:-}
       EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution_api:8080}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY em .env}
       EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-jeff-ai-central}

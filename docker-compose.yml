@@ -17,6 +17,18 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
       JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
+      # FRONTEND_ORIGIN/DOCUMENT_BASE_URL eram usadas SÓ para interpolar outras
+      # vars neste arquivo (CORS_ALLOW_ORIGINS, LANGGRAPH_HTTP) — nunca chegavam
+      # ao processo como env var própria, então `os.getenv("FRONTEND_ORIGIN")`/
+      # `os.getenv("DOCUMENT_BASE_URL")` sempre devolviam `None` em runtime
+      # (achado empírico, `fix-whatsapp-document-delivery`: `WhatsAppChannel`
+      # montava `media_url` com o fallback hardcoded `http://localhost:3000`,
+      # inalcançável pela Evolution API externa). `DOCUMENT_BASE_URL` SHALL
+      # apontar para onde o backend é alcançável por chamadores externos
+      # (Evolution API, etc.) — hoje um túnel ngrok; `FRONTEND_ORIGIN` continua
+      # sendo só a origin do frontend (CORS).
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
+      DOCUMENT_BASE_URL: ${DOCUMENT_BASE_URL:-}
       # Evolution API (change whatsapp-evolution-channel) — mesmo tratamento de
       # REDIS_PASSWORD/REDIS_URI acima: a substituição ${...} do compose só lê
       # o .env da raiz (não backend/.env), então esses valores precisam chegar

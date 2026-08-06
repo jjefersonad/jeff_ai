@@ -30,10 +30,51 @@ const ADMIN_FETCH_INIT: RequestInit = {
   credentials: "include",
 };
 
+interface PydanticValidationErrorItem {
+  msg?: unknown;
+  loc?: unknown;
+}
+
+function isPydanticValidationErrorItem(
+  item: unknown
+): item is PydanticValidationErrorItem {
+  return (
+    typeof item === "object" &&
+    item !== null &&
+    typeof (item as PydanticValidationErrorItem).msg === "string"
+  );
+}
+
+/**
+ * FastAPI's built-in Pydantic request validation (422) returns `detail` as
+ * an array of `{type, loc, msg, ctx}` objects — not a string. Renders each
+ * item's `msg`, prefixed by its field name from `loc` when available, and
+ * joins multiple simultaneous errors with "; ".
+ */
+function formatValidationErrorDetail(items: unknown[]): string | null {
+  const messages = items
+    .filter(isPydanticValidationErrorItem)
+    .map((item) => {
+      const msg = item.msg as string;
+      const loc = Array.isArray(item.loc) ? item.loc : [];
+      const field = loc[loc.length - 1];
+      return typeof field === "string" && field !== "body"
+        ? `${field}: ${msg}`
+        : msg;
+    });
+  return messages.length > 0 ? messages.join("; ") : null;
+}
+
 async function parseErrorDetail(res: Response): Promise<string> {
   try {
     const data = await res.json();
-    return data?.detail || res.statusText;
+    const { detail } = data ?? {};
+    if (typeof detail === "string" && detail) return detail;
+    if (Array.isArray(detail)) {
+      const formatted = formatValidationErrorDetail(detail);
+      if (formatted) return formatted;
+    }
+    return res.statusText;
   } catch {
     return res.statusText;
   }

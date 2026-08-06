@@ -82,6 +82,11 @@ TIER_1_TOOLS: tuple[str, ...] = (
     # envelope) — exatamente o tipo de atrito redundante que o design pede para
     # evitar (risco R1, fadiga de aprovação).
     "propose_envelope",
+    # Self-debug dos MCPs (change `fix-mcp-tool-not-exposed-error`, Decision 4).
+    # Read-only — devolve o `last_load_status` mais recente. Tier 1 para que o
+    # agente possa investigar sem precisar de aprovação humana no meio do
+    # debug. Mesmo nível de risco de `git_status`.
+    "list_mcp_servers_status",
 )
 
 # Tier 2 — Escrita de NOVOS arquivos (sem interrupt_on; notificação no front).
@@ -109,6 +114,17 @@ TIER_2_TOOLS: tuple[str, ...] = (
     # contra `backend/outputs/` pela própria tool.
     "send_telegram_photo",
     "send_telegram_document",
+    # Agendamento de tarefas (wire-scheduling-tools-to-agent) — cria,
+    # lista e cancela tarefas que o agente vai rodar no futuro. Efeito
+    # colateral persistente (escrita no `scheduled_tasks` + trigger no
+    # APScheduler) — mesma classe de risco de `save_memory`, por isso
+    # Tier 2 (roda direto, frontend notifica) e não Tier 1. Não é Tier 3
+    # porque a execução futura reaplica `interrupt_on` quando
+    # `tool_scope=FULL` (REQ-006 da spec `task-scheduling`), então aprovar
+    # aqui de novo seria atrito redundante.
+    "create_scheduled_task",
+    "list_scheduled_tasks",
+    "cancel_scheduled_task",
 )
 
 # Tier 3 — Edição de EXISTENTES + commit (interrupt_on com diff preview).

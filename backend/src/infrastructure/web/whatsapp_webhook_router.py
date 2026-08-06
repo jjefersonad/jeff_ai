@@ -87,7 +87,7 @@ from src.infrastructure.persistence.whatsapp_link_codes_repository import (
     PostgresWhatsAppLinkCodeRepository,
 )
 from src.infrastructure.usage.user_key import whatsapp_user_key
-from src.infrastructure.whatsapp import commands
+from src.infrastructure.whatsapp import approval, commands
 from src.infrastructure.whatsapp.evolution_client import (
     EvolutionConfigError,
     bootstrap_config,
@@ -186,6 +186,26 @@ async def whatsapp_webhook_endpoint(
     user_id = await resolve_whatsapp_user_id(message.phone_number)
     if user_id is None:
         logger.info("Mensagem WhatsApp de %s ignorada: sem vínculo ativo.", message.phone_number)
+        return {"received": True}
+
+    # Task `whatsapp-tool-approval-task-webhook-3` (design Decision 3): se
+    # houver uma aprovação pendente (Tier 3+ interrupt_on, ver
+    # WhatsAppChannel._send_interruption_prompt) para este phone_number, a
+    # resposta é tratada como decisão (approve/reject — REQ-009) ANTES do
+    # dispatch de slash command e do roteamento normal. Texto não
+    # reconhecido como decisão (ou sem pendência — REQ-011) cai para os
+    # blocos abaixo sem efeito colateral.
+    if await approval.handle_pending_approval_reply(
+        phone_number=message.phone_number,
+        text=message.text,
+        instance=config.instance_name,
+        agent_runner=agent_runner,
+    ):
+        logger.info(
+            "Resposta de aprovação pendente resolvida para %s (user_id=%s).",
+            message.phone_number,
+            user_id,
+        )
         return {"received": True}
 
     # Task `whatsapp-slash-commands-task-channel-1`: o dispatcher de comandos

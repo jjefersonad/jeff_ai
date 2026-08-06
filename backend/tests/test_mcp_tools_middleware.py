@@ -306,3 +306,158 @@ async def test_mcp_tools_subject_to_envelope(
         after_envelope3 = await envelope_with_write.awrap_model_call(after_mcp2, handler)
         assert len(after_envelope3.tools) == 1
         assert after_envelope3.tools[0].name == "mcp__hostile__delete_everything"
+
+
+# --------------------------------------------------------------------------- #
+# Tests for `last_load_status` (foundation-1 of fix-mcp-tool-not-exposed-error)
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_last_load_status_empty_when_user_unresolvable(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """unit-1 (REQ-002): `resolve_user_id() -> None` (sessão sem vínculo)
+    MUST populate `last_load_status` with `loaded_at`, `servers={}`,
+    `tools_by_name={}` — sem exceção, sem log de erro. Prova a segurança da
+    infra para sessões web/Telegram/WhatsApp ainda não linkadas."""
+    import datetime as _dt
+
+    with _patch_resolve_user_id(None):
+        middleware = McpToolsMiddleware()
+        request = ModelRequest(
+            model=None,  # type: ignore[arg-type]
+            tools=[edit_file],
+            messages=[],
+            state={},
+        )
+
+        async def handler(req: ModelRequest) -> ModelRequest:
+            return req
+
+        with caplog.at_level("INFO"):
+            await middleware.awrap_model_call(request, handler)
+
+    assert hasattr(middleware, "last_load_status")
+    assert middleware.last_load_status["servers"] == {}
+    assert middleware.last_load_status["tools_by_name"] == {}
+    # loaded_at é uma string ISO 8601 parseável
+    parsed = _dt.datetime.fromisoformat(middleware.last_load_status["loaded_at"])
+    assert parsed.tzinfo is not None
+    assert middleware.connection_errors == []
+
+
+@pytest.mark.asyncio
+async def test_last_load_status_records_successful_server() -> None:
+    """unit-2 (REQ-002): servidor que conecta com sucesso MUST aparecer em
+    `last_load_status.servers[name]` com `{configured=True, connected=True,
+    tool_count=N, last_error=None}` e cada tool qualificada em
+    `tools_by_name[mcp__<server>__<tool>] = server_name`."""
+    zernio_tool_a = _mock_mcp_tool("zernio/posts_create")
+    zernio_tool_b = _mock_mcp_tool("zernio/posts_list")
+
+    with (
+        _patch_resolve_user_id("user-x"),
+        patch(
+            "src.agents.unified.mcp_tools_middleware.load_mcp_server_config",
+            new=AsyncMock(
+                return_value={"zernio": {"transport": "stdio", "command": "zernio"}}
+            ),
+        ),
+        patch(
+            "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
+            new=AsyncMock(return_value=([zernio_tool_a, zernio_tool_b], [])),
+        ),
+    ):
+        middleware = McpToolsMiddleware()
+        request = ModelRequest(
+            model=None,  # type: ignore[arg-type]
+            tools=[edit_file],
+            messages=[],
+            state={},
+        )
+
+        async def handler(req: ModelRequest) -> ModelRequest:
+            return req
+
+        await middleware.awrap_model_call(request, handler)
+
+    assert middleware.last_load_status["servers"]["zernio"] == {
+        "configured": True,
+        "connected": True,
+        "tool_count": 2,
+        "last_error": None,
+    }
+    assert middleware.last_load_status["tools_by_name"] == {
+        "mcp__zernio__posts_create": "zernio",
+        "mcp__zernio__posts_list": "zernio",
+    }
+    # connection_errors preserva o contrato original
+    assert middleware.connection_errors == []
+
+
+@pytest.mark.asyncio
+async def test_last_load_status_records_failed_server_no_creds() -> None:
+    """unit-3 (REQ-002 + REQ-007 sem leak): servidor que falha ao conectar
+    MUST aparecer em `last_load_status.servers[name]` com `connected=False,
+    tool_count=0, last_error='<type>: <msg>'` — e esse `last_error` MUST
+    NÃO conter nenhum valor de `env`/`headers` da config (defesa contra
+    leak de credenciais em mensagens de erro upstream)."""
+    import src.agents.unified.mcp_client as client_module
+
+    SECRET_TOKEN = "ABCDEF-my-secret-bearer-token-do-not-leak"
+    SECRET_HEADER = "X-Internal-Authorization"
+
+    async def fake_list(connections: dict) -> tuple[list, list]:
+        # Simula um servidor MCP cujo cliente inclui o header de auth
+        # na exception message (cenário adversarial, REQ-007 do mcp-client).
+        only = next(iter(connections))
+        err = client_module.McpServerConnectionError(
+            only,
+            f"upstream refused with debug: {SECRET_HEADER}: {SECRET_TOKEN}",
+        )
+        return [], [err]   
+
+    with (
+        _patch_resolve_user_id("user-x"),
+        patch(
+            "src.agents.unified.mcp_tools_middleware.load_mcp_server_config",
+            new=AsyncMock(
+                return_value={
+                    "zernio": {
+                        "transport": "http",
+                        "url": "https://zernio.example.com",
+                        "headers": {
+                            SECRET_HEADER: f"Bearer {SECRET_TOKEN}",
+                        },
+                    }
+                }
+            ),
+        ),
+        patch(
+            "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
+            new=fake_list,
+        ),
+    ):
+        middleware = McpToolsMiddleware()
+        request = ModelRequest(
+            model=None,  # type: ignore[arg-type]
+            tools=[edit_file],
+            messages=[],
+            state={},
+        )
+
+        async def handler(req: ModelRequest) -> ModelRequest:
+            return req
+
+        await middleware.awrap_model_call(request, handler)
+
+    record = middleware.last_load_status["servers"]["zernio"]
+    assert record["configured"] is True
+    assert record["connected"] is False
+    assert record["tool_count"] == 0
+    assert isinstance(record["last_error"], str) and record["last_error"]
+    # REQ-007: o last_error NÃO pode vazar o header nem o token
+    assert SECRET_TOKEN not in record["last_error"]
+    assert SECRET_HEADER not in record["last_error"]
+    # connection_errors preserva o contrato (sem mutar)
+    assert len(middleware.connection_errors) == 1
+    assert middleware.connection_errors[0].server_name == "zernio"

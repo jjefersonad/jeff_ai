@@ -61,6 +61,7 @@ from src.infrastructure.web.auth_router import router as auth_router
 from src.infrastructure.web.documents_router import router as documents_router
 from src.infrastructure.web.images_router import router as images_router
 from src.infrastructure.web.integrations_router import router as integrations_router
+from src.infrastructure.web.media_delivery_router import router as media_delivery_router
 from src.infrastructure.web.scheduling_router import router as scheduling_router
 from src.infrastructure.web.usage_router import router as usage_router
 from src.infrastructure.web.whatsapp_webhook_router import (
@@ -161,6 +162,11 @@ app.include_router(documents_router)
 
 # Rota de upload de anexos de chat (imagem/pdf/docx/xlsx/csv/txt).
 app.include_router(attachments_router)
+
+# Entrega de attachments de saída (WhatsApp) por token de uso único — sob
+# /public/, isenta de require_auth. `evolution_client.send_media` só aceita
+# `media` como URL (não base64), e /api/files·/api/images exigem sessão.
+app.include_router(media_delivery_router)
 
 # Agregação admin de uso de tokens (GET /api/usage).
 app.include_router(usage_router)

@@ -18,9 +18,12 @@ from langgraph.config import get_store
 from src.application.ports.document_writer import DocumentWriterPort
 from src.application.ports.reference_image_fetch import ReferenceImageFetchPort
 from src.application.use_cases import (
+    CancelScheduledTask,
     CreateDocument,
+    CreateScheduledTask,
     GenerateRequirementsDocument,
     GetNextFeatureNumber,
+    ListScheduledTasks,
     PlanAndCreateImage,
 )
 from src.infrastructure.channels.registry import ChannelRegistry
@@ -35,7 +38,11 @@ from src.infrastructure.filesystem.filesystem_sdd_artifact_store import (
     FilesystemSddArtifactStore,
 )
 from src.infrastructure.llm.gemini_image_adapter import GeminiImageAdapter
+from src.infrastructure.persistence.scheduled_task_repository import (
+    PostgresScheduledTaskRepository,
+)
 from src.infrastructure.persistence.store_style_repository import StoreStyleRepository
+from src.infrastructure.scheduling.scheduler_instance import task_scheduler
 from src.infrastructure.usage.repository import UsageRepository
 from src.infrastructure.web.httpx_reference_image_fetch import HttpxReferenceImageFetch
 
@@ -128,3 +135,46 @@ def build_create_document(writer: DocumentWriterPort | None = None) -> CreateDoc
         or "http://localhost:3000"
     ).rstrip("/")
     return CreateDocument(writer=writer or DocxWriter(url_prefix=f"{base_url}/api/files"))
+
+
+def _scheduled_task_repository() -> PostgresScheduledTaskRepository:
+    """Adapter concreto do repositório de tarefas agendadas (mesmo do REST)."""
+    return PostgresScheduledTaskRepository(os.environ["POSTGRES_URI"])
+
+
+def build_create_scheduled_task() -> CreateScheduledTask:
+    """Monta CreateScheduledTask com o repositório Postgres e o `task_scheduler` singleton.
+
+    Mesmos adapters concretos que `scheduling_router.py` já usa inline para o
+    endpoint REST — só que expostos aqui para que as tools do agente
+    (`create_scheduled_task`) possam resolver a dependência sem duplicar o
+    wiring. Persistência + agendamento: o use case persiste primeiro e agenda
+    depois, então uma falha no scheduler ainda permite re-agendar do banco.
+    """
+    return CreateScheduledTask(
+        repository=_scheduled_task_repository(),
+        scheduler=task_scheduler,
+    )
+
+
+def build_list_scheduled_tasks() -> ListScheduledTasks:
+    """Monta ListScheduledTasks com o repositório Postgres (sem scheduler — listagem não agenda).
+
+    Mesma configuração do endpoint REST (`scheduling_router.py`), só que
+    exposta via composition root para que `list_scheduled_tasks` (tool do
+    agente) resolva a dependência no mesmo lugar que o REST.
+    """
+    return ListScheduledTasks(repository=_scheduled_task_repository())
+
+
+def build_cancel_scheduled_task() -> CancelScheduledTask:
+    """Monta CancelScheduledTask com o repositório Postgres e o `task_scheduler` singleton.
+
+    Cancelamento precisa desagendar o trigger (`scheduler.unschedule`) além
+    de remover a linha do banco — mesmo par `(repository, scheduler)` que o
+    endpoint REST já usa inline, exposto aqui para a tool do agente.
+    """
+    return CancelScheduledTask(
+        repository=_scheduled_task_repository(),
+        scheduler=task_scheduler,
+    )

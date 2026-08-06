@@ -188,24 +188,82 @@ async def send_text(instance: str, phone_number: str, text: str) -> None:
         response.raise_for_status()
 
 
-async def send_image(
-    instance: str, phone_number: str, media_base64: str, *, caption: str | None = None
+async def send_media(
+    instance: str,
+    phone_number: str,
+    media_url: str,
+    *,
+    mediatype: str,
+    filename: str | None = None,
+    caption: str | None = None,
 ) -> None:
-    """Envia uma imagem a `phone_number` via `POST /message/sendImage/{instance}`.
+    """Envia mídia (imagem ou documento) a `phone_number` via `POST /message/sendMedia/{instance}`.
 
-    Mesmo contrato de `send_text`: chama `bootstrap_config()` a cada envio e
-    propaga `httpx.HTTPError` em vez de engolir — o chamador (`WhatsAppChannel`)
+    Endpoint unificado — `mediatype` ("image"/"document") é o discriminador.
+    Confirmado ao vivo contra a instância real pinada (v2.1.1,
+    `fix-whatsapp-document-delivery-task-adapters-1`): `/message/sendImage` e
+    `/message/sendDocument` (endpoints per-tipo que este client chamava/teria
+    chamado) não existem nesta instância (404) — `sendMedia` é o único real.
+    `media_url` SHALL ser sempre uma URL: `media` em base64 retorna 500
+    (`Cannot read properties of undefined (reading 'name')`) para qualquer
+    `mediatype` nesta instância — verificado com um envio real. Mesmo contrato
+    de `send_text`: chama `bootstrap_config()` a cada envio e propaga
+    `httpx.HTTPError` em vez de engolir — o chamador (`WhatsAppChannel`)
     decide como tratar a falha via `classify_send_error`.
     """
     config = bootstrap_config()
-    url = f"{config.api_url}/message/sendImage/{instance}"
+    url = f"{config.api_url}/message/sendMedia/{instance}"
     payload: dict[str, Any] = {
         "number": phone_number,
-        "mediatype": "image",
-        "media": media_base64,
+        "mediatype": mediatype,
+        "media": media_url,
     }
+    if filename is not None:
+        payload["fileName"] = filename
     if caption is not None:
         payload["caption"] = caption
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            url,
+            json=payload,
+            headers={"apikey": config.api_key},
+        )
+        response.raise_for_status()
+
+
+async def send_buttons(
+    instance: str,
+    phone_number: str,
+    *,
+    title: str,
+    description: str,
+    buttons: list[dict[str, str]],
+    footer: str | None = None,
+) -> None:
+    """Envia uma mensagem interativa com botões via `POST /message/sendButtons/{instance}`.
+
+    Cada item de `buttons` segue `{"type": "reply", "id": ..., "text": ...}`
+    — payload confirmado empiricamente contra a instância real pinada
+    (`evoapicloud/evolution-api:v2.1.1`) no spike da task
+    `whatsapp-tool-approval-task-spike-1` (2026-08-05): a API rejeita o
+    formato `buttonId`/`buttonText.displayText` documentado publicamente
+    para versões mais recentes, exigindo `type`/`id`/`text` diretos. Mesmo
+    contrato de `send_text`/`send_media`: chama `bootstrap_config()` a cada
+    envio e propaga `httpx.HTTPError` — o chamador (`WhatsAppChannel`)
+    decide como tratar a falha (fallback para `send_text`, ver
+    `whatsapp-tool-approval-design` Decision 1).
+    """
+    config = bootstrap_config()
+    url = f"{config.api_url}/message/sendButtons/{instance}"
+    payload: dict[str, Any] = {
+        "number": phone_number,
+        "title": title,
+        "description": description,
+        "buttons": buttons,
+    }
+    if footer is not None:
+        payload["footer"] = footer
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post(
