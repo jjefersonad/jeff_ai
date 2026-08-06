@@ -63,3 +63,30 @@ class ChatChannelPort(ABC):
                 Default `None` — canais sem esse conceito o ignoram.
         """
         raise NotImplementedError
+
+    @abstractmethod
+    async def start_typing_indicator(self, *, user_key: str) -> None:
+        """Sinaliza ao usuário que o agente está processando a mensagem.
+
+        Contrato (design `typing-indicator-chat-channels`, Decision 1/6):
+        idempotente — uma segunda chamada com o mesmo `user_key` enquanto a
+        primeira ainda está ativa substitui (não empilha) o indicador; nunca
+        propaga exceção — falhas do provedor (rate limit, timeout) são
+        engolidas e logadas pelo próprio adapter. A orquestração de quando
+        chamar este método (antes de `agent_runner.run(...)`, exceto no
+        caminho `precomputed_output`) é responsabilidade de
+        `HandleChatMessage.execute` — ver
+        `typing-indicator-chat-channels-task-orchestration-1`.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def stop_typing_indicator(self, *, user_key: str) -> None:
+        """Encerra o indicador iniciado por `start_typing_indicator`.
+
+        Contrato: MUST ser seguro chamar mesmo sem um `start` correspondente
+        (idempotente) e nunca propaga exceção. Pensado para ser chamado pelo
+        orquestrador em um bloco `finally` — ver nota em `start_typing_indicator`
+        sobre o estado atual dessa wiring.
+        """
+        raise NotImplementedError

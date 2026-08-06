@@ -9,6 +9,8 @@ Puro: usa fakes das portas. Cobre:
   ao canal com `kind="interruption"`.
 - REQ-005/REQ-006 (task `usecase-4`): identidade propagada sem alteração;
   `deliver` exatamente uma vez por turno com attachments agregados.
+- typing-indicator-chat-channels-task-orchestration-1: start/`finally` stop
+  em torno do run; sem typing em `precomputed_output`; sem tool de typing.
 """
 from __future__ import annotations
 
@@ -35,8 +37,9 @@ import src.infrastructure.usage.user_key as user_key_mod
 
 
 class _RecordingChannel(ChatChannelPort):
-    def __init__(self) -> None:
+    def __init__(self, *, events: list[str] | None = None) -> None:
         self.calls: list[dict] = []
+        self.events: list[str] = events if events is not None else []
 
     @property
     def channel_kind(self) -> ChannelKind:
@@ -52,6 +55,7 @@ class _RecordingChannel(ChatChannelPort):
         interrupt: object | None = None,
         thread_id: str | None = None,
     ) -> None:
+        self.events.append(f"deliver:{kind}")
         self.calls.append(
             {
                 "user_key": user_key,
@@ -63,13 +67,26 @@ class _RecordingChannel(ChatChannelPort):
             }
         )
 
+    async def start_typing_indicator(self, *, user_key: str) -> None:
+        self.events.append(f"start_typing:{user_key}")
+
+    async def stop_typing_indicator(self, *, user_key: str) -> None:
+        self.events.append(f"stop_typing:{user_key}")
+
 
 class _RecordingRunner(AgentRunnerPort):
     """Registra os kwargs recebidos e devolve `result` (ou levanta `raises`)."""
 
-    def __init__(self, *, result: AgentRunResult | None = None, raises: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        result: AgentRunResult | None = None,
+        raises: Exception | None = None,
+        events: list[str] | None = None,
+    ) -> None:
         self._result = result
         self._raises = raises
+        self._events = events
         self.calls: list[dict] = []
 
     async def run(
@@ -81,6 +98,8 @@ class _RecordingRunner(AgentRunnerPort):
         tool_scope: ToolScope,
         user_key: str | None = None,
     ) -> AgentRunResult:
+        if self._events is not None:
+            self._events.append("run")
         self.calls.append(
             {
                 "thread_id": thread_id,
@@ -353,3 +372,143 @@ async def test_execute_delivers_exactly_once_with_aggregated_attachments() -> No
     assert channel.calls[0]["attachments"] == attachments
     assert channel.calls[0]["text"] == "pronto"
     assert channel.calls[0]["kind"] == "normal"
+
+
+# ---------------------------------------------------------------------------
+# typing-indicator-chat-channels-task-orchestration-1
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_starts_typing_before_run_and_stops_in_finally() -> None:
+    """Unit-1: happy path tipa e para (REQ-001 orchestration)."""
+    events: list[str] = []
+    channel = _RecordingChannel(events=events)
+    runner = _RecordingRunner(
+        result=AgentRunResult(
+            thread_id="th-1",
+            status="ok",
+            output=AgentRunOutcome(text="ok", attachments=()),
+        ),
+        events=events,
+    )
+    use_case = HandleChatMessage(agent_runner=runner)
+
+    await use_case.execute(
+        channel=channel, user_key="telegram:123", thread_id="th-1", text="oi"
+    )
+
+    assert events[:3] == [
+        "start_typing:telegram:123",
+        "run",
+        "stop_typing:telegram:123",
+    ]
+    assert events.count("start_typing:telegram:123") == 1
+    assert events.count("stop_typing:telegram:123") == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_stops_typing_when_runner_raises() -> None:
+    """Unit-2a: falha do agente ainda para o typing (REQ-001)."""
+    events: list[str] = []
+    channel = _RecordingChannel(events=events)
+    runner = _RecordingRunner(raises=RuntimeError("boom"), events=events)
+    use_case = HandleChatMessage(agent_runner=runner)
+
+    await use_case.execute(
+        channel=channel, user_key="telegram:123", thread_id="th-1", text="oi"
+    )
+
+    assert "start_typing:telegram:123" in events
+    assert "run" in events
+    assert "stop_typing:telegram:123" in events
+    assert events.index("stop_typing:telegram:123") > events.index("run")
+    assert channel.calls == [
+        {
+            "user_key": "telegram:123",
+            "text": None,
+            "attachments": (),
+            "kind": "failure",
+            "interrupt": None,
+            "thread_id": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_execute_stops_typing_when_interrupted() -> None:
+    """Unit-2b: interrupção HITL ainda para o typing (REQ-001)."""
+    interrupt = InterruptInfo(
+        action_requests=({"name": "edit_file", "args": {"path": "a.py"}},),
+        review_configs=({"allowed_decisions": ["approve", "reject"]},),
+    )
+    events: list[str] = []
+    channel = _RecordingChannel(events=events)
+    runner = _RecordingRunner(
+        result=AgentRunResult(
+            thread_id="th-1",
+            status="interrupted",
+            interrupt=interrupt,
+        ),
+        events=events,
+    )
+    use_case = HandleChatMessage(agent_runner=runner)
+
+    await use_case.execute(
+        channel=channel, user_key="telegram:123", thread_id="th-1", text="edita"
+    )
+
+    assert events.index("stop_typing:telegram:123") > events.index("run")
+    assert events.index("deliver:interruption") > events.index("stop_typing:telegram:123")
+    assert channel.calls[0]["kind"] == "interruption"
+    assert channel.calls[0]["interrupt"] is interrupt
+
+
+@pytest.mark.asyncio
+async def test_execute_precomputed_output_does_not_type() -> None:
+    """Unit-3: notify agendado não tipa (REQ-002)."""
+    events: list[str] = []
+    channel = _RecordingChannel(events=events)
+    runner = _RecordingRunner(
+        result=AgentRunResult(
+            thread_id="th-1",
+            status="ok",
+            output=AgentRunOutcome(text="unused", attachments=()),
+        ),
+        events=events,
+    )
+    use_case = HandleChatMessage(agent_runner=runner)
+
+    await use_case.execute(
+        channel=channel,
+        user_key="telegram:123",
+        thread_id="th-1",
+        text="ignored",
+        precomputed_output=AgentRunOutcome(text="pré", attachments=()),
+    )
+
+    assert runner.calls == []
+    assert not any(e.startswith("start_typing:") or e.startswith("stop_typing:") for e in events)
+    assert channel.calls == [
+        {
+            "user_key": "telegram:123",
+            "text": "pré",
+            "attachments": (),
+            "kind": "normal",
+            "interrupt": None,
+            "thread_id": None,
+        }
+    ]
+
+
+def test_unified_tool_set_has_no_typing_tools() -> None:
+    """Unit-4: ausência no registry de tools (REQ-003)."""
+    from src.agents.unified.agent import _TOOL_NAMES
+    from src.agents.unified.effects import TOOL_EFFECTS
+
+    typing_names = {
+        n
+        for n in (*_TOOL_NAMES, *TOOL_EFFECTS)
+        if "typing" in n.lower() or n.lower() in {"start_typing", "stop_typing"}
+    }
+    assert typing_names == set()

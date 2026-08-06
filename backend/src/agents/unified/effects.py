@@ -332,6 +332,33 @@ TOOL_EFFECTS: Final[Mapping[str, tuple[Any, ...]]] = {
     "merge_generated_files": _write_new(),
     "create_feature_directory": _write_new(),
     "save_generated_tool": _write_new(),
+    # --- Agendamento de tarefas (Tier 2, change `wire-scheduling-tools-to-agent`) --
+    # `create_scheduled_task` cria uma linha NOVA em `scheduled_tasks` e registra
+    # um trigger NOVO no APScheduler — efeito `WRITE_NEW` (piso, Tier 2 roda
+    # direto sem interrupt). `list_scheduled_tasks` é puro read.
+    #
+    # `cancel_scheduled_task` NÃO está aqui de propósito: ele remove uma
+    # linha EXISTENTE do banco e desagenda um trigger EXISTENTE — efeito
+    # `WRITE_EXISTING` (fora do piso). A spec original `agendamento-jeff-cli-task-scheduling-spec`
+    # o classificou como Tier 2 (sem interrupt), mas a docstring do
+    # `tier_config.py` define Tier 3 = "edições em arquivos EXISTENTES,
+    # commits git" — uma tensão não-resolvida entre dois designs. A change
+    # `wire-scheduling-tools-to-agent` herda essa tensão.
+    #
+    # DECISÃO TOMADA AQUI: deixar `cancel_scheduled_task` sem classificação
+    # (`UNKNOWN`, bloqueado) é o fail-safe. Reclassificá-lo como `WRITE_EXISTING`
+    # (e exigir concessão) quebraria o teste que o design prometeu (roda direto,
+    # frontend notifica). Reclassificá-lo como `WRITE_NEW` seria mentira
+    # (não é o efeito real). A decisão certa é abrir uma change que:
+    #  (a) ou rebaixa `cancel_scheduled_task` para Tier 3 + interrupt
+    #      (mudança de UX, exige atualização do prompt);
+    #  (b) ou cria uma nova capability `delete_scheduled` no piso (com a
+    #      justificativa de que remover o agendamento é "limpar trabalho
+    #      não-existente ainda", mas isso é semanticamente fraco).
+    # A issue fica registrada como SUGGESTION obrigatória na reabertura
+    # da change — NÃO aceitar como fix mínimo.
+    "create_scheduled_task": _write_new(),
+    "list_scheduled_tasks": _read_only(),
     # --- Entrega de mensagens (Tier 2) ----------------------------------
     # `send_message` resolve o canal via registry e chama a API do canal
     # corrente (Telegram Bot API / Evolution / SSE) — `Capability.NETWORK`.

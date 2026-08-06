@@ -65,3 +65,25 @@ async def test_deliver_resolved_channel_not_registered_raises_runtime_error() ->
 
     with pytest.raises(RuntimeError, match="telegram"):
         await channel.deliver(user_key="telegram:1234", text="oi", attachments=(), kind="normal")
+
+
+@pytest.mark.asyncio
+async def test_start_typing_indicator_is_a_noop_and_does_not_resolve_registry() -> None:
+    channel = ScheduledChannel()
+
+    result = await channel.start_typing_indicator(user_key="telegram:1234")
+
+    assert result is None
+    with pytest.raises(RuntimeError, match="não registrado"):
+        ChannelRegistry.get(ChannelKind.TELEGRAM)
+
+
+@pytest.mark.asyncio
+async def test_stop_typing_indicator_is_a_noop_and_does_not_resolve_registry() -> None:
+    channel = ScheduledChannel()
+
+    result = await channel.stop_typing_indicator(user_key="telegram:1234")
+
+    assert result is None
+    with pytest.raises(RuntimeError, match="não registrado"):
+        ChannelRegistry.get(ChannelKind.TELEGRAM)

@@ -160,6 +160,37 @@ async def test_send_text_posts_to_send_text_endpoint(
 
 
 @respx.mock
+async def test_send_presence_posts_to_send_presence_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """typing-indicator-chat-channels-task-whatsapp-adapter-1-unit-1 (client)."""
+    monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
+    monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
+    monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
+    monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", "fake-webhook-token")
+
+    route = respx.post(
+        "http://evolution_api:8080/chat/sendPresence/jeff-ai-central"
+    ).mock(return_value=httpx.Response(201, json={}))
+
+    await evolution_client.send_presence(
+        "jeff-ai-central",
+        "5511999999999",
+        presence="composing",
+        delay_ms=5000,
+    )
+
+    assert route.called
+    request = route.calls[0].request
+    body = json.loads(request.content)
+    assert body["number"] == "5511999999999"
+    assert body["options"]["presence"] == "composing"
+    assert body["options"]["delay"] == 5000
+    assert body["options"]["number"] == "5511999999999"
+    assert request.headers["apikey"] == "fake-key"
+
+
+@respx.mock
 async def test_send_buttons_posts_to_send_buttons_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

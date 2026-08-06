@@ -48,6 +48,9 @@ class HandleChatMessage:
         `precomputed_output` (scheduled-tasks REQ-009): quando o caller já
         rodou o agente (ex.: `RunScheduledTask`), entrega esse outcome
         sem reinvocar o runner — evita double-run no notify agendado.
+
+        Typing (typing-indicator-chat-channels): `start` antes do `run` e
+        `stop` em `finally` — não tipa no caminho `precomputed_output`.
         """
         if precomputed_output is not None:
             await channel.deliver(
@@ -58,20 +61,29 @@ class HandleChatMessage:
             )
             return
 
+        run_failed = False
+        result: AgentRunResult | None = None
+        await channel.start_typing_indicator(user_key=user_key)
         try:
-            result = await self._agent_runner.run(
-                thread_id=thread_id,
-                prompt=text,
-                skills=(),
-                tool_scope=ToolScope.RESTRICTED,
-                user_key=user_key,
-            )
-        except Exception as exc:  # noqa: BLE001 — REQ-003: nunca propaga para o handler
-            logger.error(
-                "agent_run_failed: thread_id=%s error=%s",
-                thread_id,
-                exc,
-            )
+            try:
+                result = await self._agent_runner.run(
+                    thread_id=thread_id,
+                    prompt=text,
+                    skills=(),
+                    tool_scope=ToolScope.RESTRICTED,
+                    user_key=user_key,
+                )
+            except Exception as exc:  # noqa: BLE001 — REQ-003: nunca propaga para o handler
+                run_failed = True
+                logger.error(
+                    "agent_run_failed: thread_id=%s error=%s",
+                    thread_id,
+                    exc,
+                )
+        finally:
+            await channel.stop_typing_indicator(user_key=user_key)
+
+        if run_failed:
             await channel.deliver(
                 user_key=user_key,
                 text=None,
@@ -80,6 +92,7 @@ class HandleChatMessage:
             )
             return
 
+        assert result is not None
         await self._deliver_result(
             channel=channel,
             user_key=user_key,

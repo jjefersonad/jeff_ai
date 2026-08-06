@@ -84,3 +84,25 @@ async def test_deliver_no_attachments_emits_no_attachment_event() -> None:
     await channel.deliver(user_key="web:abc", text="só texto", attachments=(), kind="normal")
 
     emit.assert_awaited_once_with({"kind": "text", "text": "só texto"})
+
+
+@pytest.mark.asyncio
+async def test_start_typing_indicator_is_a_noop() -> None:
+    emit = AsyncMock()
+    channel = WebChannel(emit=emit)
+
+    result = await channel.start_typing_indicator(user_key="web:abc")
+
+    assert result is None
+    emit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stop_typing_indicator_is_a_noop() -> None:
+    emit = AsyncMock()
+    channel = WebChannel(emit=emit)
+
+    result = await channel.stop_typing_indicator(user_key="web:abc")
+
+    assert result is None
+    emit.assert_not_awaited()

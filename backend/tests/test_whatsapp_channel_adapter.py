@@ -13,9 +13,13 @@ Attachments (imagem/documento) passaram a usar `evolution_client.send_media`
 verificado ao vivo contra a instância real que `/message/sendImage` e
 `/message/sendDocument` não existem (404), e que `media` em base64 retorna
 500 para qualquer `mediatype` nesta instância (v2.1.1).
+
+Typing (typing-indicator-chat-channels-task-whatsapp-adapter-1):
+- `start_typing_indicator` → `send_presence(composing)` + refresh cancelável.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock, patch
 
@@ -348,3 +352,111 @@ async def test_deliver_interruption_falls_back_to_text_menu_on_explicit_buttons_
     assert pending is not None
     assert pending.thread_id == "thread-abc"
     approval.clear_pending_approval("5511999998888")
+
+
+# ---------------------------------------------------------------------------
+# typing-indicator-chat-channels-task-whatsapp-adapter-1
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_start_typing_indicator_calls_send_presence_composing() -> None:
+    """Unit-1: start envia presence composing (REQ-001)."""
+    channel = WhatsAppChannel(instance="jeff-ai-central")
+
+    with patch(
+        "src.infrastructure.channels.whatsapp_channel.evolution_client.send_presence",
+        new_callable=AsyncMock,
+    ) as send_presence_mock:
+        await channel.start_typing_indicator(user_key="whatsapp:5511999999999")
+        try:
+            send_presence_mock.assert_awaited()
+            args, kwargs = send_presence_mock.await_args
+            assert args[:2] == ("jeff-ai-central", "5511999999999")
+            assert kwargs["presence"] == "composing"
+        finally:
+            await channel.stop_typing_indicator(user_key="whatsapp:5511999999999")
+
+
+@pytest.mark.asyncio
+async def test_start_typing_invalid_user_key_does_not_raise(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unit-2a: user_key inválido não propaga (REQ-001)."""
+    channel = WhatsAppChannel(instance="jeff-ai-central")
+
+    with (
+        patch(
+            "src.infrastructure.channels.whatsapp_channel.evolution_client.send_presence",
+            new_callable=AsyncMock,
+        ) as send_presence_mock,
+        caplog.at_level(logging.WARNING),
+    ):
+        result = await channel.start_typing_indicator(user_key="telegram:123")
+
+    assert result is None
+    send_presence_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_start_typing_swallows_http_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unit-2b: falha HTTP da Evolution não propaga (REQ-002)."""
+    channel = WhatsAppChannel(instance="jeff-ai-central")
+    request = httpx.Request("POST", "http://evolution_api:8080/chat/sendPresence/x")
+    response = httpx.Response(500, request=request)
+    http_error = httpx.HTTPStatusError("boom", request=request, response=response)
+
+    with (
+        patch(
+            "src.infrastructure.channels.whatsapp_channel.evolution_client.send_presence",
+            new_callable=AsyncMock,
+            side_effect=http_error,
+        ),
+        caplog.at_level(logging.WARNING),
+    ):
+        result = await channel.start_typing_indicator(user_key="whatsapp:5511999999999")
+
+    assert result is None
+    await channel.stop_typing_indicator(user_key="whatsapp:5511999999999")
+
+
+@pytest.mark.asyncio
+async def test_stop_typing_cancels_refresh_without_paused_and_second_start_replaces() -> None:
+    """Unit-3: stop cancela refresh sem paused; segundo start substitui (REQ-002 / REQ-ADD-001)."""
+    channel = WhatsAppChannel(instance="jeff-ai-central")
+
+    with (
+        patch(
+            "src.infrastructure.channels.whatsapp_channel.evolution_client.send_presence",
+            new_callable=AsyncMock,
+        ) as send_presence_mock,
+        patch(
+            "src.infrastructure.channels.whatsapp_channel._TYPING_REFRESH_SECONDS",
+            0.05,
+        ),
+    ):
+        await channel.start_typing_indicator(user_key="whatsapp:5511999999999")
+        first_task = channel._typing_tasks["whatsapp:5511999999999"]
+        assert not first_task.done()
+
+        await channel.start_typing_indicator(user_key="whatsapp:5511999999999")
+        second_task = channel._typing_tasks["whatsapp:5511999999999"]
+        assert first_task is not second_task
+        assert first_task.cancelled() or first_task.done()
+
+        await channel.stop_typing_indicator(user_key="whatsapp:5511999999999")
+        assert "whatsapp:5511999999999" not in channel._typing_tasks
+        assert second_task.cancelled() or second_task.done()
+
+        await channel.stop_typing_indicator(user_key="whatsapp:5511999999999")
+
+        # Nenhuma chamada com presence paused
+        for call in send_presence_mock.await_args_list:
+            presence = call.kwargs.get("presence")
+            if presence is None and len(call.args) > 2:
+                presence = call.args[2]
+            assert presence != "paused"
+
+    await asyncio.sleep(0)

@@ -32,6 +32,12 @@ class _FakeChannel(ChatChannelPort):
     ) -> None:
         return None
 
+    async def start_typing_indicator(self, *, user_key: str) -> None:
+        return None
+
+    async def stop_typing_indicator(self, *, user_key: str) -> None:
+        return None
+
 
 @pytest.fixture(autouse=True)
 def _isolated_registry():

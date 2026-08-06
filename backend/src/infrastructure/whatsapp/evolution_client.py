@@ -188,6 +188,37 @@ async def send_text(instance: str, phone_number: str, text: str) -> None:
         response.raise_for_status()
 
 
+async def send_presence(
+    instance: str,
+    phone_number: str,
+    *,
+    presence: str = "composing",
+    delay_ms: int = 5000,
+) -> None:
+    """Sinaliza presença (`composing`/`recording`) via `POST /chat/sendPresence/{instance}`.
+
+    Contrato Evolution API v2.1.1 (typing-indicator-chat-channels Decision 6).
+    Propaga `httpx.HTTPError` — o adapter engole, como em `send_text`.
+    """
+    config = bootstrap_config()
+    url = f"{config.api_url}/chat/sendPresence/{instance}"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            url,
+            json={
+                "number": phone_number,
+                "options": {
+                    "delay": delay_ms,
+                    "presence": presence,
+                    "number": phone_number,
+                },
+            },
+            headers={"apikey": config.api_key},
+        )
+        response.raise_for_status()
+
+
 async def send_media(
     instance: str,
     phone_number: str,

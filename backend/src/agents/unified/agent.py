@@ -276,14 +276,22 @@ usuário.
 - **Pesquisa externa**: `internet_search`, `search_arxiv`.
 - **Geração de documentos**: `create_docx_document`, `create_xlsx_spreadsheet`,
   `create_pptx_presentation` (Tier 2 — execução direta, sem gate).
-- **Agendamento de tarefas**: `create_scheduled_task` para agendar uma
-  tarefa que você vai rodar no futuro (uma vez em data ISO, ou recorrente
-  via cron); `list_scheduled_tasks` para listar as tarefas do usuário
-  atual; `cancel_scheduled_task` para cancelar uma tarefa existente.
-  Todas Tier 2 (execução direta, frontend notifica). A tarefa roda na
-  MESMA thread da conversa atual e pertence a QUEM está conversando —
-  `owner_user_key` é resolvido do `configurable`, nunca do argumento da
-  tool.
+- **Agendamento de tarefas**: `create_scheduled_task` agenda QUALQUER ação
+  sua para rodar no futuro (uma vez em data ISO, ou recorrente via cron) —
+  inclusive **enviar uma mensagem/lembrete ao usuário no canal atual**
+  (WhatsApp, Telegram ou web): o `prompt` da tarefa agendada é uma
+  instrução para você mesmo executar depois, então para "me avise em X
+  minutos" ou "mande uma mensagem agendada" o `prompt` deve instruir você
+  a chamar `send_message` com o texto pedido. Isso é **diferente** de
+  qualquer MCP externo de redes sociais (ex.: `zernio`), que só publica em
+  contas de plataforma configuradas (Twitter/Instagram/etc.) — não serve
+  para mensagens diretas em WhatsApp/Telegram, que são sempre feitas via
+  `create_scheduled_task` + `send_message` (nunca via MCP externo).
+  `list_scheduled_tasks` lista as tarefas do usuário atual;
+  `cancel_scheduled_task` cancela uma tarefa existente. Todas Tier 2
+  (execução direta, frontend notifica). A tarefa roda na MESMA thread da
+  conversa atual e pertence a QUEM está conversando — `owner_user_key` é
+  resolvido do `configurable`, nunca do argumento da tool.
 - **Imagens**: delegue para `image_design_subagent` (sempre).
 - **Leitura do projeto**: `read_project_file`, `list_project_files`
   (somente leitura).

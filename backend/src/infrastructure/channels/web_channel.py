@@ -55,5 +55,13 @@ class WebChannel(ChatChannelPort):
                 }
             )
 
+    async def start_typing_indicator(self, *, user_key: str) -> None:
+        """No-op — o canal web já transmite tokens via SSE (design Non-Goals)."""
+        return None
+
+    async def stop_typing_indicator(self, *, user_key: str) -> None:
+        """No-op — ver `start_typing_indicator`."""
+        return None
+
 
 __all__ = ["WebChannel"]

@@ -9,9 +9,13 @@ Cobre REQ-011/REQ-014 (telegram-channel) e REQ-001/REQ-003/REQ-005
 - attachment de imagem → `bot.send_photo`; attachment de documento →
   `bot.send_document`; texto e mídia na mesma chamada (caption).
 - `kind="interruption"` → `approval.send_approval_keyboard(...)`.
+
+Typing (typing-indicator-chat-channels-task-telegram-adapter-1):
+- `start_typing_indicator` → `send_chat_action(typing)` + refresh cancelável.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -28,6 +32,7 @@ def _make_bot() -> MagicMock:
     bot.send_message = AsyncMock(return_value=MagicMock())
     bot.send_photo = AsyncMock(return_value=MagicMock())
     bot.send_document = AsyncMock(return_value=MagicMock())
+    bot.send_chat_action = AsyncMock(return_value=MagicMock())
     return bot
 
 
@@ -147,3 +152,84 @@ async def test_deliver_interruption_calls_send_approval_keyboard() -> None:
     assert kwargs["chat_id"] == "123"
     assert kwargs["thread_id"] == "thread-1"
     assert kwargs["interrupt"] is interrupt
+
+
+# ---------------------------------------------------------------------------
+# typing-indicator-chat-channels-task-telegram-adapter-1
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_start_typing_indicator_sends_chat_action_typing() -> None:
+    """Unit-1: start envia sendChatAction typing (REQ-001)."""
+    bot = _make_bot()
+    channel = TelegramChannel(bot=bot)
+
+    await channel.start_typing_indicator(user_key="telegram:1234")
+    try:
+        bot.send_chat_action.assert_awaited_once_with(chat_id=1234, action="typing")
+    finally:
+        await channel.stop_typing_indicator(user_key="telegram:1234")
+
+
+@pytest.mark.asyncio
+async def test_start_typing_invalid_user_key_does_not_raise(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unit-2a: user_key inválido não propaga (REQ-001)."""
+    bot = _make_bot()
+    channel = TelegramChannel(bot=bot)
+
+    with caplog.at_level(logging.WARNING):
+        result = await channel.start_typing_indicator(user_key="telegram:not-an-int")
+
+    assert result is None
+    bot.send_chat_action.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_start_typing_swallows_bot_api_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unit-2b: falha da Bot API no start não propaga (REQ-002)."""
+    bot = _make_bot()
+    bot.send_chat_action = AsyncMock(side_effect=RetryAfter(retry_after=5))
+    channel = TelegramChannel(bot=bot)
+
+    with caplog.at_level(logging.WARNING):
+        result = await channel.start_typing_indicator(user_key="telegram:1234")
+
+    assert result is None
+    await channel.stop_typing_indicator(user_key="telegram:1234")
+
+
+@pytest.mark.asyncio
+async def test_stop_typing_cancels_refresh_and_second_start_replaces() -> None:
+    """Unit-3: stop cancela refresh; segundo start substitui (REQ-002 / REQ-ADD-001)."""
+    bot = _make_bot()
+    channel = TelegramChannel(bot=bot)
+
+    with patch(
+        "src.infrastructure.channels.telegram_channel._TYPING_REFRESH_SECONDS",
+        0.05,
+    ):
+        await channel.start_typing_indicator(user_key="telegram:1234")
+        first_task = channel._typing_tasks["telegram:1234"]
+        assert not first_task.done()
+
+        await channel.start_typing_indicator(user_key="telegram:1234")
+        second_task = channel._typing_tasks["telegram:1234"]
+        assert first_task is not second_task
+        assert first_task.cancelled() or first_task.done()
+
+        await channel.stop_typing_indicator(user_key="telegram:1234")
+        assert "telegram:1234" not in channel._typing_tasks
+        assert second_task.cancelled() or second_task.done()
+
+        # stop sem start correspondente é seguro
+        await channel.stop_typing_indicator(user_key="telegram:1234")
+
+    # refresh loop deve ter reenviado action além do start inicial
+    assert bot.send_chat_action.await_count >= 1
+    # dá um tick para o loop cancelado assentar
+    await asyncio.sleep(0)

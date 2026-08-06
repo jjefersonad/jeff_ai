@@ -54,5 +54,13 @@ class ScheduledChannel(ChatChannelPort):
             thread_id=thread_id,
         )
 
+    async def start_typing_indicator(self, *, user_key: str) -> None:
+        """No-op — o delegator não propaga typing ao canal interno (design OQ-2)."""
+        return None
+
+    async def stop_typing_indicator(self, *, user_key: str) -> None:
+        """No-op — ver `start_typing_indicator`."""
+        return None
+
 
 __all__ = ["ScheduledChannel"]

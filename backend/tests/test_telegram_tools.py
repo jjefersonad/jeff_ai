@@ -55,6 +55,12 @@ class _RecordingTelegramChannel(ChatChannelPort):
     ) -> None:
         self.calls.append({"user_key": user_key, "text": text, "kind": kind})
 
+    async def start_typing_indicator(self, *, user_key: str) -> None:
+        return None
+
+    async def stop_typing_indicator(self, *, user_key: str) -> None:
+        return None
+
 
 _SENT_MESSAGES: list[tuple[str, str]] = []
 _SENT_PHOTOS: list[tuple[str, bytes, str | None]] = []

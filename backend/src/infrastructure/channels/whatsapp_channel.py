@@ -25,9 +25,14 @@ whatsapp-channel) — os bytes só saem do disco quando essa rota é chamada.
 contrário do `bot_client` do Telegram) — este adapter é quem chama
 `evolution_client.classify_send_error` e engole, mantendo o mesmo contrato
 fail-safe do `ChatChannelPort` (REQ-005 chat-channel-port).
+
+Typing (typing-indicator-chat-channels Decision 6): `send_presence(composing)`
+com refresh ~4s; `stop` cancela a task (sem `paused` — API v2.1.1 não expõe).
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import os
 from pathlib import Path
@@ -46,6 +51,10 @@ _TEXT_CHUNK_LIMIT = 4096
 """Limite de caracteres por mensagem de texto na Evolution API / WhatsApp."""
 
 _IMAGE_MIMES = ("image/png", "image/jpeg", "image/webp", "image/gif")
+
+# Presence `composing` dura ~delay_ms; refresh um pouco antes (Decision 6).
+_TYPING_REFRESH_SECONDS = 4.0
+_TYPING_PRESENCE_DELAY_MS = 5000
 
 
 def _delivery_base_url() -> str:
@@ -88,6 +97,16 @@ def _phone(user_key: str) -> str:
     return user_key.removeprefix("whatsapp:")
 
 
+def _require_phone(user_key: str) -> str:
+    """Valida `whatsapp:<phone>` não-vazio para typing; levanta `ValueError` se inválido."""
+    if not user_key.startswith("whatsapp:"):
+        raise ValueError(f"user_key inválido para WhatsApp: {user_key!r}")
+    phone = user_key.removeprefix("whatsapp:")
+    if not phone:
+        raise ValueError(f"user_key sem telefone: {user_key!r}")
+    return phone
+
+
 def _interrupt_description(interrupt: InterruptInfo) -> str:
     """Monta a descrição da ação pendente a partir de `action_requests`.
 
@@ -121,6 +140,7 @@ class WhatsAppChannel(ChatChannelPort):
     def __init__(self, *, instance: str) -> None:
         """Guarda `instance` (usado em toda chamada a `evolution_client`)."""
         self._instance = instance
+        self._typing_tasks: dict[str, asyncio.Task[None]] = {}
 
     @property
     def channel_kind(self) -> ChannelKind:
@@ -249,6 +269,62 @@ class WhatsAppChannel(ChatChannelPort):
             phone,
             classified.get("error_kind"),
         )
+
+    async def start_typing_indicator(self, *, user_key: str) -> None:
+        """Envia presence `composing` e mantém refresh até `stop` (Decision 6)."""
+        try:
+            phone = _require_phone(user_key)
+        except ValueError:
+            logger.warning(
+                "WhatsAppChannel.start_typing_indicator: user_key inválido=%r",
+                user_key,
+            )
+            return
+
+        await self._cancel_typing(user_key)
+        await self._send_composing(phone)
+        self._typing_tasks[user_key] = asyncio.create_task(
+            self._typing_refresh_loop(phone),
+            name=f"whatsapp-typing:{user_key}",
+        )
+
+    async def stop_typing_indicator(self, *, user_key: str) -> None:
+        """Cancela o refresh de typing para `user_key` (idempotente; sem `paused`)."""
+        await self._cancel_typing(user_key)
+
+    async def _cancel_typing(self, user_key: str) -> None:
+        task = self._typing_tasks.pop(user_key, None)
+        if task is None:
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    async def _send_composing(self, phone: str) -> None:
+        try:
+            await evolution_client.send_presence(
+                self._instance,
+                phone,
+                presence="composing",
+                delay_ms=_TYPING_PRESENCE_DELAY_MS,
+            )
+        except Exception as exc:  # noqa: BLE001 — typing é best-effort
+            if isinstance(exc, httpx.HTTPStatusError):
+                self._log_failure(phone, evolution_client.classify_send_error(exc))
+            else:
+                logger.warning(
+                    "WhatsAppChannel.typing falhou: phone=%s error_kind=unexpected",
+                    phone,
+                    exc_info=True,
+                )
+
+    async def _typing_refresh_loop(self, phone: str) -> None:
+        try:
+            while True:
+                await asyncio.sleep(_TYPING_REFRESH_SECONDS)
+                await self._send_composing(phone)
+        except asyncio.CancelledError:
+            raise
 
 
 __all__ = ["WhatsAppChannel"]

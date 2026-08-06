@@ -348,3 +348,49 @@ async def test_search_memory_telegram_legacy_bridge_returns_content(monkeypatch)
     assert "Conexão Elite" in out
     assert out != mt._NO_IDENTITY_MESSAGE
     assert out != mt._CHANNEL_UNLINKED_MESSAGE
+
+
+async def test_search_memory_telegram_linked_returns_content(monkeypatch):
+    """memory-2 unit-3: telegram vinculado via user_integrations → namespace do dono."""
+    from src.domain.integrations import UserIntegration
+    from src.infrastructure.ownership import store as ownership_store
+
+    linked_user = "linked-user-uuid"
+    chat_id = "55555"
+    namespace = (*mt.MEMORY_NAMESPACE, linked_user)
+    s = InMemoryStore()
+    await s.aput(
+        namespace, "k1", {"content": "fato do canal vinculado", "kind": "semantic"}
+    )
+    monkeypatch.setattr(mt, "get_store", lambda: s)
+    monkeypatch.setattr(
+        ownership_store,
+        "get_config",
+        lambda: {"configurable": {"user_key": f"telegram:{chat_id}"}},
+    )
+    monkeypatch.setenv("POSTGRES_URI", "postgresql://fake")
+    monkeypatch.delenv("TELEGRAM_LEGACY_OWNER_USER_ID", raising=False)
+
+    class _FakeRepository:
+        def __init__(self, conninfo: str) -> None:
+            self.conninfo = conninfo
+
+        async def list_all(self) -> list[UserIntegration]:
+            return [
+                UserIntegration(
+                    id="i1",
+                    user_id=linked_user,
+                    integration_type="telegram",
+                    config={"chat_id": chat_id},
+                )
+            ]
+
+    monkeypatch.setattr(
+        ownership_store, "PostgresUserIntegrationRepository", _FakeRepository
+    )
+
+    out = await mt.search_memory.ainvoke({"query": "canal vinculado"})
+
+    assert "canal vinculado" in out
+    assert out != mt._NO_IDENTITY_MESSAGE
+    assert out != mt._CHANNEL_UNLINKED_MESSAGE

@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 import pytest
 
 import src.tools.scheduling_tools as st
+from src.agents.unified.effects import Capability
 from src.application.ports.scheduled_task_repository import ScheduledTaskRepositoryPort
 from src.application.ports.task_scheduler import TaskSchedulerPort
 from src.application.use_cases.cancel_scheduled_task import CancelScheduledTask
@@ -483,3 +484,47 @@ def test_scheduling_tools_not_in_interrupt_on() -> None:
         assert name not in interrupt_on, (
             f"{name} está em _interrupt_on — deveria rodar direto (Tier 2)."
         )
+
+
+def test_create_and_list_scheduled_tasks_pass_envelope_without_grant() -> None:
+    """Trava de regressão: `create_scheduled_task` e `list_scheduled_tasks`
+    DEVEM estar classificadas no `TOOL_EFFECTS` com capability no piso
+    (`WRITE_NEW` / `READ`), para que o `EnvelopeMiddleware` não as bloqueie
+    em chamadas Tier 2 sem envelope.
+
+    Achado em produção (2026-08-06, run 019fd7f0-ab02): as 3 tools estavam
+    registradas em `_UNIFIED_TOOLS` e `TIER_REGISTRY=2`, mas faltavam em
+    `TOOL_EFFECTS` — caíam em `UNKNOWN` (fora do piso) e o `wrap_tool_call`
+    bloqueava cada invocação com `envelope_audit event=block required='unknown'`.
+    O modelo desistia e alucinava que "não tem scheduler interno".
+
+    `cancel_scheduled_task` está EXPLICITAMENTE fora: remover um trigger
+    existente é `WRITE_EXISTING` (fora do piso, exige concessão), e a
+    decisão de design entre Tier 2 e Tier 3 está aberta (ver
+    `wire-scheduling-tools-to-agent-task-verify-1` reaberto).
+    """
+    from src.agents.unified.effects import TOOL_EFFECTS, classify, needs_grant
+
+    # `create_scheduled_task` cria recurso novo → `WRITE_NEW` (piso).
+    assert "create_scheduled_task" in TOOL_EFFECTS
+    assert classify("create_scheduled_task") == (Capability.WRITE_NEW,)
+    assert not needs_grant("create_scheduled_task"), (
+        "create_scheduled_task deveria rodar sem grant (WRITE_NEW no piso)."
+    )
+
+    # `list_scheduled_tasks` é puro read.
+    assert "list_scheduled_tasks" in TOOL_EFFECTS
+    assert classify("list_scheduled_tasks") == (Capability.READ,)
+    assert not needs_grant("list_scheduled_tasks"), (
+        "list_scheduled_tasks deveria rodar sem grant (READ no piso)."
+    )
+
+    # `cancel_scheduled_task` está intencionalmente fora — não fix mínimo.
+    # Trava: qualquer um que tentar classificá-lo como `WRITE_NEW` (meia-verdade)
+    # ou como `WRITE_EXISTING` (vai precisar de grant, quebrando o Tier 2
+    # prometido pelo design) precisa abrir uma change formal primeiro.
+    assert "cancel_scheduled_task" not in TOOL_EFFECTS, (
+        "cancel_scheduled_task NÃO deve ser classificado sem uma change "
+        "explícita (tensão Tier 2 vs Tier 3 — ver reabertura da change "
+        "wire-scheduling-tools-to-agent)."
+    )
