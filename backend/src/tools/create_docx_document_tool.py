@@ -120,9 +120,15 @@ async def create_docx_document(
     tolerada (parseada e validada), para o caso de a camada de tool-calling
     degradar o argumento estruturado em texto.
 
-    Em caso de entrada inválida (incluindo string simples não-JSON, ou
-    `blocks` vazio/omitido), retorna um dicionário com a chave `error`
-    descrevendo o problema e nenhum arquivo parcial é deixado em disco.
+    Tabelas: use SEMPRE um bloco `type="table"` com `rows` (e `header`
+    opcional). NÃO coloque sintaxe Markdown de tabela (`| col | col |`)
+    dentro de `paragraph` ou itens de `list` — isso é rejeitado com `error`
+    e quebraria o layout no Word.
+
+    Em caso de entrada inválida (incluindo string simples não-JSON,
+    `blocks` vazio/omitido, ou tabela Markdown em paragraph), retorna um
+    dicionário com a chave `error` descrevendo o problema e nenhum arquivo
+    parcial é deixado em disco.
 
     Example return:
     {"path": "/app/backend/outputs/documents/docx/20260708120000123456.docx",
