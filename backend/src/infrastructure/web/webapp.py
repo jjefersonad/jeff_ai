@@ -41,6 +41,9 @@ from src.infrastructure.ownership.schema import ensure_schema as ensure_ownershi
 from src.infrastructure.persistence.scheduled_task_repository import (
     PostgresScheduledTaskRepository,
 )
+from src.infrastructure.persistence.scheduled_tasks_schema import (
+    ensure_schema as ensure_scheduled_tasks_schema,
+)
 from src.infrastructure.persistence.telegram_link_codes_schema import (
     ensure_schema as ensure_telegram_link_codes_schema,
 )
@@ -74,7 +77,7 @@ from src.infrastructure.whatsapp.schema import (
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Garante as tabelas `users`/`sessions`/`generated_files`/`chat_attachments`/`token_usage_events`/`user_integrations`/`telegram_link_codes`/`whatsapp_link_codes`, o bootstrap do admin e o pool de auth.
+    """Garante as tabelas `users`/`sessions`/`generated_files`/`chat_attachments`/`token_usage_events`/`user_integrations`/`telegram_link_codes`/`whatsapp_link_codes`/`scheduled_tasks`, o bootstrap do admin e o pool de auth.
 
     Falha o startup com erro explícito se `POSTGRES_URI` ou as credenciais de
     admin (`ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH`) estiverem ausentes numa
@@ -121,6 +124,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     ensure_telegram_link_codes_schema(conninfo)
     ensure_whatsapp_link_codes_schema(conninfo)
     ensure_whatsapp_threads_schema(conninfo)
+    ensure_scheduled_tasks_schema(conninfo)
     await init_pool(conninfo)
     await _reschedule_pending_tasks(conninfo)
     task_scheduler.start()
