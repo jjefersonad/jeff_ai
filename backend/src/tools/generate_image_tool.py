@@ -71,12 +71,13 @@ async def create_image_from_prompt(
 
     Returns a dict with:
     - path: local filesystem path (internal use only, do NOT show to the user).
-    - url: frontend-accessible URL — ALWAYS use this in markdown to display the image.
+    - url: absolute public HTTP(S) URL — ALWAYS use this in markdown to display
+      or share the image (never invent a host; never use `path`).
     - metadata: the design metadata used for generation.
 
     Example return:
     {"path": "/app/backend/outputs/images/20260705091430.png",
-     "url": "/api/images/20260705091430.png",
+     "url": "http://localhost:8001/api/images/20260705091430.png",
      "metadata": {"prompt": "Um gato astronauta no espaço", "art_style": "realista",
                   "color_palette": "tons frios", "composition": "centralizada",
                   "dimensions": "1024x1024", "negative_prompt": null}}

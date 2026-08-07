@@ -25,6 +25,8 @@ export interface ScheduledTask {
   started_at: string | null;
   finished_at: string | null;
   error: string | null;
+  notify_status: string | null;
+  notify_error: string | null;
   created_at: string;
 }
 

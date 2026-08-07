@@ -213,78 +213,75 @@ def test_bullet_slide_rejects_empty_bullet_string():
         BulletSlide(title="ok", bullets=("a", ""))
 
 
-# --- Tool create_pptx_presentation (adapter fino) -------------------------
+# --- Tool create_pptx_presentation (HTML pipeline) -------------------------
 
 
-def test_to_slide_title():
-    s = pptx_tool._to_slide(PptxSlideInput(type="title", title="T", subtitle="S"))
-    assert isinstance(s, TitleSlide)
-    assert s.title == "T"
-    assert s.subtitle == "S"
-
-
-def test_to_slide_bullets():
-    s = pptx_tool._to_slide(
-        PptxSlideInput(type="bullets", title="T", bullets=["a", "b"])
+def test_slides_to_html_title_and_bullets():
+    html = pptx_tool.slides_to_html(
+        [
+            PptxSlideInput(type="title", title="T", subtitle="S"),
+            PptxSlideInput(type="bullets", title="B", bullets=["a", "b"]),
+        ]
     )
-    assert isinstance(s, BulletSlide)
-    assert s.bullets == ("a", "b")
+    assert 'class="slide"' in html
+    assert "<h1>T</h1>" in html
+    assert "<p>S</p>" in html
+    assert "<h2>B</h2>" in html
+    assert "<li>a</li>" in html
 
 
-def test_to_slide_image():
-    s = pptx_tool._to_slide(
-        PptxSlideInput(type="image", title="T", path="/tmp/x.png", width_inches=2.0)
+def test_slides_to_html_table_and_image_title():
+    html = pptx_tool.slides_to_html(
+        [
+            PptxSlideInput(type="table", title="Tab", rows=[["a", "b"]], header=False),
+            PptxSlideInput(type="image", title="Img", path="/tmp/x.png"),
+        ]
     )
-    assert isinstance(s, ImageSlide)
-    assert s.title == "T"
-    assert s.image.path == "/tmp/x.png"
-    assert s.image.width_inches == 2.0
+    assert "<h2>Tab</h2>" in html
+    assert "<td>a</td>" in html
+    assert "<h2>Img</h2>" in html
 
 
-def test_to_slide_table():
-    s = pptx_tool._to_slide(
-        PptxSlideInput(type="table", rows=[["a", "b"]], header=False)
-    )
-    assert isinstance(s, TableSlide)
-    assert s.title is None
-    assert s.table.header is False
+def test_slides_to_html_drops_incomplete_slides():
+    """Slides incompletos são descartados; se nada sobrar → DomainError."""
+    from src.domain.shared.errors import DomainError
+
+    with pytest.raises(DomainError, match="slide"):
+        pptx_tool.slides_to_html(
+            [
+                PptxSlideInput(type="title", title=""),
+                PptxSlideInput(type="bullets", title="T"),
+                PptxSlideInput(type="image", path="/tmp/x.png"),  # sem título
+                PptxSlideInput(type="table", title="T"),  # sem rows
+                PptxSlideInput(type="unknown", title="Z"),
+            ]
+        )
 
 
-def test_to_slide_drops_incomplete_slides():
-    """Bloco sem campos obrigatórios é descartado (não derruba a geração)."""
-    assert pptx_tool._to_slide(PptxSlideInput(type="title", title="")) is None
-    assert pptx_tool._to_slide(PptxSlideInput(type="bullets", title="T")) is None
-    assert pptx_tool._to_slide(PptxSlideInput(type="image", title="T")) is None
-    assert pptx_tool._to_slide(PptxSlideInput(type="table", title="T")) is None
-    assert pptx_tool._to_slide(PptxSlideInput(type="unknown", title="T")) is None
-
-
-def test_to_pptx_spec_skips_invalid_slides():
-    """Slides inválidos são descartados; válidos viram o spec."""
-    payload = PptxDocumentInput(
-        slides=[
-            PptxSlideInput(type="title", title=""),  # inválido
+def test_slides_to_html_skips_invalid_keeps_valid():
+    html = pptx_tool.slides_to_html(
+        [
+            PptxSlideInput(type="title", title=""),
             PptxSlideInput(type="title", title="Capa"),
             PptxSlideInput(type="bullets", title="T", bullets=["x"]),
-            PptxSlideInput(type="unknown", title="Z"),  # inválido
-        ],
+            PptxSlideInput(type="unknown", title="Z"),
+        ]
     )
-    spec = pptx_tool._to_pptx_spec(payload)
-    assert len(spec.slides) == 2
+    assert html.count('class="slide"') == 2
 
 
 async def test_tool_returns_path_url_metadata(monkeypatch, tmp_path):
-    """A tool delega ao caso de uso e devolve o contrato esperado."""
-    captured: dict = {}
+    """A tool usa o pipeline HTML e devolve o contrato esperado."""
+    from unittest.mock import AsyncMock
 
-    def fake_builder(writer=None):
-        captured["writer"] = writer
-        return dep.CreateDocument(
-            writer=writer or PptxWriter(output_dir=tmp_path),
-        )
+    from src.infrastructure.documents.html_pptx_converter import HtmlPptxConverter
 
-    monkeypatch.setattr(dep, "build_create_document", fake_builder)
-    monkeypatch.setattr(pptx_tool, "build_create_document", fake_builder)
+    monkeypatch.setattr(pptx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(pptx_tool, "_document_url_prefix", lambda: "/api/files")
+    monkeypatch.setattr(pptx_tool, "record_ownership", AsyncMock())
+
+    render = pptx_tool._build_pptx_render()
+    assert isinstance(render._converters["pptx"], HtmlPptxConverter)
 
     result = await pptx_tool.create_pptx_presentation.coroutine(
         PptxDocumentInput(
@@ -296,26 +293,20 @@ async def test_tool_returns_path_url_metadata(monkeypatch, tmp_path):
     )
 
     assert set(result) == {"path", "url", "metadata"}
-    assert result["url"].startswith("/api/files/pptx/")
+    assert "/api/files/pptx/" in result["url"]
     assert result["url"].endswith(".pptx")
-    assert result["metadata"]["slide_count"] == 2
+    assert result["metadata"]["kind"] == "pptx"
     assert Path(result["path"]).is_file()
-    # Writer concreto injetado é PptxWriter.
-    assert isinstance(captured["writer"], PptxWriter)
 
 
 async def test_tool_returns_error_when_all_slides_invalid(monkeypatch, tmp_path):
     """REQ-005: nenhum slide válido → `error` descritivo, sem arquivo parcial."""
-    monkeypatch.setattr(
-        dep,
-        "build_create_document",
-        lambda writer=None: dep.CreateDocument(
-            writer=writer or PptxWriter(output_dir=tmp_path),
-        ),
-    )
-    monkeypatch.setattr(pptx_tool, "build_create_document", dep.build_create_document)
+    from unittest.mock import AsyncMock
 
-    # Todos os slides são inválidos (campos obrigatórios faltando) → spec vazio.
+    monkeypatch.setattr(pptx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(pptx_tool, "_document_url_prefix", lambda: "/api/files")
+    monkeypatch.setattr(pptx_tool, "record_ownership", AsyncMock())
+
     result = await pptx_tool.create_pptx_presentation.coroutine(
         PptxDocumentInput(
             slides=[

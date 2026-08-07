@@ -14,6 +14,8 @@ from pathlib import Path
 import pytest
 
 from src.domain.scheduling.scheduled_task import (
+    NOTIFY_SKIP_DELIVERY_USER_KEY_MISSING,
+    NOTIFY_SKIP_OUTPUT_MISSING,
     Schedule,
     ScheduledTask,
     TaskStatus,
@@ -127,6 +129,58 @@ def test_delivery_user_key_optional_and_effective_destination():
     assert with_delivery.effective_delivery_user_key == "whatsapp:5511"
     assert without_delivery.delivery_user_key is None
     assert without_delivery.effective_delivery_user_key == "web:1"
+
+
+# ---------------------------------------------------------------------------
+# fix-scheduled-whatsapp-delivery — notify_status / notify_error
+# ---------------------------------------------------------------------------
+
+
+def test_mark_notify_delivered_sets_status_without_touching_execution():
+    """REQ-002 observability: delivered; execução intacta."""
+    t = _new_task()
+    t.start()
+    t.succeed()
+    assert t.notify_status is None
+    assert t.notify_error is None
+
+    t.mark_notify_delivered()
+
+    assert t.notify_status == "delivered"
+    assert t.notify_error is None
+    assert t.status == TaskStatus.SUCCEEDED
+    assert t.error is None
+
+
+def test_mark_notify_skipped_with_canonical_reason():
+    """REQ-002: skipped + motivo canônico `output_missing`."""
+    t = _new_task()
+    t.start()
+    t.succeed()
+    t.mark_notify_skipped(NOTIFY_SKIP_OUTPUT_MISSING)
+
+    assert t.notify_status == "skipped"
+    assert t.notify_error == "output_missing"
+    assert t.status == TaskStatus.SUCCEEDED
+
+
+def test_mark_notify_failed_preserves_execution_status():
+    """REQ-002: failed + mensagem; status/error de execução intactos."""
+    t = _new_task()
+    t.start()
+    t.succeed()
+    t.mark_notify_failed("canal whatsapp não registrado")
+
+    assert t.notify_status == "failed"
+    assert t.notify_error == "canal whatsapp não registrado"
+    assert t.status == TaskStatus.SUCCEEDED
+    assert t.error is None
+
+
+def test_notify_skip_canonical_reasons_exported():
+    """Motivos canônicos estáveis para API/tests."""
+    assert NOTIFY_SKIP_OUTPUT_MISSING == "output_missing"
+    assert NOTIFY_SKIP_DELIVERY_USER_KEY_MISSING == "delivery_user_key_missing"
 
 
 def test_waiting_human_from_running_only():

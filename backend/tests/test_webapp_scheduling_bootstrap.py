@@ -63,6 +63,11 @@ def _patch_common_bootstrap(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -
     )
     monkeypatch.setattr(
         webapp,
+        "ensure_crm_schema",
+        lambda conninfo: calls.append(f"crm_schema:{conninfo}"),
+    )
+    monkeypatch.setattr(
+        webapp,
         "ensure_user_integrations_schema",
         lambda conninfo: calls.append(f"user_integrations_schema:{conninfo}"),
     )

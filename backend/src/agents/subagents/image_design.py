@@ -98,10 +98,10 @@ no caminho da referência (ele é do servidor, não do seu workspace):
 
 ## Output Esperado
 Após `create_image_from_prompt` retornar sucesso, mostre a imagem no markdown usando
-EXATAMENTE o campo `url` da resposta (ex.: `![descrição](/api/images/20260725121054.png)`).
-- NÃO invente hosts (`https://your-frontend.com/...`, localhost, CDN, etc.).
+EXATAMENTE o campo `url` da resposta (URL absoluta HTTP(S), ex.:
+`![descrição](http://localhost:8001/api/images/20260725121054.png)`).
+- NÃO invente nem reescreva a origem — use a `url` completa devolvida pela tool.
 - NÃO use o campo `path` (filesystem) no markdown — só `url`.
-- NÃO altere o path `/api/images/<arquivo>.png` retornado pela tool.
 """,
     tools=[
         create_image_from_prompt,

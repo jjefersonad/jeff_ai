@@ -6,6 +6,9 @@ máquina de estado, persiste o resultado e, em sucesso com output, notifica
 o destino efetivo (REQ-009/011 + scheduled-channel-routines — save-then-notify,
 best-effort).
 
+Após notify/skip/HITL, persiste `notify_status` / `notify_error` num segundo
+save (fix-scheduled-whatsapp-delivery) sem reverter o status de execução.
+
 HITL: `status=interrupted` → `WAITING_HUMAN` + deliver interruption no destino
 (não `FAILED`). Overlap `RUNNING`/`WAITING_HUMAN` → no-op (OQ-3).
 Cron: após `SUCCEEDED`/`FAILED`, `rearm_for_cron()` antes do save final
@@ -20,7 +23,12 @@ from src.application.ports.agent_runner import AgentRunnerPort, AgentRunResult
 from src.application.ports.chat_channel import ChatChannelPort
 from src.application.ports.scheduled_task_repository import ScheduledTaskRepositoryPort
 from src.application.use_cases.handle_chat_message import HandleChatMessage
-from src.domain.scheduling import ScheduledTask, TaskStatus
+from src.domain.scheduling import (
+    NOTIFY_SKIP_DELIVERY_USER_KEY_MISSING,
+    NOTIFY_SKIP_OUTPUT_MISSING,
+    ScheduledTask,
+    TaskStatus,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +135,8 @@ class RunScheduledTask:
                     "scheduled_notify_skipped task_id=%s reason=output_missing",
                     task_id,
                 )
+                task.mark_notify_skipped(NOTIFY_SKIP_OUTPUT_MISSING)
+                await self._repository.save(task)
             return
 
         assert result is not None and result.output is not None
@@ -136,6 +146,8 @@ class RunScheduledTask:
                 "scheduled_notify_skipped task_id=%s reason=delivery_user_key_missing",
                 task_id,
             )
+            task.mark_notify_skipped(NOTIFY_SKIP_DELIVERY_USER_KEY_MISSING)
+            await self._repository.save(task)
             return
 
         try:
@@ -152,6 +164,12 @@ class RunScheduledTask:
                 task_id,
                 exc,
             )
+            task.mark_notify_failed(str(exc))
+            await self._repository.save(task)
+            return
+
+        task.mark_notify_delivered()
+        await self._repository.save(task)
 
     async def _deliver_interruption(
         self,
@@ -166,6 +184,8 @@ class RunScheduledTask:
                 "scheduled_interrupt_skipped task_id=%s reason=delivery_user_key_missing",
                 task.id,
             )
+            task.mark_notify_skipped(NOTIFY_SKIP_DELIVERY_USER_KEY_MISSING)
+            await self._repository.save(task)
             return
         try:
             await self._notify_channel.deliver(
@@ -182,3 +202,9 @@ class RunScheduledTask:
                 task.id,
                 exc,
             )
+            task.mark_notify_failed(str(exc))
+            await self._repository.save(task)
+            return
+
+        task.mark_notify_delivered()
+        await self._repository.save(task)

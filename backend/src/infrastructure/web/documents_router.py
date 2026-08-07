@@ -86,6 +86,9 @@ async def serve_document(
     headers = {"X-Content-Type-Options": "nosniff", "Cache-Control": "max-age=3600"}
     if kind in _ATTACHMENT_KINDS:
         headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    elif kind == "html":
+        # Preview-first: iframe/browser must open HTML inline, not download.
+        headers["Content-Disposition"] = f'inline; filename="{filename}"'
 
     return FileResponse(
         path=str(resolved),

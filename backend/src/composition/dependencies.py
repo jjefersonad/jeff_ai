@@ -26,6 +26,18 @@ from src.application.use_cases import (
     ListScheduledTasks,
     PlanAndCreateImage,
 )
+from src.application.use_cases.complete_scheduled_task_after_resume import (
+    CompleteScheduledTaskAfterResume,
+)
+from src.application.use_cases.create_crm_contact import CreateCrmContact
+from src.application.use_cases.create_crm_deal import CreateCrmDeal
+from src.application.use_cases.create_crm_note import CreateCrmNote
+from src.application.use_cases.list_crm_contacts import ListCrmContacts
+from src.application.use_cases.list_crm_deals import ListCrmDeals
+from src.application.use_cases.move_crm_deal import MoveCrmDeal
+from src.application.use_cases.resolve_delivery_target import ResolveDeliveryTarget
+from src.application.use_cases.update_crm_contact import UpdateCrmContact
+from src.composition.public_url import image_url_prefix
 from src.infrastructure.channels.registry import ChannelRegistry
 from src.infrastructure.channels.telegram_channel import TelegramChannel
 from src.infrastructure.channels.web_channel import WebChannel
@@ -38,10 +50,7 @@ from src.infrastructure.filesystem.filesystem_sdd_artifact_store import (
     FilesystemSddArtifactStore,
 )
 from src.infrastructure.llm.gemini_image_adapter import GeminiImageAdapter
-from src.application.use_cases.complete_scheduled_task_after_resume import (
-    CompleteScheduledTaskAfterResume,
-)
-from src.application.use_cases.resolve_delivery_target import ResolveDeliveryTarget
+from src.infrastructure.persistence.crm_repository import PostgresCrmRepository
 from src.infrastructure.persistence.scheduled_task_repository import (
     PostgresScheduledTaskRepository,
 )
@@ -97,7 +106,10 @@ def build_plan_and_create_image() -> PlanAndCreateImage:
         UsageRepository(postgres_uri) if postgres_uri else None
     )
     return PlanAndCreateImage(
-        image_gen=GeminiImageAdapter(usage_repository=usage_repository),
+        image_gen=GeminiImageAdapter(
+            usage_repository=usage_repository,
+            url_prefix=image_url_prefix(),
+        ),
         styles=StoreStyleRepository(get_store()),
     )
 
@@ -123,11 +135,11 @@ def build_create_document(writer: DocumentWriterPort | None = None) -> CreateDoc
     """Monta CreateDocument com um writer de documento.
 
     Sem argumentos, usa o writer nativo de DOCX (python-docx) — preserva o
-    contrato legado da tool `create_docx_document`. Tools de outros formatos
-    (xlsx/pptx/pdf) passam seu próprio writer concreto (XlsxWriter/PptxWriter/
-    PdfWriter) por injeção. O destino/URL do writer vivem na infraestrutura;
-    este wiring é o único ponto que escolhe o adapter concreto. A aplicação
-    permanece agnóstica.
+    contrato legado de quem ainda monta `CreateDocument` direto. Tools
+    canônicas de documento (docx/xlsx/pptx/pdf) usam o pipeline HTML
+    (`RenderHtmlDocument` + converters); XlsxWriter/PptxWriter/DocxWriter
+    permanecem para paths legados. O destino/URL do writer vivem na
+    infraestrutura; a aplicação permanece agnóstica.
 
     A `url` retornada precisa ser absoluta para que o agente nunca precise
     inventar um domínio ao apresentá-la (ver `BASE_URL` em `.env.example`).
@@ -199,3 +211,43 @@ def build_cancel_scheduled_task() -> CancelScheduledTask:
 def build_complete_scheduled_task_after_resume() -> CompleteScheduledTaskAfterResume:
     """Monta o hook pós-resume HITL para tarefas `WAITING_HUMAN`."""
     return CompleteScheduledTaskAfterResume(repository=_scheduled_task_repository())
+
+
+def _crm_repository() -> PostgresCrmRepository:
+    """Adapter concreto do repositório CRM (mesmo do REST)."""
+    return PostgresCrmRepository(os.environ["POSTGRES_URI"])
+
+
+def build_list_crm_contacts() -> ListCrmContacts:
+    """Monta ListCrmContacts para as tools do agente."""
+    return ListCrmContacts(repository=_crm_repository())
+
+
+def build_create_crm_contact() -> CreateCrmContact:
+    """Monta CreateCrmContact para as tools do agente."""
+    return CreateCrmContact(repository=_crm_repository())
+
+
+def build_update_crm_contact() -> UpdateCrmContact:
+    """Monta UpdateCrmContact para as tools do agente."""
+    return UpdateCrmContact(repository=_crm_repository())
+
+
+def build_create_crm_note() -> CreateCrmNote:
+    """Monta CreateCrmNote para as tools do agente."""
+    return CreateCrmNote(repository=_crm_repository())
+
+
+def build_list_crm_deals() -> ListCrmDeals:
+    """Monta ListCrmDeals para as tools do agente."""
+    return ListCrmDeals(repository=_crm_repository())
+
+
+def build_create_crm_deal() -> CreateCrmDeal:
+    """Monta CreateCrmDeal para as tools do agente."""
+    return CreateCrmDeal(repository=_crm_repository())
+
+
+def build_move_crm_deal() -> MoveCrmDeal:
+    """Monta MoveCrmDeal para as tools do agente."""
+    return MoveCrmDeal(repository=_crm_repository())

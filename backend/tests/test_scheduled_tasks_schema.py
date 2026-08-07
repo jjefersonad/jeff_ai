@@ -66,6 +66,8 @@ def test_ensure_schema_creates_scheduled_tasks_table(monkeypatch: pytest.MonkeyP
         "last_error",
         "owner_user_key",
         "delivery_user_key",
+        "notify_status",
+        "notify_error",
     ],
 )
 def test_ensure_schema_table_has_required_column(
@@ -104,6 +106,20 @@ def test_ensure_schema_adds_delivery_user_key_for_existing_tables(
 
     executed_sql = "\n".join(fake_conn._cursor.executed)
     assert "ADD COLUMN IF NOT EXISTS delivery_user_key" in executed_sql
+
+
+def test_ensure_schema_adds_notify_status_and_error_for_existing_tables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fix-scheduled-whatsapp-delivery: ALTER ADD notify_status / notify_error."""
+    fake_conn = _FakeConnection()
+    monkeypatch.setattr(schema.psycopg, "connect", lambda *a, **kw: fake_conn)
+
+    schema.ensure_schema("postgresql://fake")
+
+    executed_sql = "\n".join(fake_conn._cursor.executed)
+    assert "ADD COLUMN IF NOT EXISTS notify_status" in executed_sql
+    assert "ADD COLUMN IF NOT EXISTS notify_error" in executed_sql
 
 
 def test_owner_user_key_column_is_not_null_without_fk(

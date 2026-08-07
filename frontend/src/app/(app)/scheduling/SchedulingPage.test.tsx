@@ -39,6 +39,8 @@ const taskFor = (id: string, owner: string, extras: Record<string, unknown> = {}
   started_at: null,
   finished_at: null,
   error: null,
+  notify_status: null,
+  notify_error: null,
   created_at: "2026-07-28T00:00:00Z",
   ...extras,
 });

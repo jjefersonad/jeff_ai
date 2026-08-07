@@ -225,13 +225,20 @@ def test_docx_spec_accepts_non_empty_blocks():
     assert spec.blocks == (Heading(text="Resumo", level=1),)
 
 
-# --- Tool create_docx_document (adapter fino) -----------------------------
+# --- Tool create_docx_document (HTML pipeline) -----------------------------
 
 
-def test_to_docx_spec_from_structured_input():
-    payload = DocxDocumentInput(
-        title="Doc",
-        blocks=[
+def _point_docx_tool(monkeypatch, tmp_path: Path) -> None:
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(docx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(docx_tool, "_document_url_prefix", lambda: "/api/files")
+    monkeypatch.setattr(docx_tool, "record_ownership", AsyncMock())
+
+
+def test_to_blocks_from_structured_input():
+    blocks = docx_tool._to_blocks(
+        [
             DocxBlockInput(type="heading", text="H1", level=2),
             DocxBlockInput(type="paragraph", text="p"),
             DocxBlockInput(type="list", items=["a", "b"], ordered=True),
@@ -242,44 +249,36 @@ def test_to_docx_spec_from_structured_input():
             ),
             DocxBlockInput(type="image", path="/tmp/x.png", width_inches=1.5),
             DocxBlockInput(type="unknown", text="ignored"),
-        ],
+        ]
     )
-    spec = docx_tool._to_docx_spec(payload)
-    assert spec.title == "Doc"
-    assert len(spec.blocks) == 5  # type "unknown" é ignorado (contrato tolerante)
-    assert isinstance(spec.blocks[0], Heading)
-    assert spec.blocks[0].level == 2
-    assert isinstance(spec.blocks[2], ListBlock)
-    assert spec.blocks[2].ordered is True
-    assert isinstance(spec.blocks[3], Table)
-    assert spec.blocks[3].header is False
-    assert isinstance(spec.blocks[4], ImageRef)
-    assert spec.blocks[4].width_inches == 1.5
+    assert len(blocks) == 5  # type "unknown" é ignorado (contrato tolerante)
+    assert isinstance(blocks[0], Heading)
+    assert blocks[0].level == 2
+    assert isinstance(blocks[2], ListBlock)
+    assert blocks[2].ordered is True
+    assert isinstance(blocks[3], Table)
+    assert blocks[3].header is False
+    assert isinstance(blocks[4], ImageRef)
+    assert blocks[4].width_inches == 1.5
 
 
 def test_to_blocks_drops_incomplete_blocks():
     """Bloco sem campos obrigatórios é descartado (não derruba a geração)."""
-    payload = DocxDocumentInput(
-        title="Doc",
-        blocks=[
+    blocks = docx_tool._to_blocks(
+        [
             DocxBlockInput(type="heading", text=""),  # sem text → drop
             DocxBlockInput(type="list", items=[]),  # sem items → drop
             DocxBlockInput(type="image", path=""),  # sem path → drop
             DocxBlockInput(type="paragraph", text="ok"),
-        ],
+        ]
     )
-    spec = docx_tool._to_docx_spec(payload)
-    assert len(spec.blocks) == 1
-    assert isinstance(spec.blocks[0], Paragraph)
+    assert len(blocks) == 1
+    assert isinstance(blocks[0], Paragraph)
 
 
 async def test_tool_returns_path_url_metadata(monkeypatch, tmp_path):
-    """A tool delega ao caso de uso e devolve o contrato esperado."""
-    monkeypatch.setattr(
-        docx_tool,
-        "build_create_document",
-        lambda: dep.CreateDocument(writer=DocxWriter(output_dir=tmp_path)),
-    )
+    """A tool usa o pipeline HTML e devolve o contrato esperado."""
+    _point_docx_tool(monkeypatch, tmp_path)
 
     result = await docx_tool.create_docx_document.coroutine(
         DocxDocumentInput(
@@ -289,22 +288,16 @@ async def test_tool_returns_path_url_metadata(monkeypatch, tmp_path):
     )
 
     assert set(result) == {"path", "url", "metadata"}
-    assert result["url"].startswith("/api/files/docx/")
+    assert "/api/files/docx/" in result["url"]
     assert result["url"].endswith(".docx")
+    assert result["metadata"]["kind"] == "docx"
     assert result["metadata"]["title"] == "Hello"
-    assert result["metadata"]["block_count"] == 1
     assert Path(result["path"]).is_file()
 
 
 async def test_tool_returns_error_on_invalid_input(monkeypatch, tmp_path):
     """REQ-005: entrada inválida vira `error` descritivo, sem arquivo parcial."""
-    # Substitui o writer por um writer real apontando para tmp_path
-    # para que possamos afirmar que o diretório fica vazio.
-    monkeypatch.setattr(
-        docx_tool,
-        "build_create_document",
-        lambda: dep.CreateDocument(writer=DocxWriter(output_dir=tmp_path)),
-    )
+    _point_docx_tool(monkeypatch, tmp_path)
 
     # Título vazio é barrado pelo domínio antes de qualquer I/O.
     result = await docx_tool.create_docx_document.coroutine(
@@ -320,10 +313,6 @@ async def test_tool_returns_error_on_invalid_input(monkeypatch, tmp_path):
 
 
 # --- REQ-005 / root-env-config REQ-003: URL absoluta via BASE_URL -----------
-#
-# Exercitam `build_create_document()` de verdade (sem override de writer) para
-# validar a leitura de `BASE_URL` — só redirecionam o diretório físico
-# de saída (via `output_target._DEFAULT_BASE`) para não poluir `outputs/`.
 
 
 @pytest.fixture
@@ -381,12 +370,14 @@ def test_suite_does_not_monkeypatch_document_base_url():
     assert offenders == [], f"{legacy} ainda usado ativamente em: {offenders}"
 
 
-async def test_tool_returns_absolute_url_end_to_end(
-    monkeypatch, _redirect_default_output_dir
-):
+async def test_tool_returns_absolute_url_end_to_end(monkeypatch, tmp_path):
     """A tool `create_docx_document`, de ponta a ponta, devolve `url` absoluta."""
+    from unittest.mock import AsyncMock
+
     monkeypatch.delenv("BASE_URL", raising=False)
     monkeypatch.delenv("FRONTEND_ORIGIN", raising=False)
+    monkeypatch.setattr(docx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(docx_tool, "record_ownership", AsyncMock())
 
     result = await docx_tool.create_docx_document.coroutine(
         DocxDocumentInput(
@@ -401,8 +392,10 @@ async def test_tool_returns_absolute_url_end_to_end(
 # --- REQ-006: string JSON serializada vs. string simples vs. JSON malformado
 
 
-def test_to_docx_spec_from_json_serialized_string():
+def test_parse_payload_from_json_serialized_string():
     """String que é, na verdade, um DocxDocumentInput serializado em JSON."""
+    from src.application.documents.resolve_html_document_input import parse_tool_payload
+
     payload = json.dumps(
         {
             "title": "Relatório",
@@ -413,36 +406,27 @@ def test_to_docx_spec_from_json_serialized_string():
         }
     )
 
-    spec = docx_tool._to_docx_spec(payload)
+    parsed = parse_tool_payload(payload)
 
-    assert spec.title == "Relatório"
-    assert len(spec.blocks) == 2
-    assert isinstance(spec.blocks[0], Heading)
-    assert isinstance(spec.blocks[1], Paragraph)
+    assert parsed.title == "Relatório"
+    assert len(parsed.blocks or []) == 2
+    assert parsed.blocks[0].type == "heading"
+    assert parsed.blocks[1].type == "paragraph"
 
 
-def test_to_docx_spec_rejects_plain_non_json_string():
-    """String comum (não JSON) é rejeitada — não produz mais documento só com título.
+def test_parse_payload_rejects_plain_non_json_string():
+    """String comum (não JSON) é rejeitada — não produz mais documento só com título."""
+    from src.application.documents.resolve_html_document_input import parse_tool_payload
 
-    REQ-006 (MODIFIED): o "modo legado" que gerava um `.docx` apenas com
-    título a partir de uma string simples era a causa raiz de um bug onde
-    documentos gerados sempre ficavam sem conteúdo de corpo. Esse atalho foi
-    eliminado; a tolerância a JSON serializado como string (testada abaixo)
-    continua funcionando sem alteração.
-    """
     with pytest.raises(DomainError, match="estruturado"):
-        docx_tool._to_docx_spec("Relatório trimestral")
+        parse_tool_payload("Relatório trimestral")
 
 
 async def test_tool_plain_non_json_string_returns_error_without_partial_file(
     monkeypatch, tmp_path
 ):
     """REQ-006 (MODIFIED): string simples não-JSON vira `{"error": ...}` via a tool."""
-    monkeypatch.setattr(
-        docx_tool,
-        "build_create_document",
-        lambda: dep.CreateDocument(writer=DocxWriter(output_dir=tmp_path)),
-    )
+    _point_docx_tool(monkeypatch, tmp_path)
 
     result = await docx_tool.create_docx_document.coroutine("Relatório trimestral")
 
@@ -450,27 +434,31 @@ async def test_tool_plain_non_json_string_returns_error_without_partial_file(
     assert list(tmp_path.iterdir()) == []
 
 
-def test_to_docx_spec_rejects_malformed_json_string():
+def test_parse_payload_rejects_malformed_json_string():
     """`{`-prefixado mas JSON inválido levanta DomainError (não vira título)."""
+    from src.application.documents.resolve_html_document_input import parse_tool_payload
+
     with pytest.raises(DomainError, match="JSON"):
-        docx_tool._to_docx_spec("{not valid json")
+        parse_tool_payload("{not valid json")
 
 
-def test_to_docx_spec_rejects_json_shaped_but_schema_invalid():
-    """`{`-prefixado, JSON válido, mas sem os campos de DocxDocumentInput."""
-    with pytest.raises(DomainError, match="JSON"):
-        docx_tool._to_docx_spec(json.dumps({"blocks": []}))
+def test_parse_payload_rejects_json_shaped_but_schema_invalid():
+    """`{`-prefixado, JSON válido, mas sem modo de entrada válido."""
+    from src.application.documents.resolve_html_document_input import (
+        parse_tool_payload,
+        resolve_html_document_input,
+    )
+
+    parsed = parse_tool_payload(json.dumps({"blocks": []}))
+    with pytest.raises(DomainError, match="vazia|blocks|obrigatório"):
+        resolve_html_document_input(parsed)
 
 
 async def test_tool_json_string_payload_produces_blocks_not_raw_json_title(
     monkeypatch, tmp_path
 ):
     """Regressão do bug: JSON serializado não pode virar título literal."""
-    monkeypatch.setattr(
-        docx_tool,
-        "build_create_document",
-        lambda: dep.CreateDocument(writer=DocxWriter(output_dir=tmp_path)),
-    )
+    _point_docx_tool(monkeypatch, tmp_path)
     payload = json.dumps(
         {"title": "Doc via JSON", "blocks": [{"type": "paragraph", "text": "corpo"}]}
     )
@@ -478,10 +466,11 @@ async def test_tool_json_string_payload_produces_blocks_not_raw_json_title(
     result = await docx_tool.create_docx_document.coroutine(payload)
 
     assert result["metadata"]["title"] == "Doc via JSON"
-    assert result["metadata"]["block_count"] == 1
+    assert result["metadata"]["kind"] == "docx"
     doc = DocxReader(result["path"])
-    titles = [p.text for p in doc.paragraphs if p.style.name == "Title"]
-    assert titles == ["Doc via JSON"]
+    body = "\n".join(p.text for p in doc.paragraphs)
+    assert "Doc via JSON" in body
+    assert "corpo" in body
     # O JSON bruto não aparece em nenhum lugar do documento.
     assert not any("{" in p.text for p in doc.paragraphs)
 
@@ -489,11 +478,7 @@ async def test_tool_json_string_payload_produces_blocks_not_raw_json_title(
 async def test_tool_malformed_json_string_returns_error_without_partial_file(
     monkeypatch, tmp_path
 ):
-    monkeypatch.setattr(
-        docx_tool,
-        "build_create_document",
-        lambda: dep.CreateDocument(writer=DocxWriter(output_dir=tmp_path)),
-    )
+    _point_docx_tool(monkeypatch, tmp_path)
 
     result = await docx_tool.create_docx_document.coroutine("{not valid json")
 

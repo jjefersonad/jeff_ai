@@ -14,6 +14,10 @@ também o canal Telegram (allowlist single-user, sem linha em `users`).
 `delivery_user_key` (scheduled-channel-routines): destino de notify/HITL
 opcional; `NULL` = fallback para `owner_user_key`. Status `waiting_human`
 cobre pausa HITL em runs agendados (Decision 4).
+
+`notify_status` / `notify_error` (fix-scheduled-whatsapp-delivery): desfecho
+do notify pós-execução (`delivered`/`skipped`/`failed`); `NULL` = ainda não
+houve fase de notify. Independente de `last_error` (falha do agente).
 """
 from __future__ import annotations
 
@@ -40,6 +44,8 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     finished_at TIMESTAMPTZ,
     last_run_at TIMESTAMPTZ,
     last_error TEXT,
+    notify_status TEXT,
+    notify_error TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )
 """
@@ -52,6 +58,16 @@ CREATE INDEX IF NOT EXISTS scheduled_tasks_owner_user_key_idx
 _ADD_DELIVERY_USER_KEY_COLUMN = """
 ALTER TABLE scheduled_tasks
     ADD COLUMN IF NOT EXISTS delivery_user_key TEXT
+"""
+
+_ADD_NOTIFY_STATUS_COLUMN = """
+ALTER TABLE scheduled_tasks
+    ADD COLUMN IF NOT EXISTS notify_status TEXT
+"""
+
+_ADD_NOTIFY_ERROR_COLUMN = """
+ALTER TABLE scheduled_tasks
+    ADD COLUMN IF NOT EXISTS notify_error TEXT
 """
 
 # Bancos criados antes de scheduled-channel-routines têm CHECK de status sem
@@ -94,5 +110,7 @@ def ensure_schema(conninfo: str) -> None:
         with conn.cursor() as cur:
             cur.execute(_CREATE_SCHEDULED_TASKS_TABLE)
             cur.execute(_ADD_DELIVERY_USER_KEY_COLUMN)
+            cur.execute(_ADD_NOTIFY_STATUS_COLUMN)
+            cur.execute(_ADD_NOTIFY_ERROR_COLUMN)
             cur.execute(_MIGRATE_STATUS_CHECK_WAITING_HUMAN)
             cur.execute(_CREATE_OWNER_USER_KEY_INDEX)

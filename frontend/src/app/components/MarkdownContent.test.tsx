@@ -28,6 +28,23 @@ vi.mock("./AuthenticatedImage", () => ({
   }) => mockAuthenticatedImage(props),
 }));
 
+const mockDocumentHtmlPreview = vi.fn(
+  (_props: { url: string; title?: string }) => (
+    <div data-testid="document-html-preview-mock" />
+  )
+);
+
+vi.mock("./DocumentHtmlPreview", async () => {
+  const actual = await vi.importActual<typeof import("./DocumentHtmlPreview")>(
+    "./DocumentHtmlPreview"
+  );
+  return {
+    ...actual,
+    DocumentHtmlPreview: (props: { url: string; title?: string }) =>
+      mockDocumentHtmlPreview(props),
+  };
+});
+
 const MERMAID_CONTENT = "```mermaid\nflowchart TD\n  A --> B\n```";
 
 describe("MarkdownContent - mermaid delegation (melhorar-visualizacao-diagramas delta)", () => {
@@ -59,6 +76,44 @@ describe("MarkdownContent - mermaid delegation (melhorar-visualizacao-diagramas 
 
     expect(mockMermaidDiagram).not.toHaveBeenCalled();
     expect(container.textContent).toContain("print");
+  });
+});
+
+describe("MarkdownContent - HTML document preview", () => {
+  beforeEach(() => {
+    mockDocumentHtmlPreview.mockClear();
+  });
+
+  it("routes /api/files/html/*.html markdown links to DocumentHtmlPreview", () => {
+    render(
+      <MarkdownContent
+        content={"[Proposta](/api/files/html/20260807120000.html)"}
+      />
+    );
+
+    expect(mockDocumentHtmlPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "/api/files/html/20260807120000.html",
+        title: "Proposta",
+      })
+    );
+    expect(screen.getByTestId("document-html-preview-mock")).toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("routes markdown images pointing at html files to DocumentHtmlPreview (not img)", () => {
+    render(
+      <MarkdownContent
+        content={"![Diagrama](/api/files/html/diagram.html)"}
+      />
+    );
+
+    expect(mockDocumentHtmlPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: "/api/files/html/diagram.html",
+      })
+    );
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 });
 

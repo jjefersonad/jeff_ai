@@ -94,8 +94,7 @@ def test_html_kind_dir_resolves(html_dir: Path) -> None:
 def test_serve_html_file_inline(
     html_dir: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Um ficheiro .html válido é servido com text/html, sem attachment, com
-    X-Content-Type-Options: nosniff."""
+    """REQ-ADD-010 / serving-inline unit-1: HTML autorizado → text/html + inline."""
 
     target = html_dir / "test-diagram.html"
     target.write_text("<!DOCTYPE html><html><body>diagram</body></html>", encoding="utf-8")
@@ -111,15 +110,34 @@ def test_serve_html_file_inline(
     assert response.headers["content-type"].startswith("text/html")
     # Defesa em profundidade: nosniff impede MIME-sniffing do browser.
     assert response.headers["x-content-type-options"] == "nosniff"
-    # HTML NÃO deve ter Content-Disposition: attachment (deve abrir inline).
-    assert "attachment" not in response.headers.get("content-disposition", "")
+    disposition = response.headers.get("content-disposition", "")
+    assert disposition.startswith("inline")
+    assert "attachment" not in disposition
+    assert 'filename="test-diagram.html"' in disposition
     assert b"diagram" in response.content
+
+
+def test_serve_html_unauthorized_returns_opaque_404(
+    html_dir: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REQ-ADD-010 / serving-inline unit-2: HTML sem ownership → 404 opaco."""
+    target = html_dir / "secret.html"
+    target.write_text("<html><body>secret-preview</body></html>", encoding="utf-8")
+    monkeypatch.setattr(
+        documents_router, "is_authorized", AsyncMock(return_value=False)
+    )
+
+    response = client.get("/api/files/html/secret.html")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Document not found"
+    assert b"secret-preview" not in response.content
 
 
 def test_serve_docx_still_has_attachment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Office docs continuam a usar Content-Disposition: attachment (não-regressão).
+    """REQ-004 / serving-inline unit-2: Office docs continuam attachment.
 
     Usa um app standalone idêntico ao fixture `app` para evitar importar
     `webapp` (que tem collection error pré-existente em `mcp_admin_api.py:266`).

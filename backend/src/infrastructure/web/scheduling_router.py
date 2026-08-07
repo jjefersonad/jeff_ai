@@ -106,6 +106,8 @@ class ScheduledTaskResponse(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     error: str | None
+    notify_status: str | None
+    notify_error: str | None
     created_at: datetime
 
 
@@ -131,6 +133,8 @@ def _to_response(task: ScheduledTask) -> ScheduledTaskResponse:
         started_at=task.started_at,
         finished_at=task.finished_at,
         error=task.error,
+        notify_status=task.notify_status,
+        notify_error=task.notify_error,
         created_at=task.created_at,
     )
 

@@ -4,9 +4,9 @@
  * Primary navigation sidebar for the authenticated layout.
  *
  * Renders **Chat**, **Images**, **MCP Servers**, **Integrações**,
- * **Agendamentos**, and (for `role=admin` only) **Consumo** and
+ * **Agendamentos**, **CRM**, and (for `role=admin` only) **Consumo** and
  * **Usuários** — linking to `/`, `/images`, `/mcp-servers`, `/integrations`,
- * `/scheduling`, `/usage`, and `/admin/users`.
+ * `/scheduling`, `/crm`, `/usage`, and `/admin/users`.
  * **Chat** exists because the top-bar "JEFF AI" link back to `/` isn't an
  * obvious return path once a user has navigated into a full sidebar
  * destination. The active entry (matching the current pathname) is
@@ -34,105 +34,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
-import {
-  BarChart3,
-  CalendarClock,
-  ImageIcon,
-  MessageCircle,
-  MessagesSquare,
-  Plug,
-  Users,
-  XIcon,
-} from "lucide-react";
+import { XIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useNavSidebar } from "@/app/components/NavSidebarProvider";
-import { useAuth, type AuthRole } from "@/providers/AuthProvider";
-
-interface NavEntry {
-  label: string;
-  href: string;
-  description: string;
-  // Loose icon type: every lucide icon accepts `aria-hidden` (string | boolean
-  // in JSX) and `className` (string). Using `React.ComponentType<any>` here
-  // is the same approach the rest of the codebase uses for icons — see
-  // e.g. `frontend/src/app/page.tsx` passing icon components as children.
-  icon: React.ComponentType<Record<string, unknown>>;
-  match: (pathname: string) => boolean;
-  /** When set, the entry is only shown for that role (admin-only surfaces). */
-  requireRole?: AuthRole;
-}
-
-const ENTRIES: readonly NavEntry[] = [
-  {
-    label: "Chat",
-    href: "/",
-    description: "Back to the conversation",
-    icon: MessagesSquare,
-    // Only the exact root route — nested routes belong to other entries.
-    match: (p) => p === "/",
-  },
-  {
-    label: "Images",
-    href: "/images",
-    description: "Browse generated and reference images",
-    icon: ImageIcon,
-    // Match `/images` and any nested route (`/images/abc`).
-    match: (p) => p === "/images" || p.startsWith("/images/"),
-  },
-  {
-    label: "MCP Servers",
-    href: "/mcp-servers",
-    description: "Manage Model Context Protocol servers",
-    icon: Plug,
-    match: (p) => p === "/mcp-servers" || p.startsWith("/mcp-servers/"),
-  },
-  {
-    label: "Consumo",
-    href: "/usage",
-    description: "Token usage by period (admin)",
-    icon: BarChart3,
-    match: (p) => p === "/usage" || p.startsWith("/usage/"),
-    requireRole: "admin",
-  },
-  {
-    // user-management-ui REQ-005 (frontend-5): only the admin role sees
-    // the "Usuários" link in the sidebar. The page itself (also added
-    // by user-management-frontend-1) does the same `useAuth().role`
-    // redirect as a defence-in-depth, but hiding the link here keeps
-    // the nav free of items that would always 403 for non-admins.
-    label: "Usuários",
-    href: "/admin/users",
-    description: "Gerenciar usuários (admin)",
-    icon: Users,
-    match: (p) => p === "/admin/users" || p.startsWith("/admin/users/"),
-    requireRole: "admin",
-  },
-  {
-    label: "Integrações",
-    href: "/integrations",
-    description: "Link your account to other channels (WhatsApp)",
-    icon: MessageCircle,
-    match: (p) => p === "/integrations" || p.startsWith("/integrations/"),
-  },
-  {
-    label: "Agendamentos",
-    href: "/scheduling",
-    description: "Manage scheduled tasks",
-    icon: CalendarClock,
-    match: (p) => p === "/scheduling" || p.startsWith("/scheduling/"),
-  },
-];
-
-/** Visible nav entries for the current auth role (REQ-006 admin-only usage). */
-export function getVisibleNavEntries(
-  role: AuthRole | null | undefined
-): NavEntry[] {
-  return ENTRIES.filter(
-    (entry) => !entry.requireRole || entry.requireRole === role
-  );
-}
+import {
+  getVisibleNavEntries,
+  NAV_ENTRIES,
+  type NavEntry,
+} from "@/app/components/navEntries";
+import { useAuth } from "@/providers/AuthProvider";
 
 const MOBILE_BREAKPOINT = 768; // px — see D4 of the design.
 
@@ -190,7 +102,7 @@ export function NavSidebar() {
   // `require_admin` server-side.
   const entries = useMemo(() => {
     if (isRehydrating && !user) {
-      return [...ENTRIES];
+      return [...NAV_ENTRIES];
     }
     return getVisibleNavEntries(user?.role);
   }, [user, isRehydrating]);

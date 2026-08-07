@@ -239,6 +239,20 @@ async def test_create_with_delivery_channel_returns_canonical_destination(monkey
     assert sched.scheduled == [result["id"]]
 
 
+def test_task_to_dict_includes_notify_status_and_error() -> None:
+    """api-1 unit-2: dict canônico da tool inclui notify_status / notify_error."""
+    task = _make_task(id_="t-notify", owner="web:user-a")
+    task.start()
+    task.succeed()
+    task.mark_notify_failed("canal whatsapp não registrado")
+
+    result = st._task_to_dict(task)
+
+    assert result["notify_status"] == "failed"
+    assert result["notify_error"] == "canal whatsapp não registrado"
+    assert result["status"] == "succeeded"
+
+
 async def test_create_delivery_channel_without_link_returns_error(monkeypatch):
     """Erro de vínculo → {"error": ...} sem criar tarefa."""
     from src.domain.shared.errors import DomainError

@@ -57,6 +57,11 @@ class ToolScope(str, Enum):
 
 
 ScheduleKind = Literal["once", "cron"]
+NotifyStatus = Literal["delivered", "skipped", "failed"]
+
+# Motivos canônicos de skip de notify (REQ-002 scheduled-job-observability).
+NOTIFY_SKIP_OUTPUT_MISSING = "output_missing"
+NOTIFY_SKIP_DELIVERY_USER_KEY_MISSING = "delivery_user_key_missing"
 
 
 _CRON_FIELDS = 5  # APScheduler/cron padrão: minuto hora dia mês dia-da-semana
@@ -190,6 +195,8 @@ class ScheduledTask:
     started_at: datetime | None = None
     finished_at: datetime | None = None
     error: str | None = None
+    notify_status: NotifyStatus | None = None
+    notify_error: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property
@@ -313,6 +320,25 @@ class ScheduledTask:
         self.status = TaskStatus.SCHEDULED
         self.finished_at = None
         self.error = None
+
+    # ------------------------------------------------------------------
+    # Desfecho de notify (não altera máquina de estado de execução)
+    # ------------------------------------------------------------------
+
+    def mark_notify_delivered(self) -> None:
+        """Registra notify entregue; não altera `status`/`error` de execução."""
+        self.notify_status = "delivered"
+        self.notify_error = None
+
+    def mark_notify_skipped(self, reason: str) -> None:
+        """Registra notify skipped com motivo canônico (ex. `output_missing`)."""
+        self.notify_status = "skipped"
+        self.notify_error = str(reason)
+
+    def mark_notify_failed(self, error: str) -> None:
+        """Registra falha de notify; não altera `status`/`error` de execução."""
+        self.notify_status = "failed"
+        self.notify_error = str(error)
 
     @property
     def is_terminal(self) -> bool:

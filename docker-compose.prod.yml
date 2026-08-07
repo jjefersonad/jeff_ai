@@ -60,6 +60,9 @@ services:
       # externos (Evolution API).
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
       BASE_URL: ${BASE_URL:-}
+      # Origem pública do API para URLs absolutas de imagens geradas
+      # (`public_api_origin` / return-public-image-url).
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?defina NEXT_PUBLIC_API_URL em .env}
       EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution_api:8080}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY em .env}
       EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-jeff-ai-central}
@@ -124,6 +127,7 @@ services:
       TELEGRAM_LEGACY_OWNER_USER_ID: ${TELEGRAM_LEGACY_OWNER_USER_ID:-}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
       BASE_URL: ${BASE_URL:-}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?defina NEXT_PUBLIC_API_URL em .env}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?defina OPENROUTER_API_KEY em .env}

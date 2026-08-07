@@ -135,10 +135,13 @@ async def test_fire_job_invokes_jeff_cli_as_subprocess_module(monkeypatch):
 
     async def fake_create_subprocess_exec(*args, **kwargs):
         captured["args"] = args
+        captured["kwargs"] = kwargs
 
         class _FakeProc:
-            async def wait(self) -> int:
-                return 0
+            returncode = 0
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                return b"", b""
 
         return _FakeProc()
 
@@ -154,6 +157,73 @@ async def test_fire_job_invokes_jeff_cli_as_subprocess_module(monkeypatch):
         "src.infrastructure.cli.jeff_cli",
         "--job-id",
         "t-fire-1",
+    )
+    assert captured["kwargs"].get("stdout") is asyncio.subprocess.PIPE
+    assert captured["kwargs"].get("stderr") is asyncio.subprocess.PIPE
+
+
+async def test_fire_job_nonzero_returncode_raises_and_logs(monkeypatch, caplog):
+    """fire-1 unit-1: returncode != 0 → log + RuntimeError (não quiet success)."""
+    import logging
+
+    from src.infrastructure.scheduling import apscheduler_task_scheduler as mod
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        class _FakeProc:
+            returncode = 1
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                return b"stdout-out", b"stderr-out"
+
+        return _FakeProc()
+
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", fake_create_subprocess_exec
+    )
+
+    with caplog.at_level(logging.ERROR):
+        try:
+            await mod._fire_job("t-fail-1")
+            raised = False
+        except RuntimeError as exc:
+            raised = True
+            assert "t-fail-1" in str(exc)
+            assert "1" in str(exc)
+
+    assert raised
+    assert any(
+        "t-fail-1" in r.message and "returncode" in r.message
+        for r in caplog.records
+        if r.levelno == logging.ERROR
+    )
+
+
+async def test_fire_job_zero_returncode_succeeds_quietly(monkeypatch, caplog):
+    """fire-1 unit-2: returncode == 0 → sem raise e sem log de erro de subprocesso."""
+    import logging
+
+    from src.infrastructure.scheduling import apscheduler_task_scheduler as mod
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        class _FakeProc:
+            returncode = 0
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                return b"ok", b""
+
+        return _FakeProc()
+
+    monkeypatch.setattr(
+        asyncio, "create_subprocess_exec", fake_create_subprocess_exec
+    )
+
+    with caplog.at_level(logging.ERROR):
+        await mod._fire_job("t-ok-1")
+
+    assert not any(
+        "returncode" in r.message or "jeff_cli" in r.message
+        for r in caplog.records
+        if r.levelno >= logging.ERROR
     )
 
 
@@ -203,8 +273,10 @@ async def test_schedule_fires_subprocess_after_one_second(monkeypatch):
         calls.append(args)
 
         class _FakeProc:
-            async def wait(self) -> int:
-                return 0
+            returncode = 0
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                return b"", b""
 
         return _FakeProc()
 

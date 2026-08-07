@@ -7,10 +7,14 @@ verdade"). Ao disparar, invoca `jeff_cli.py` como subprocesso
 (`python -m src.infrastructure.cli.jeff_cli --job-id <id>`) — nunca via
 `import`, para não acoplar o tick à disponibilidade do processo da API (ver
 design, "Invocação direta do grafo").
+
+`_fire_job` captura stdout/stderr, checa `returncode` e levanta em falha
+(fix-scheduled-whatsapp-delivery — evita “executed successfully” cego).
 """
 from __future__ import annotations
 
 import asyncio
+import logging
 import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -23,6 +27,10 @@ from apscheduler.triggers.date import DateTrigger
 from src.agents.unified.datetime_utils import _resolve_tz
 from src.application.ports.task_scheduler import TaskSchedulerPort
 from src.domain.scheduling import Schedule, ScheduledTask
+
+logger = logging.getLogger(__name__)
+
+_OUTPUT_LOG_LIMIT = 4096
 
 
 def _scheduler_timezone() -> ZoneInfo:
@@ -109,9 +117,39 @@ def _build_trigger(schedule: Schedule) -> DateTrigger | CronTrigger:
     )
 
 
+def _truncate_output(raw: bytes | None, *, limit: int = _OUTPUT_LOG_LIMIT) -> str:
+    """Decodifica e trunca a cauda da saída do subprocesso para log."""
+    text = (raw or b"").decode("utf-8", errors="replace")
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
+
+
 async def _fire_job(task_id: str) -> None:
-    """Dispara `jeff_cli.py` como subprocesso para `task_id` e aguarda o exit."""
+    """Dispara `jeff_cli.py` como subprocesso; falha alto se exit != 0."""
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-m", "src.infrastructure.cli.jeff_cli", "--job-id", task_id
+        sys.executable,
+        "-m",
+        "src.infrastructure.cli.jeff_cli",
+        "--job-id",
+        task_id,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
-    await proc.wait()
+    stdout_b, stderr_b = await proc.communicate()
+    returncode = proc.returncode if proc.returncode is not None else -1
+    if returncode == 0:
+        return
+
+    stdout = _truncate_output(stdout_b)
+    stderr = _truncate_output(stderr_b)
+    logger.error(
+        "jeff_cli_failed task_id=%s returncode=%s stdout=%r stderr=%r",
+        task_id,
+        returncode,
+        stdout,
+        stderr,
+    )
+    raise RuntimeError(
+        f"jeff_cli failed for task_id={task_id!r} with returncode={returncode}"
+    )

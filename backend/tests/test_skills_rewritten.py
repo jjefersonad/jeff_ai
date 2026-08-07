@@ -37,16 +37,18 @@ def _read(path: Path) -> str:
         ("docx", "create_docx_document", "python-docx"),
         ("xlsx", "create_xlsx_spreadsheet", "openpyxl"),
         ("pptx", "create_pptx_presentation", "python-pptx"),
-        ("pdf", "create_pdf_document", "fpdf2"),
+        ("pdf", "create_pdf_document", "WeasyPrint"),
     ],
 )
 def test_skill_points_to_native_tool(skill: str, tool_name: str, lib: str):
-    """A SKILL.md da skill instrui usar a tool nativa e cita a lib."""
+    """A SKILL.md da skill instrui usar a tool nativa e cita a lib/motor."""
     content = _read(SKILLS_DIR / skill / "SKILL.md")
     assert tool_name in content, (
         f"{skill}/SKILL.md não menciona a tool {tool_name!r}"
     )
-    assert lib in content, f"{skill}/SKILL.md não menciona a lib {lib!r}"
+    assert lib.lower() in content.lower(), (
+        f"{skill}/SKILL.md não menciona a lib/motor {lib!r}"
+    )
 
 
 @pytest.mark.parametrize("skill", ["docx", "xlsx", "pptx", "pdf"])
@@ -130,7 +132,7 @@ def test_claude_md_documents_office_tools():
 
 
 def test_claude_md_documents_native_libs():
-    """`CLAUDE.md` cita as bibliotecas nativas (python-docx, openpyxl, python-pptx, fpdf2)."""
+    """`CLAUDE.md` cita o pipeline HTML / WeasyPrint para PDF (não fpdf2)."""
     content = _read(CLAUDE_MD)
-    for lib in ("python-docx", "openpyxl", "python-pptx", "fpdf2"):
-        assert lib in content, f"CLAUDE.md não menciona a lib {lib!r}."
+    assert "WeasyPrint" in content
+    assert "fpdf2" not in content

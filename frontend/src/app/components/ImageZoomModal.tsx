@@ -9,17 +9,14 @@
  * focus trapping, and scroll lock — no custom handlers required.
  *
  * The modal renders an `<img>` (not a `<picture>`/`<video>`/iframe) — that's
- * enough for the three in-app image sources today:
+ * enough for the image sources that open this lightbox today:
  *
  * - `/api/images/<ts>.png` (Gemini-generated PNGs via `AuthenticatedImage`,
  *   which provides a blob URL)
- * - `/api/files/<kind>/<file>.html` (architecture-diagram skill, an HTML
- *   page with inline SVG; treated as an image because the user perceives
- *   it as one)
  * - data: URLs (Mermaid SVG, encoded as `data:image/svg+xml;base64,...`)
  *
- * For other image sources (PDF, video, audio) this would need to dispatch
- * to a different viewer — deferred until a real use case surfaces.
+ * HTML documents under `/api/files/html/*.html` use `DocumentHtmlPreview`
+ * (iframe) in MarkdownContent — they must not open this image lightbox.
  */
 
 import React from "react";

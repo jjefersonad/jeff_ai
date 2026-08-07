@@ -8,7 +8,27 @@ from __future__ import annotations
 
 from typing import List
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+def _coerce_table_header_list(
+    header: object,
+    rows: List[List[str]] | None,
+) -> tuple[bool, List[List[str]] | None]:
+    """Normaliza `header` quando o LLM envia nomes de colunas como lista.
+
+    Contrato canônico: `header` é bool e os nomes vão em `rows[0]`.
+    Tolerância: `header=["Col A", "Col B"]` → prepend em `rows` + `header=True`.
+    """
+    if not isinstance(header, list):
+        if header is None:
+            return True, rows
+        return bool(header), rows
+    header_row = [str(cell) for cell in header]
+    normalized_rows = [list(row) for row in (rows or [])]
+    if not normalized_rows or [str(c) for c in normalized_rows[0]] != header_row:
+        normalized_rows = [header_row, *normalized_rows]
+    return True, normalized_rows
 
 
 class DocxHeadingInput(BaseModel):
@@ -45,10 +65,22 @@ class DocxTableInput(BaseModel):
     rows: List[List[str]] = Field(
         description="Linhas da tabela. Todas devem ter o mesmo número de colunas.",
     )
-    header: bool = Field(
+    header: bool | List[str] = Field(
         default=True,
-        description="Se True, a primeira linha é formatada em negrito.",
+        description=(
+            "Preferência: bool — se True, a primeira linha de `rows` fica em "
+            "negrito. Também aceita lista de nomes de colunas (será prependida "
+            "em `rows` e tratada como header=True)."
+        ),
     )
+
+    @model_validator(mode="after")
+    def _normalize_header(self) -> DocxTableInput:
+        flag, rows = _coerce_table_header_list(self.header, self.rows)
+        self.header = flag
+        if rows is not None:
+            self.rows = rows
+        return self
 
 
 class DocxImageInput(BaseModel):
@@ -85,11 +117,19 @@ class DocxBlockInput(BaseModel):
     )
     rows: List[List[str]] | None = Field(
         default=None,
-        description="Linhas da tabela. Usado quando type='table'.",
+        description=(
+            "Linhas da tabela (type='table'). Inclua os nomes das colunas "
+            "como primeira linha quando houver cabeçalho."
+        ),
     )
-    header: bool | None = Field(
+    header: bool | List[str] | None = Field(
         default=None,
-        description="Primeira linha em negrito? Usado quando type='table'.",
+        description=(
+            "type='table': preferência bool (True = 1ª linha de `rows` em "
+            "negrito). Também aceita lista de nomes de colunas — nesse caso "
+            "os nomes são prependidos em `rows` e header vira True. "
+            "NÃO use lista se os nomes já estão em rows[0]."
+        ),
     )
     path: str | None = Field(
         default=None,
@@ -109,6 +149,15 @@ class DocxBlockInput(BaseModel):
             }
         }
     )
+
+    @model_validator(mode="after")
+    def _normalize_table_header(self) -> DocxBlockInput:
+        if self.type != "table":
+            return self
+        flag, rows = _coerce_table_header_list(self.header, self.rows)
+        self.header = flag
+        self.rows = rows
+        return self
 
 
 class DocxDocumentInput(BaseModel):

@@ -424,3 +424,19 @@ def test_get_delivery_channels_includes_web_and_caller_whatsapp_only(
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["channels"] == ["web", "whatsapp"]
+
+
+def test_to_response_includes_notify_status_and_error() -> None:
+    """api-1 unit-1: serializador HTTP expõe notify_status / notify_error."""
+    from src.infrastructure.web.scheduling_router import _to_response
+
+    task = _make_task(id_="t-notify", owner="web:user-a")
+    task.start()
+    task.succeed()
+    task.mark_notify_skipped("output_missing")
+
+    body = _to_response(task).model_dump()
+
+    assert body["notify_status"] == "skipped"
+    assert body["notify_error"] == "output_missing"
+    assert body["status"] == "succeeded"

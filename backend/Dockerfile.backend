@@ -3,9 +3,20 @@ FROM langchain/langgraph-api:3.11
 COPY backend/ /deps/backend/
 WORKDIR /deps/backend
 
-# Node/npx para instalação de skills externas (npx skills add) pelo assistant
+# Node/npx para instalação de skills externas (npx skills add) pelo assistant.
+# WeasyPrint (HTML→PDF, change html-document-tools) precisa de cairo/pango/
+# gdk-pixbuf + fontes no sistema — pip sozinho não basta.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends nodejs npm \
+    && apt-get install -y --no-install-recommends \
+        nodejs \
+        npm \
+        libcairo2 \
+        libpango-1.0-0 \
+        libpangocairo-1.0-0 \
+        libgdk-pixbuf-2.0-0 \
+        libffi-dev \
+        shared-mime-info \
+        fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Install project dependencies (versões fixadas para build reproduzível).
@@ -30,15 +41,14 @@ RUN pip install --no-cache-dir \
     "openpyxl==3.1.5" \
     "python-pptx==1.0.2" \
     "pypdf==6.14.2" \
-    # Necessário para o `langgraph_api` carregar o grafo `unified` sem
-    # `No module named 'fpdf'`. O grafo importa `create_pdf_document` →
-    # `PdfWriter` com `from fpdf import FPDF` (pacote PyPI `fpdf2`) no
-    # caminho de carga. `fpdf2` está em `pyproject.toml`, mas esta imagem
-    # instala deps via lista explícita — sem esta linha o
-    # `collect_graphs_from_env` falha no boot em produção (change
-    # `fix-prod-fpdf2-docker-dep`, 2026-08-07). Versão alinhada ao `.venv`
-    # local e a `fpdf2>=2.8.0` do pyproject.
-    "fpdf2==2.8.7" \
+    # HTML→PDF canônico (change html-document-tools). Faixa alinhada a
+    # `weasyprint>=62.0,<67` do pyproject; pin reproduzível no image build.
+    "weasyprint==66.0" \
+    # Templates Jinja2 (`FilesystemHtmlTemplateRepository`) — importados no
+    # boot do grafo `unified` via tools de documento. Sem pin explícito o
+    # container falha com `No module named 'jinja2'` (pyproject tem a dep,
+    # mas esta imagem instala via lista explícita).
+    "jinja2==3.1.6" \
     "langchain-text-splitters==1.1.2" \
     "langchain-mcp-adapters==0.3.0" \
     # `mcp` (transitiva de langchain-mcp-adapters) precisa ser fixada

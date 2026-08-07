@@ -26,6 +26,7 @@ services:
       JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
       BASE_URL: ${BASE_URL:-}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8001}
       EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution_api:8080}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY em .env}
       EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-jeff-ai-central}
@@ -135,6 +136,9 @@ services:
     environment:
       POSTGRES_URI: ${POSTGRES_URI:-postgresql://${POSTGRES_USER:-jeff_ia}:${POSTGRES_PASSWORD:-jeff_ia}@jeff_ia_postgres:5432/${POSTGRES_DB:-jeff_ia}}
       REDIS_URI: ${REDIS_URI:-redis://:${REDIS_PASSWORD}@jeff_ia_redis:6379/0}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8001}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
+      BASE_URL: ${BASE_URL:-}
     depends_on:
       jeff_ia_postgres:
         condition: service_healthy

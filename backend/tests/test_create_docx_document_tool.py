@@ -1,6 +1,7 @@
 """Testes de ownership em `create_docx_document` (media-ownership-authorization REQ-001)."""
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -10,11 +11,11 @@ from src.domain.documents.document_result import DocumentResult
 from src.models.docx_document import DocxBlockInput, DocxDocumentInput
 
 
-class _FakeUseCase:
+class _FakeRender:
     def __init__(self, result: DocumentResult) -> None:
         self._result = result
 
-    async def execute(self, spec: object) -> DocumentResult:
+    async def execute(self, **_kwargs: object) -> DocumentResult:
         return self._result
 
 
@@ -27,13 +28,14 @@ def _payload() -> DocxDocumentInput:
 
 async def test_records_ownership_with_kind_and_basename(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     result = DocumentResult(
-        path="/app/backend/outputs/documents/docx/20260708120000.docx",
+        path=str(tmp_path / "20260708120000.docx"),
         url="/api/files/docx/20260708120000.docx",
         metadata={"kind": "docx"},
     )
-    monkeypatch.setattr(docx_tool, "build_create_document", lambda: _FakeUseCase(result))
+    monkeypatch.setattr(docx_tool, "_build_docx_render", lambda: _FakeRender(result))
     record = AsyncMock()
     monkeypatch.setattr(docx_tool, "record_ownership", record)
 
@@ -43,14 +45,17 @@ async def test_records_ownership_with_kind_and_basename(
     record.assert_awaited_once_with(kind="docx", filename="20260708120000.docx")
 
 
-async def test_ownership_failure_is_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_ownership_failure_is_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     """media-1 REQ-001: falha ao registrar ownership impede sucesso (fail-closed)."""
     result = DocumentResult(
-        path="/app/backend/outputs/documents/docx/20260708120000.docx",
+        path=str(tmp_path / "20260708120000.docx"),
         url="/api/files/docx/20260708120000.docx",
         metadata={"kind": "docx"},
     )
-    monkeypatch.setattr(docx_tool, "build_create_document", lambda: _FakeUseCase(result))
+    monkeypatch.setattr(docx_tool, "_build_docx_render", lambda: _FakeRender(result))
     monkeypatch.setattr(
         docx_tool, "record_ownership", AsyncMock(side_effect=RuntimeError("db down"))
     )

@@ -1,73 +1,138 @@
-"""Tool `create_xlsx_spreadsheet` — adapter fino sobre o caso de uso `CreateDocument`.
+"""Tool `create_xlsx_spreadsheet` — HTML/CSS → XLSX via pipeline.
 
-Borda deepagents: traduz a entrada (objeto `XlsxDocumentInput`) para o domínio
-`XlsxSpec`, delega ao caso de uso via composição de dependências e devolve o
-mesmo contrato `{path, url, metadata}` da tool de imagem.
-
-NÃO contém regra de negócio — montagem/validação de abas e gravação em disco
-vivem no domínio + writer de infraestrutura.
+Pipeline canônico: resolve entrada unificada (ou sheets legados → HTML) →
+`RenderHtmlDocument` + `HtmlXlsxConverter` → ownership fail-closed →
+`{path, url, metadata}`.
 """
 from __future__ import annotations
 
-from langchain_core.tools import tool
+import html as html_lib
+import os
+from pathlib import Path
+from typing import Union
 
-from src.composition.dependencies import build_create_document
-from src.domain.documents import Sheet, XlsxSpec
+from langchain_core.tools import tool
+from pydantic import ValidationError
+
+from src.application.documents.resolve_html_document_input import (
+    parse_tool_payload,
+    resolve_html_document_input,
+)
+from src.application.use_cases.render_html_document import RenderHtmlDocument
 from src.domain.shared.errors import DomainError
-from src.infrastructure.documents import XlsxWriter
+from src.infrastructure.documents.html_template_repository import (
+    FilesystemHtmlTemplateRepository,
+)
+from src.infrastructure.documents.html_xlsx_converter import HtmlXlsxConverter
+from src.infrastructure.ownership.store import record_ownership
+from src.models.html_document_input import HtmlDocumentInput
 from src.models.xlsx_document import XlsxDocumentInput, XlsxSheetInput
 
+# backend/outputs/documents
+_DEFAULT_DOCUMENTS = Path(__file__).resolve().parents[2] / "outputs" / "documents"
 
-def _to_sheet(raw: XlsxSheetInput) -> Sheet:
-    """Constrói um `Sheet` a partir de um `XlsxSheetInput` (camada fina)."""
-    return Sheet(
-        name=raw.name,
-        rows=tuple(tuple(row) for row in raw.rows),
-        header=raw.header,
-        column_widths=tuple(raw.column_widths) if raw.column_widths is not None else None,
-        number_formats=tuple(
-            (nf.column, nf.format) for nf in raw.number_formats
-        ),
+
+def _documents_base_dir() -> Path:
+    env = os.environ.get("DOCUMENTS_DIR")
+    if env:
+        return Path(env)
+    return _DEFAULT_DOCUMENTS
+
+
+def _document_url_prefix() -> str:
+    base_url = (
+        os.getenv("BASE_URL")
+        or os.getenv("FRONTEND_ORIGIN")
+        or "http://localhost:3000"
+    ).rstrip("/")
+    return f"{base_url}/api/files"
+
+
+def _build_xlsx_render() -> RenderHtmlDocument:
+    return RenderHtmlDocument(
+        converters={"xlsx": HtmlXlsxConverter()},
+        output_base_dir=_documents_base_dir(),
+        url_prefix=_document_url_prefix(),
     )
 
 
-def _to_xlsx_spec(payload: XlsxDocumentInput) -> XlsxSpec:
-    """Constrói o `XlsxSpec` a partir do `XlsxDocumentInput` (camada fina)."""
-    return XlsxSpec(sheets=tuple(_to_sheet(s) for s in payload.sheets))
+def _escape(text: object) -> str:
+    return html_lib.escape("" if text is None else str(text), quote=True)
+
+
+def sheets_to_html(sheets: list[XlsxSheetInput]) -> str:
+    """Converte abas legadas em HTML com `<table data-sheet-name=...>`."""
+    if not sheets:
+        raise DomainError("sheets é obrigatório e não pode ficar vazio.")
+    parts: list[str] = ['<!DOCTYPE html><html><body>']
+    for sheet in sheets:
+        name = (sheet.name or "").strip()
+        if not name:
+            raise DomainError("Nome de aba é obrigatório e não pode ser vazio.")
+        rows = sheet.rows or []
+        if not rows:
+            raise DomainError(
+                f"Aba {name!r} sem linhas utilizáveis para XLSX."
+            )
+        parts.append(f'<table data-sheet-name="{_escape(name)}">')
+        for row in rows:
+            parts.append("<tr>")
+            for cell in row:
+                parts.append(f"<td>{_escape(cell)}</td>")
+            parts.append("</tr>")
+        parts.append("</table>")
+    parts.append("</body></html>")
+    return "".join(parts)
 
 
 @tool
-async def create_xlsx_spreadsheet(payload: XlsxDocumentInput) -> dict:
-    """Cria uma planilha (.xlsx) a partir de uma lista de abas estruturadas.
+async def create_xlsx_spreadsheet(
+    payload: Union[str, XlsxDocumentInput, HtmlDocumentInput],
+) -> dict:
+    """Cria uma planilha (.xlsx) a partir de HTML/CSS, template ou abas.
 
-    Gera o `.xlsx` usando apenas a biblioteca Python `openpyxl` (sem `soffice`,
-    `pandoc` ou Node) e devolve um dicionário com o mesmo contrato de
-    `create_image_from_prompt`:
-    - path: caminho local no filesystem (uso interno — NÃO mostrar ao usuário).
-    - url: URL servida para download — SEMPRE usar em markdown para exibir o link.
-    - metadata: metadados da planilha gerada (kind, nomes das abas).
+    Pipeline canônico: HTML com `<table>` → `HtmlXlsxConverter` (openpyxl).
+    Aceita `HtmlDocumentInput` (`html` | `template`+`data` | `title`+`blocks`)
+    ou o legado `XlsxDocumentInput` (sheets). Devolve `{path, url, metadata}`
+    com `metadata.kind=\"xlsx\"` — use `url` no markdown.
 
-    Cada aba aceita:
-    - name (obrigatório) e rows (lista de listas; células str/int/float/None).
-    - header (bool, default False): primeira linha em negrito.
-    - column_widths (lista de floats, opcional): largura por coluna.
-    - number_formats (lista de {column, format}, opcional): formato numérico por coluna.
-    - Strings iniciadas por `=` são preservadas como fórmulas pelo openpyxl.
-
-    Em caso de entrada inválida, retorna um dicionário com a chave `error`
-    descrevendo o problema e nenhum arquivo parcial é deixado em disco.
-
-    Example return:
-    {"path": "/app/backend/outputs/documents/xlsx/20260708120000123456.xlsx",
-     "url": "/api/files/xlsx/20260708120000123456.xlsx",
-     "metadata": {"kind": "xlsx", "sheets": ["Vendas", "Resumo"]}}
+    HTML sem tabela utilizável → `{error}` sem arquivo parcial. Falha de
+    ownership é fail-closed.
     """
     try:
-        spec = _to_xlsx_spec(payload)
-    except DomainError as exc:
+        if isinstance(payload, XlsxDocumentInput):
+            resolved_html = sheets_to_html(payload.sheets)
+            title = payload.sheets[0].name if payload.sheets else None
+            css = None
+        else:
+            parsed = parse_tool_payload(payload)
+            templates = FilesystemHtmlTemplateRepository()
+            resolved = resolve_html_document_input(
+                parsed,
+                render_template=templates.render,
+            )
+            resolved_html = resolved.html
+            css = resolved.css
+            title = resolved.title
+    except (DomainError, ValidationError) as exc:
         return {"error": f"Entrada inválida: {exc}"}
 
-    use_case = build_create_document(writer=XlsxWriter())
-    result = await use_case.execute(spec)
+    use_case = _build_xlsx_render()
+    try:
+        result = await use_case.execute(
+            html=resolved_html,
+            css=css,
+            kind="xlsx",
+            title=title,
+        )
+    except DomainError as exc:
+        return {"error": f"Entrada inválida: {exc}"}
+    except Exception as exc:  # noqa: BLE001 — falha do converter
+        return {"error": f"Falha ao gerar XLSX: {exc}"}
+
+    try:
+        await record_ownership(kind="xlsx", filename=Path(result.path).name)
+    except Exception as exc:  # noqa: BLE001 — fail-closed
+        return {"error": f"Falha ao registrar ownership: {exc}"}
 
     return {"path": result.path, "url": result.url, "metadata": result.metadata}
