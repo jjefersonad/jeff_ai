@@ -7,6 +7,8 @@ coberta por `test_attachment_store.py`; este arquivo cobre só autenticação.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import io
 
 import pytest
@@ -20,7 +22,14 @@ from src.infrastructure.auth.sessions import Session
 from src.infrastructure.auth.users import User
 
 _VALID_SESSION = Session(token="tok-valid", user_id="user-1", expires_at=None)  # type: ignore[arg-type]
-_VALID_USER = User(id="user-1", username="alice", password_hash="h", role="user", is_active=True)
+_VALID_USER = User(
+    id="user-1",
+    username="alice",
+    password_hash="h",
+    role="user",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
 
 _PDF_BYTES = b"%PDF-1.4 fake pdf bytes"
 

@@ -8,6 +8,7 @@ depender de `webapp.app` (que tem collection errors pré-existentes em
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -20,7 +21,14 @@ from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.users import User
 
 
-_FAKE_ADMIN = User(id="u-1", username="admin", password_hash="x", role="admin", is_active=True)
+_FAKE_ADMIN = User(
+    id="u-1",
+    username="admin",
+    password_hash="x",
+    role="admin",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
 
 
 @pytest.fixture

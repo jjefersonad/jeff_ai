@@ -98,12 +98,10 @@ async def test_handler_sends_error_message_when_runner_returns_error_status(
         f"{bot.sent!r}"
     )
     sent_chat_id, sent_text = bot.sent[0]
-    # O handler normaliza `chat_id` para `str` (linha 188 do authorization.py
-    # — `chat_id = str(update.effective_chat.id)`); o teste usa a mesma
-    # string para evitar acoplamento ao tipo original do `effective_chat.id`
-    # (int em testes, string quando vier de `str` no `Update` real).
-    assert sent_chat_id == "999", (
-        f"mensagem de erro deve ir para o chat de origem ('999'); recebi {sent_chat_id!r}"
+    # `TelegramChannel` parseia `user_key="telegram:999"` → `chat_id=999` (int)
+    # para a Bot API (REQ-012 scenario "Resolve chat_id a partir de user_key").
+    assert sent_chat_id == 999, (
+        f"mensagem de erro deve ir para o chat de origem (999); recebi {sent_chat_id!r}"
     )
     # A mensagem precisa ser legível ao usuário e indicar falha — sem
     # acoplar a redação literal do texto (a unidade abaixo
@@ -153,7 +151,7 @@ async def test_handler_sends_error_message_when_runner_raises_exception(
         f"esperava 1 mensagem de erro enviada mesmo com exceção; recebi {len(bot.sent)}"
     )
     sent_chat_id, _sent_text = bot.sent[0]
-    assert sent_chat_id == "999"
+    assert sent_chat_id == 999
 
 
 @pytest.mark.asyncio

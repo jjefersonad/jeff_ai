@@ -3,9 +3,15 @@
 Responsabilidades cobertas por esta task (`whatsapp-evolution-channel-task-channel-1`):
 
 - `bootstrap_config()` — lê e valida `EVOLUTION_API_URL`/`EVOLUTION_API_KEY`/
-  `EVOLUTION_INSTANCE_NAME` do ambiente, falhando rápido (com mensagem citando
-  todas as env vars faltantes de uma vez) antes de qualquer chamada HTTP.
-  Mesmo contrato fail-fast de `telegram_gateway.bootstrap_config`.
+  `EVOLUTION_INSTANCE_NAME`/`EVOLUTION_WEBHOOK_TOKEN` do ambiente, falhando
+  rápido (com mensagem citando todas as env vars faltantes de uma vez) antes
+  de qualquer chamada HTTP. Mesmo contrato fail-fast de
+  `telegram_gateway.bootstrap_config`. `EVOLUTION_WEBHOOK_TOKEN` foi
+  adicionada depois (achado de teste manual, não fazia parte do escopo
+  original desta task): sem ela, o webhook não tinha nenhum mecanismo de
+  autenticação além do `require_auth` global — inviável para um chamador
+  servidor-a-servidor sem cookie de sessão — nem validava a origem da
+  chamada, permitindo forjar `phone_number` de qualquer usuário já vinculado.
 - `parse_inbound_message()` — extrai `{phone_number, text}` de um payload de
   webhook `messages.upsert` da Evolution API.
 
@@ -59,6 +65,7 @@ class EvolutionConfig:
     api_url: str
     api_key: str
     instance_name: str
+    webhook_token: str
 
 
 @dataclass(frozen=True)
@@ -85,14 +92,19 @@ def bootstrap_config() -> EvolutionConfig:
     vez, para o operador corrigir numa única passada.
     """
     missing = _collect_missing_envs(
-        ("EVOLUTION_API_URL", "EVOLUTION_API_KEY", "EVOLUTION_INSTANCE_NAME")
+        (
+            "EVOLUTION_API_URL",
+            "EVOLUTION_API_KEY",
+            "EVOLUTION_INSTANCE_NAME",
+            "EVOLUTION_WEBHOOK_TOKEN",
+        )
     )
 
     if missing:
         env_list = ", ".join(missing)
         raise EvolutionConfigError(
             f"Configuração da Evolution API incompleta — faltando: {env_list}. "
-            "Defina-as em backend/.env (ou no ambiente do container) antes de "
+            "Defina-as em ./.env (ou no ambiente do container) antes de "
             "iniciar o webhook do WhatsApp."
         )
 
@@ -100,6 +112,7 @@ def bootstrap_config() -> EvolutionConfig:
         api_url=os.environ["EVOLUTION_API_URL"],
         api_key=os.environ["EVOLUTION_API_KEY"],
         instance_name=os.environ["EVOLUTION_INSTANCE_NAME"],
+        webhook_token=os.environ["EVOLUTION_WEBHOOK_TOKEN"],
     )
 
 
@@ -170,6 +183,123 @@ async def send_text(instance: str, phone_number: str, text: str) -> None:
         response = await client.post(
             url,
             json={"number": phone_number, "text": text},
+            headers={"apikey": config.api_key},
+        )
+        response.raise_for_status()
+
+
+async def send_presence(
+    instance: str,
+    phone_number: str,
+    *,
+    presence: str = "composing",
+    delay_ms: int = 5000,
+) -> None:
+    """Sinaliza presença (`composing`/`recording`) via `POST /chat/sendPresence/{instance}`.
+
+    Contrato Evolution API v2.1.1 (typing-indicator-chat-channels Decision 6).
+    Propaga `httpx.HTTPError` — o adapter engole, como em `send_text`.
+    """
+    config = bootstrap_config()
+    url = f"{config.api_url}/chat/sendPresence/{instance}"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            url,
+            json={
+                "number": phone_number,
+                "options": {
+                    "delay": delay_ms,
+                    "presence": presence,
+                    "number": phone_number,
+                },
+            },
+            headers={"apikey": config.api_key},
+        )
+        response.raise_for_status()
+
+
+async def send_media(
+    instance: str,
+    phone_number: str,
+    media_url: str,
+    *,
+    mediatype: str,
+    filename: str | None = None,
+    caption: str | None = None,
+) -> None:
+    """Envia mídia (imagem ou documento) a `phone_number` via `POST /message/sendMedia/{instance}`.
+
+    Endpoint unificado — `mediatype` ("image"/"document") é o discriminador.
+    Confirmado ao vivo contra a instância real pinada (v2.1.1,
+    `fix-whatsapp-document-delivery-task-adapters-1`): `/message/sendImage` e
+    `/message/sendDocument` (endpoints per-tipo que este client chamava/teria
+    chamado) não existem nesta instância (404) — `sendMedia` é o único real.
+    `media_url` SHALL ser sempre uma URL: `media` em base64 retorna 500
+    (`Cannot read properties of undefined (reading 'name')`) para qualquer
+    `mediatype` nesta instância — verificado com um envio real. Mesmo contrato
+    de `send_text`: chama `bootstrap_config()` a cada envio e propaga
+    `httpx.HTTPError` em vez de engolir — o chamador (`WhatsAppChannel`)
+    decide como tratar a falha via `classify_send_error`.
+    """
+    config = bootstrap_config()
+    url = f"{config.api_url}/message/sendMedia/{instance}"
+    payload: dict[str, Any] = {
+        "number": phone_number,
+        "mediatype": mediatype,
+        "media": media_url,
+    }
+    if filename is not None:
+        payload["fileName"] = filename
+    if caption is not None:
+        payload["caption"] = caption
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            url,
+            json=payload,
+            headers={"apikey": config.api_key},
+        )
+        response.raise_for_status()
+
+
+async def send_buttons(
+    instance: str,
+    phone_number: str,
+    *,
+    title: str,
+    description: str,
+    buttons: list[dict[str, str]],
+    footer: str | None = None,
+) -> None:
+    """Envia uma mensagem interativa com botões via `POST /message/sendButtons/{instance}`.
+
+    Cada item de `buttons` segue `{"type": "reply", "id": ..., "text": ...}`
+    — payload confirmado empiricamente contra a instância real pinada
+    (`evoapicloud/evolution-api:v2.1.1`) no spike da task
+    `whatsapp-tool-approval-task-spike-1` (2026-08-05): a API rejeita o
+    formato `buttonId`/`buttonText.displayText` documentado publicamente
+    para versões mais recentes, exigindo `type`/`id`/`text` diretos. Mesmo
+    contrato de `send_text`/`send_media`: chama `bootstrap_config()` a cada
+    envio e propaga `httpx.HTTPError` — o chamador (`WhatsAppChannel`)
+    decide como tratar a falha (fallback para `send_text`, ver
+    `whatsapp-tool-approval-design` Decision 1).
+    """
+    config = bootstrap_config()
+    url = f"{config.api_url}/message/sendButtons/{instance}"
+    payload: dict[str, Any] = {
+        "number": phone_number,
+        "title": title,
+        "description": description,
+        "buttons": buttons,
+    }
+    if footer is not None:
+        payload["footer"] = footer
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            url,
+            json=payload,
             headers={"apikey": config.api_key},
         )
         response.raise_for_status()

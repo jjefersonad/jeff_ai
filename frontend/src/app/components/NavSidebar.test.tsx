@@ -37,6 +37,7 @@ describe("NavSidebar — usage entry gated by admin role (reporting-2 unit-1 / R
   it("WHEN role=user THEN the usage nav entry does not appear", () => {
     mockUseAuth.mockReturnValue({
       isAuthenticated: true,
+      isRehydrating: false,
       user: { username: "alice", role: "user" },
     });
 
@@ -50,6 +51,7 @@ describe("NavSidebar — usage entry gated by admin role (reporting-2 unit-1 / R
   it("WHEN role=admin THEN the usage nav entry appears", () => {
     mockUseAuth.mockReturnValue({
       isAuthenticated: true,
+      isRehydrating: false,
       user: { username: "admin", role: "admin" },
     });
 
@@ -62,5 +64,75 @@ describe("NavSidebar — usage entry gated by admin role (reporting-2 unit-1 / R
       "href",
       "/usage"
     );
+  });
+});
+
+describe("NavSidebar — Usuários entry gated by admin role (user-management-frontend-5 unit-1 / REQ-005)", () => {
+  beforeEach(() => {
+    mockUseAuth.mockReset();
+    // Desktop layout (inline panel) — matchMedia returns false for mobile.
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+  });
+
+  it("unit-1: WHEN role=admin THEN the Usuários nav entry appears with href=/admin/users", () => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      isRehydrating: false,
+      user: { username: "admin", role: "admin" },
+    });
+
+    render(<NavSidebar />);
+
+    // The "Usuários" link MUST be in the document and point to /admin/users
+    // — REQ-005 scenario "Admin vê o item de menu". The link's accessible
+    // name matches the entry label; we use a scoped regex so we don't
+    // false-match a future "Gerenciar usuários" entry.
+    const link = screen.getByRole("link", { name: /usuários/i });
+    expect(link).toBeInTheDocument();
+    expect(link).toHaveAttribute("href", "/admin/users");
+  });
+});
+
+describe("NavSidebar — Usuários entry hidden for non-admin (user-management-frontend-5 unit-2 / REQ-005)", () => {
+  beforeEach(() => {
+    mockUseAuth.mockReset();
+    // Desktop layout (inline panel) — matchMedia returns false for mobile.
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+  });
+
+  it("unit-2: WHEN role=user THEN the Usuários nav entry does NOT appear", () => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      isRehydrating: false,
+      user: { username: "alice", role: "user" },
+    });
+
+    render(<NavSidebar />);
+
+    // REQ-005 scenario "Usuário comum não vê o item de menu": the link
+    // MUST be absent from the DOM (not merely hidden / aria-hidden).
+    expect(
+      screen.queryByRole("link", { name: /usuários/i })
+    ).not.toBeInTheDocument();
   });
 });

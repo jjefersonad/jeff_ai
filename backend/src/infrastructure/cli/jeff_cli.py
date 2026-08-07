@@ -6,11 +6,11 @@ src.infrastructure.cli.jeff_cli --job-id <id>`: roda uma única
 design da mudança `agendamento-jeff-cli`, "Invocação direta do grafo").
 
 Humble Object: este módulo só faz parsing de argv, monta o composition root
-(`PostgresScheduledTaskRepository` + `LangGraphDirectAgentRunner` →
-`RunScheduledTask`) e traduz o status final da tarefa em exit code
-(jeff-cli REQ-004: 0 em sucesso, != 0 em falha/timeout/tarefa que não
-terminou SUCCEEDED). Toda decisão de negócio (máquina de estado, timeout)
-fica em `RunScheduledTask`.
+(`ChannelRegistry` ← só `ScheduledChannel`; `PostgresScheduledTaskRepository`
++ `LangGraphDirectAgentRunner` → `RunScheduledTask`) e traduz o status final
+da tarefa em exit code (jeff-cli REQ-004: 0 em sucesso, != 0 em
+falha/timeout/tarefa que não terminou SUCCEEDED). Toda decisão de negócio
+(máquina de estado, timeout) fica em `RunScheduledTask`.
 
 `_build_components` isola os imports pesados (psycopg, LangGraph) — assim
 um `--job-id` ausente falha imediatamente via `argparse`, sem pagar o custo
@@ -27,6 +27,8 @@ from src.application.ports.scheduled_task_repository import ScheduledTaskReposit
 from src.application.use_cases.run_scheduled_task import RunScheduledTask
 from src.composition.env import load_env
 from src.domain.scheduling import TaskStatus
+from src.infrastructure.channels.registry import ChannelRegistry
+from src.infrastructure.channels.scheduled_channel import ScheduledChannel
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _register_channels() -> None:
+    """Popula o `ChannelRegistry` deste subprocesso (REQ-002 chat-channel-port).
+
+    Registra apenas `ScheduledChannel` — web/telegram/whatsapp ficam de fora
+    deste processo (composition-2 / design Step 4).
+    """
+    ChannelRegistry.register(ScheduledChannel())
+
+
 def _build_components(
     postgres_uri: str,
 ) -> tuple[ScheduledTaskRepositoryPort, RunScheduledTask]:
@@ -46,16 +57,23 @@ def _build_components(
     Importação lazy dos adapters concretos (psycopg, LangGraph) — só paga o
     custo depois que `POSTGRES_URI` já foi validado.
     """
+    from src.application.use_cases.handle_chat_message import HandleChatMessage
     from src.infrastructure.agent_runtime.langgraph_direct_runner import (
         LangGraphDirectAgentRunner,
     )
+    from src.infrastructure.channels.scheduled_channel import ScheduledChannel
     from src.infrastructure.persistence.scheduled_task_repository import (
         PostgresScheduledTaskRepository,
     )
 
     repository = PostgresScheduledTaskRepository(postgres_uri)
     agent_runner = LangGraphDirectAgentRunner(postgres_uri=postgres_uri)
-    return repository, RunScheduledTask(repository=repository, agent_runner=agent_runner)
+    return repository, RunScheduledTask(
+        repository=repository,
+        agent_runner=agent_runner,
+        handle_chat_message=HandleChatMessage(agent_runner=agent_runner),
+        notify_channel=ScheduledChannel(),
+    )
 
 
 async def _run(
@@ -86,9 +104,10 @@ def main(argv: list[str] | None = None) -> int:
 
     postgres_uri = os.environ.get("POSTGRES_URI")
     if not postgres_uri:
-        logger.error("POSTGRES_URI não está configurado (esperada em backend/.env).")
+        logger.error("POSTGRES_URI não está configurado (esperada em ./.env).")
         return 1
 
+    _register_channels()
     components = _build_components(postgres_uri)
     return asyncio.run(_run(job_id=args.job_id, components=components))
 

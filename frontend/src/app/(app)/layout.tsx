@@ -10,18 +10,17 @@
  * back to the chat. This layout extracts the shell so that every
  * authenticated route inside `(app)/` renders it.
  *
- * The shell is NOT gated on `useAuth().isAuthenticated` here. That flag is
- * only flipped by an in-session `login()` call (there is no `/public/me`
- * probe to rehydrate it on mount — see `AuthProvider`'s docstring), so on a
- * cold load or hard refresh it is briefly (and sometimes indefinitely)
- * `false` even for a fully authenticated user, which would hide the
- * hamburger/sidebar/user-menu entirely. Gating is unnecessary here anyway:
+ * The shell is NOT gated on `useAuth().isAuthenticated` here. That flag
+ * starts `false` and is filled by the mount-time `GET /api/me` probe in
+ * `AuthProvider` (or by an in-session `login()`). On a cold load it is
+ * briefly `false` even for a fully authenticated user, which would hide the
+ * hamburger/sidebar/user-menu if we gated here. Gating is unnecessary anyway:
  * `(app)/layout.tsx` sits outside `/public/*`, which `frontend/src/middleware.ts`
  * always gates on the session cookie before this layout ever renders — so by
  * the time we get here, the request has already been authenticated.
  * `UserMenu` still self-gates on `user` internally (per `frontend-user-menu-spec`
  * REQ-001 "User opens the menu while unauthenticated"), so its avatar simply
- * waits for `user` to populate rather than the whole shell disappearing.
+ * waits for rehydration rather than the whole shell disappearing.
  *
  * Per-page affordances (the `Conversas` thread-history toggle, the
  * `New Thread` button, the `+ Adicionar servidor` action on `/mcp-servers`,

@@ -10,6 +10,8 @@ Postgres real nem disparar o `lifespan` completo de `webapp.py`.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -30,6 +32,7 @@ _ACTIVE_USER = User(
     password_hash="hashed",
     role="admin",
     is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
 )
 
 
@@ -102,7 +105,14 @@ def test_login_with_unknown_username_returns_401_without_creating_session(
 def test_login_with_inactive_user_returns_401_without_creating_session(
     monkeypatch: pytest.MonkeyPatch, client: TestClient
 ) -> None:
-    inactive_user = User(id="user-2", username="bob", password_hash="h", role="user", is_active=False)
+    inactive_user = User(
+        id="user-2",
+        username="bob",
+        password_hash="h",
+        role="user",
+        is_active=False,
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
     created_for = _patch_login(monkeypatch, user=inactive_user, password_ok=True)
 
     response = client.post("/public/login", json={"username": "bob", "password": "whatever"})
@@ -146,3 +156,49 @@ def test_logout_without_cookie_is_a_noop_and_clears_cookie(
 
     assert response.status_code == 200
     assert revoked == []
+
+
+# --- GET /api/me (session rehydration) ------------------------------------
+
+
+def test_me_with_valid_session_returns_username_and_role(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    """GET /api/me com sessão válida → 200 {id, username, role}."""
+    import src.infrastructure.auth.dependencies as deps
+    import src.infrastructure.auth.session_resolver as resolver
+
+    async def _fake_resolve(request: object) -> User:  # noqa: ANN401
+        return _ACTIVE_USER
+
+    monkeypatch.setattr(resolver, "resolve_session_user", _fake_resolve)
+    monkeypatch.setattr(deps, "resolve_session_user", _fake_resolve)
+
+    response = client.get("/api/me")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": "user-1",
+        "username": "alice",
+        "role": "admin",
+    }
+
+
+def test_me_without_session_returns_401(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient
+) -> None:
+    """GET /api/me sem cookie → 401 (frontend trata como não autenticado)."""
+    import src.infrastructure.auth.dependencies as deps
+    import src.infrastructure.auth.session_resolver as resolver
+    from src.infrastructure.auth.session_resolver import SessionAuthError
+
+    async def _fake_resolve(request: object) -> None:  # noqa: ANN401
+        raise SessionAuthError("missing")
+
+    monkeypatch.setattr(resolver, "resolve_session_user", _fake_resolve)
+    monkeypatch.setattr(deps, "resolve_session_user", _fake_resolve)
+
+    response = client.get("/api/me")
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Unauthorized"}

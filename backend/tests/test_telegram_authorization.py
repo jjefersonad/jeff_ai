@@ -67,6 +67,47 @@ def test_is_authorized_chat_treats_empty_string_as_no_match() -> None:
     assert authorization.is_authorized_chat("", "999") is False
 
 
+async def test_resolve_authorization_via_real_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REQ-002 delta `telegram-channel` cenário 1: chat com vínculo real em
+    `user_integrations` é autorizado e resolve o `user_id` real — mesmo sem
+    bater com o `TELEGRAM_AUTHORIZED_CHAT_ID` legado (task `channel-1`)."""
+    monkeypatch.setattr(
+        authorization, "resolve_telegram_user_id", AsyncMock(return_value="user-linked")
+    )
+    authorized, user_id = await authorization.resolve_authorization("555", "999")
+    assert authorized is True
+    assert user_id == "user-linked"
+
+
+async def test_resolve_authorization_via_legacy_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REQ-002 delta `telegram-channel` cenário 2: chat_id igual ao legado é
+    autorizado sem tocar `user_integrations` (fallback da janela de
+    migração), e não resolve `user_id` real."""
+    resolve_mock = AsyncMock(return_value="should-not-be-called")
+    monkeypatch.setattr(authorization, "resolve_telegram_user_id", resolve_mock)
+    authorized, user_id = await authorization.resolve_authorization("999", "999")
+    assert authorized is True
+    assert user_id is None
+    resolve_mock.assert_not_called()
+
+
+async def test_resolve_authorization_denies_when_neither_path_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REQ-002 delta `telegram-channel` cenário 3: chat_id sem vínculo real e
+    diferente do legado não é autorizado."""
+    monkeypatch.setattr(
+        authorization, "resolve_telegram_user_id", AsyncMock(return_value=None)
+    )
+    authorized, user_id = await authorization.resolve_authorization("555", "999")
+    assert authorized is False
+    assert user_id is None
+
+
 async def test_message_handler_drops_unauthorized_update(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -74,6 +115,9 @@ async def test_message_handler_drops_unauthorized_update(
 
     `get_or_create_thread_id` e o callable do agente são mockados; se o handler
     chamá-los, o teste falha (cenário REQ-002 "Mensagem de chat não autorizado").
+    `resolve_telegram_user_id` também é mockado (sem vínculo) — isola este
+    teste do Postgres real; a resolução via vínculo real é coberta por
+    `test_user_integration_credentials_e2e.py`.
     """
     thread_repo = MagicMock()
     agent_runner = MagicMock()
@@ -82,6 +126,7 @@ async def test_message_handler_drops_unauthorized_update(
     # não levantar em `await` caso o handler o invoque por engano.
     agent_runner.run = AsyncMock()
     monkeypatch.setattr(authorization, "get_or_create_thread_id", thread_repo)
+    monkeypatch.setattr(authorization, "resolve_telegram_user_id", AsyncMock(return_value=None))
 
     handler = authorization.make_message_handler(
         authorized_chat_id="999",

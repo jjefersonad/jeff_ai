@@ -97,11 +97,15 @@ def _sample_messages_upsert_payload(
     }
 
 
+_TOKEN = "test-webhook-token-abc123"
+
+
 @pytest.fixture(autouse=True)
 def _evolution_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
     monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
     monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
+    monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", _TOKEN)
 
 
 @pytest.fixture(autouse=True)
@@ -132,12 +136,11 @@ def client(
     link_codes: _FakeWhatsAppLinkCodeRepository,
     user_integrations: _FakeUserIntegrationRepository,
 ):
-    """`require_auth` é override'd aqui: o webhook é chamado pela Evolution API,
-    sem cookie de sessão — como o endpoint ainda não decidiu seu próprio
-    mecanismo de autenticação (assinatura de webhook, ver Open Questions do
-    design), este teste foca só na lógica de consumo de código, não na
-    fronteira de auth (`whatsapp_webhook_router` fica de fora de `PUBLIC_PATHS`
-    por ora)."""
+    """`require_auth` é override'd aqui só por padronização com os demais
+    arquivos de teste — na prática nem entra em jogo, já que
+    `/api/webhooks/whatsapp/` está em `PUBLIC_PATHS` (o token na URL é o
+    mecanismo de autenticação real, ver `test_whatsapp_webhook_authorization.
+    test_webhook_path_is_exempt_from_global_session_auth`)."""
     webapp.app.dependency_overrides[require_auth] = lambda: None
     webapp.app.dependency_overrides[
         whatsapp_webhook_router._whatsapp_link_code_repository
@@ -176,7 +179,7 @@ async def test_valid_pending_code_creates_binding_and_invalidates_code(
     )
 
     payload = _sample_messages_upsert_payload(text="ABC123", phone_number="5511999998888")
-    resp = client.post("/api/webhooks/whatsapp", json=payload)
+    resp = client.post(f"/api/webhooks/whatsapp/{_TOKEN}", json=payload)
 
     assert resp.status_code == 200, resp.text
     bound = await user_integrations.list_by_user("user-a")
@@ -192,7 +195,7 @@ async def test_text_not_matching_any_code_does_not_create_binding(
 ) -> None:
     """whatsapp-evolution-channel-task-linking-3-unit-2."""
     payload = _sample_messages_upsert_payload(text="oi, tudo bem?", phone_number="5511999998888")
-    resp = client.post("/api/webhooks/whatsapp", json=payload)
+    resp = client.post(f"/api/webhooks/whatsapp/{_TOKEN}", json=payload)
 
     assert resp.status_code == 200, resp.text
     assert await user_integrations.list_all() == []

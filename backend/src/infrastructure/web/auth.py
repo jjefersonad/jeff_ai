@@ -1,5 +1,11 @@
 """Handler de autenticação nativo do LangGraph (`auth.path` em `langgraph.json`).
 
+Em Docker/produção a imagem `langgraph-api` NÃO lê `auth.path` do json em
+runtime — só a env `LANGGRAPH_AUTH` (mesmo padrão de `LANGGRAPH_HTTP`). Sem
+ela, `LANGGRAPH_AUTH_TYPE` fica `noop` e estes handlers nunca rodam
+(`fix-thread-list-user-isolation`). Compose deve exportar:
+`LANGGRAPH_AUTH='{"path": "./src/infrastructure/web/auth.py:auth"}'`.
+
 Protege as rotas nativas do backend LangGraph (`/threads`, `/runs`,
 `/assistants`, `/crons`, `/store`) para os 4 graph IDs de `langgraph.json`
 (`unified`, `agent`, `sdd_agent`, `assistant` — todos compilam o mesmo grafo

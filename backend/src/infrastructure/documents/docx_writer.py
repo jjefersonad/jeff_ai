@@ -28,6 +28,13 @@ class DocxWriter(DocumentWriterPort):
     a URL pública (`/api/files/docx/...`). O documento é montado em memória e só é
     escrito no final (`save`), então falhas durante a montagem não deixam arquivo
     parcial.
+
+    `core_properties.title` é setado com `spec.title` (`fix-whatsapp-document-delivery`,
+    2026-08-06) — sem isso, clientes que leem metadata OOXML em vez do nome do
+    arquivo (ex.: preview de documento do WhatsApp) mostravam "Sem título", mesmo
+    com o `fileName` correto no payload de entrega. Achado ao vivo, fora do escopo
+    formal da spec desta change (que cobre entrega via `WhatsAppChannel`, não
+    geração de documento) — registrado aqui por não ter spec própria ainda.
     """
 
     def __init__(
@@ -47,6 +54,7 @@ class DocxWriter(DocumentWriterPort):
 
     def _write_sync(self, spec: DocxSpec) -> DocumentResult:
         document = Document()
+        document.core_properties.title = spec.title
         document.add_heading(spec.title, level=0)
         for block in spec.blocks:
             self._render_block(document, block)

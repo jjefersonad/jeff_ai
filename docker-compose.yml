@@ -7,9 +7,9 @@ services:
     ports:
       - "8001:8000"
     env_file:
-      - backend/.env
+      - .env
     environment:
-      POSTGRES_URI: ${POSTGRES_URI:-postgresql://jeff_ia:jeff_ia@jeff_ia_postgres:5432/jeff_ia}
+      POSTGRES_URI: ${POSTGRES_URI:-postgresql://${POSTGRES_USER:-jeff_ia}:${POSTGRES_PASSWORD:-jeff_ia}@jeff_ia_postgres:5432/${POSTGRES_DB:-jeff_ia}}
       REDIS_URI: ${REDIS_URI:-redis://:${REDIS_PASSWORD}@jeff_ia_redis:6379/0}
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY}
       LANGCHAIN_TRACING_V2: true
@@ -17,13 +17,26 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
       JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
-      # Evolution API (change whatsapp-evolution-channel) — mesmo tratamento de
-      # REDIS_PASSWORD/REDIS_URI acima: a substituição ${...} do compose só lê
-      # o .env da raiz (não backend/.env), então esses valores precisam chegar
-      # ao processo backend via este bloco environment:, não via env_file.
+      # FRONTEND_ORIGIN/BASE_URL precisam chegar ao processo como env vars
+      # próprias (não só interpolação neste YAML) — senão `os.getenv` devolve
+      # None em runtime (achado empírico, `fix-whatsapp-document-delivery`).
+      # `BASE_URL` SHALL apontar para onde o backend é alcançável por
+      # chamadores externos (Evolution API, etc.); `FRONTEND_ORIGIN` continua
+      # sendo só a origin do frontend (CORS).
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
+      BASE_URL: ${BASE_URL:-}
+      # Evolution API (change whatsapp-evolution-channel) — a substituição
+      # ${...} do compose só lê o .env da raiz; estes valores precisam chegar
+      # ao processo backend via este bloco environment: (além do env_file).
       EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution_api:8080}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY em .env}
       EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-jeff-ai-central}
+      # Token compartilhado embutido na URL do webhook
+      # (/api/webhooks/whatsapp/<token>) — mecanismo de autenticação real da
+      # rota, já que ela é isenta de require_auth (PUBLIC_PATHS). Configure a
+      # MESMA URL completa (com este token) como webhook da instância na
+      # Evolution API.
+      EVOLUTION_WEBHOOK_TOKEN: ${EVOLUTION_WEBHOOK_TOKEN:?defina EVOLUTION_WEBHOOK_TOKEN em .env}
       # Repos de terceiros liberados para install_external_skill (além dos defaults
       # oficiais). Lista separada por vírgula. Liberado por decisão humana (REQ-007).
       SKILLS_ALLOWLIST: ${SKILLS_ALLOWLIST:-usenotra/skills}
@@ -35,6 +48,12 @@ services:
       # /public/logout, rotas de imagens/documentos) nunca é montado (achado
       # empírico 2026-07-16, change autenticacao-jwt-rotas-protegidas).
       LANGGRAPH_HTTP: '{"app": "./src/infrastructure/web/webapp.py:app", "cors": {"allow_origins": ["${FRONTEND_ORIGIN:-http://localhost:3002}"], "allow_credentials": true, "allow_methods": ["*"], "allow_headers": ["*"]}}'
+      # Espelha a seção "auth" do langgraph.json — a imagem langgraph-api não
+      # aplica `auth.path` do json em runtime (só LANGGRAPH_*). Sem esta var,
+      # LANGGRAPH_AUTH_TYPE fica "noop", USES_CUSTOM_AUTH=false, e o filtro
+      # metadata.owner nunca roda (fix-thread-list-user-isolation diag-1:
+      # role=user via todas as threads; create não carimba owner).
+      LANGGRAPH_AUTH: '{"path": "./src/infrastructure/web/auth.py:auth"}'
       # LANGSERVE_CORS_ALLOW_ORIGINS/LANGSERVE_CORS_ALLOW_CREDENTIALS não são lidas
       # por `langgraph_api` (nenhum env var com esse prefixo existe para cors no
       # pacote instalado, achado empírico 2026-07-16) — eram config morta desde
@@ -66,11 +85,14 @@ services:
     build:
       context: frontend
       dockerfile: Dockerfile.frontend
+      # Pin dev stage — without this, a prior `docker compose -f …prod.yml build`
+      # can leave image `jeff_ai-frontend` as `next start` with NEXT_PUBLIC_*
+      # baked for port 8005, and `up` reuses that image for daily dev.
+      target: dev
     container_name: jeff_ia_frontend
     ports:
       - "3002:3000"
     environment:
-      LANGSERVE_URL: http://localhost:8001
       # Origem fixa do backend, usada pelo browser (cross-origin, com cookies
       # via credentials:'include') — não mais configurável por usuário via
       # Settings (ver frontend/src/lib/api.ts:getApiBaseUrl). NEXT_PUBLIC_*
@@ -92,15 +114,15 @@ services:
     image: pgvector/pgvector:pg15
     container_name: jeff_ia_postgres
     environment:
-      POSTGRES_DB: jeff_ia
-      POSTGRES_USER: jeff_ia
-      POSTGRES_PASSWORD: jeff_ia
+      POSTGRES_DB: ${POSTGRES_DB:-jeff_ia}
+      POSTGRES_USER: ${POSTGRES_USER:-jeff_ia}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jeff_ia}
     ports:
       - "5436:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U jeff_ia -d jeff_ia"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jeff_ia} -d ${POSTGRES_DB:-jeff_ia}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -127,8 +149,8 @@ services:
     image: dpage/pgadmin4:8
     container_name: jeff_ia_pgadmin
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.local
-      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@admin.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin123}
       PGADMIN_CONFIG_SERVER_MODE: 'False'
     ports:
       - "5050:80"
@@ -171,21 +193,21 @@ services:
     container_name: jeff_ia_telegram_gateway
     restart: unless-stopped
     env_file:
-      - backend/.env
+      - .env
     environment:
       # Token do bot e chat_id autorizado (allowlist single-user, REQ-002 do
-      # telegram-channel-spec). `env_file` já propaga `TELEGRAM_BOT_TOKEN` e
-      # `TELEGRAM_AUTHORIZED_CHAT_ID` do `backend/.env`; redeclarar aqui
+      # telegram-channel-spec). `env_file: .env` já propaga
+      # `TELEGRAM_BOT_TOKEN` e `TELEGRAM_AUTHORIZED_CHAT_ID`; redeclarar aqui
       # seria redundante.
       # Mesmo fallback do serviço `backend`: usa o host interno do Postgres
       # na rede docker, não o mapeamento de porta do host.
-      POSTGRES_URI: ${POSTGRES_URI:-postgresql://jeff_ia:jeff_ia@jeff_ia_postgres:5432/jeff_ia}
+      POSTGRES_URI: ${POSTGRES_URI:-postgresql://${POSTGRES_USER:-jeff_ia}:${POSTGRES_PASSWORD:-jeff_ia}@jeff_ia_postgres:5432/${POSTGRES_DB:-jeff_ia}}
       REDIS_URI: ${REDIS_URI:-redis://:${REDIS_PASSWORD}@jeff_ia_redis:6379/0}
       # === Telegram Gateway (change telegram-slash-commands) ===
-      # Token e chat_id são propagados pelo `env_file: backend/.env` (linha 192).
-      # Não redeclarar aqui — o `environment:` do compose é expandido a partir
-      # do shell do host (não do `.env`), então ${TELEGRAM_BOT_TOKEN} viraria
-      # string vazia quando o usuário não tem a var exportada no shell,
+      # Token e chat_id são propagados pelo `env_file: .env`. Não redeclarar
+      # aqui — o `environment:` do compose é expandido a partir do shell do
+      # host (não do `.env`), então ${TELEGRAM_BOT_TOKEN} viraria string
+      # vazia quando o usuário não tem a var exportada no shell,
       # sobrescrevendo o valor correto do `.env` com warning
       # `variable is not set, defaulting to a blank string`.
       # (registrado durante o verify/2026-07-23)

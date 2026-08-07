@@ -142,6 +142,31 @@ async def test_get_for_owning_user_returns_decrypted_config() -> None:
     assert fetched.config == {"chat_id": plaintext_chat_id}
 
 
+async def test_round_trip_preserves_purely_numeric_string_value() -> None:
+    """Achado em produção (teste manual do usuário, 2026-08-03): `chat_id`/
+    `phone_number` são strings puramente numéricas na prática — o antigo
+    fallback `json.loads(plaintext)` de `_decrypt_config` as convertia
+    silenciosamente para `int`, quebrando toda comparação `== phone_number`
+    downstream em `resolve_whatsapp_user_id`/`resolve_telegram_user_id`
+    (`int(556199976245) != str("556199976245")`). Nenhum teste anterior
+    usava um valor puramente numérico, por isso passou despercebido."""
+    from src.infrastructure.persistence.user_integrations_repository import (
+        PostgresUserIntegrationRepository,
+    )
+
+    user_id = _insert_test_user()
+    numeric_phone_number = "556199976245"
+    repo = PostgresUserIntegrationRepository(_uri())
+    integration = _new_integration(user_id, {"phone_number": numeric_phone_number})
+
+    await repo.save(integration)
+    fetched = await repo.get(integration.id)
+
+    assert fetched is not None
+    assert fetched.config == {"phone_number": numeric_phone_number}
+    assert isinstance(fetched.config["phone_number"], str)
+
+
 async def test_list_all_returns_decrypted_entries_across_users() -> None:
     """`list_all()` (REQ-004, task store-3) devolve entradas de TODOS os usuários, decifradas."""
     from src.infrastructure.persistence.user_integrations_repository import (
@@ -161,3 +186,55 @@ async def test_list_all_returns_decrypted_entries_across_users() -> None:
     by_id = {i.id: i for i in all_integrations}
     assert by_id[integration_a.id].config == {"chat_id": "chat-a"}
     assert by_id[integration_b.id].config == {"chat_id": "chat-b"}
+
+
+async def test_list_all_skips_row_undecryptable_with_current_key() -> None:
+    """Achado em produção (2026-08-03): uma linha cifrada com uma chave que não
+    existe mais (`INTEGRATION_CREDENTIALS_KEY` rotacionada, ou lixo de teste
+    deixado no banco errado) NÃO pode derrubar `list_all()` inteiro — outras
+    linhas válidas continuam resolvendo normalmente. `resolve_whatsapp_user_id`/
+    `resolve_telegram_user_id` chamam `list_all()` num loop de busca; uma
+    linha corrompida em qualquer canto da tabela travava a resolução de
+    QUALQUER usuário, incluindo vínculos recém-criados e válidos."""
+    import json
+    import uuid as uuid_mod
+
+    from cryptography.fernet import Fernet
+
+    from src.infrastructure.persistence.user_integrations_repository import (
+        PostgresUserIntegrationRepository,
+    )
+
+    user_a = _insert_test_user()
+    user_b = _insert_test_user()
+    repo = PostgresUserIntegrationRepository(_uri())
+
+    valid_integration = _new_integration(user_a, {"chat_id": "still-valid"})
+    await repo.save(valid_integration)
+
+    # Linha corrompida: cifrada com uma chave DIFERENTE da ativa no teste —
+    # simula exatamente o cenário de produção (chave perdida/rotacionada).
+    orphaned_ciphertext = Fernet(Fernet.generate_key()).encrypt(
+        json.dumps("orphaned-chat-id").encode()
+    ).decode()
+    orphaned_id = str(uuid_mod.uuid4())
+    with psycopg.connect(_uri()) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO user_integrations "
+                "(id, user_id, integration_type, config, created_at, updated_at) "
+                "VALUES (%s, %s, %s, %s::jsonb, now(), now())",
+                (
+                    orphaned_id,
+                    user_b,
+                    "telegram",
+                    json.dumps({"chat_id": {"__enc__": orphaned_ciphertext}}),
+                ),
+            )
+        conn.commit()
+
+    all_integrations = await repo.list_all()
+
+    by_id = {i.id: i for i in all_integrations}
+    assert by_id[valid_integration.id].config == {"chat_id": "still-valid"}
+    assert orphaned_id not in by_id

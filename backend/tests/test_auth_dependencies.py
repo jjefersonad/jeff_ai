@@ -10,6 +10,8 @@ composição de `require_admin` sobre `require_auth`.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
@@ -19,8 +21,22 @@ from src.infrastructure.auth.dependencies import require_admin, require_auth
 from src.infrastructure.auth.session_resolver import SessionAuthError
 from src.infrastructure.auth.users import User
 
-_ADMIN_USER = User(id="user-1", username="alice", password_hash="h", role="admin", is_active=True)
-_REGULAR_USER = User(id="user-2", username="bob", password_hash="h", role="user", is_active=True)
+_ADMIN_USER = User(
+    id="user-1",
+    username="alice",
+    password_hash="h",
+    role="admin",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
+_REGULAR_USER = User(
+    id="user-2",
+    username="bob",
+    password_hash="h",
+    role="user",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
 
 
 def _request(path: str) -> Request:

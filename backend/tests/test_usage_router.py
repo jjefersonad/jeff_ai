@@ -6,7 +6,7 @@ não-admin (REQ-006). Persistência é mockada — coberta em
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timezone
 from typing import Any
 
 import pytest

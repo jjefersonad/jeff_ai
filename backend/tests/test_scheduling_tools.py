@@ -16,10 +16,12 @@ depende de Postgres nem de um runtime LangGraph ativo.
 from __future__ import annotations
 
 import inspect
+from datetime import datetime, timezone
 
 import pytest
 
 import src.tools.scheduling_tools as st
+from src.agents.unified.effects import Capability
 from src.application.ports.scheduled_task_repository import ScheduledTaskRepositoryPort
 from src.application.ports.task_scheduler import TaskSchedulerPort
 from src.application.use_cases.cancel_scheduled_task import CancelScheduledTask
@@ -27,6 +29,9 @@ from src.application.use_cases.create_scheduled_task import CreateScheduledTask
 from src.application.use_cases.list_scheduled_tasks import ListScheduledTasks
 from src.domain.scheduling import Schedule, ScheduledTask
 from src.infrastructure.auth.users import User
+
+
+_PLACEHOLDER_CREATED_AT = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 class _FakeRepository(ScheduledTaskRepositoryPort):
@@ -90,7 +95,14 @@ def _stub_resolved_user_id(monkeypatch: pytest.MonkeyPatch, user_id: str | None)
 
 def _no_admins(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _fake_get_user_by_id(user_id: str) -> User | None:
-        return User(id=user_id, username="u", password_hash="h", role="user", is_active=True)
+        return User(
+            id=user_id,
+            username="u",
+            password_hash="h",
+            role="user",
+            is_active=True,
+            created_at=_PLACEHOLDER_CREATED_AT,
+        )
 
     monkeypatch.setattr(st, "get_user_by_id", _fake_get_user_by_id)
 
@@ -98,8 +110,22 @@ def _no_admins(monkeypatch: pytest.MonkeyPatch) -> None:
 def _admin_user(monkeypatch: pytest.MonkeyPatch, *, user_id: str) -> None:
     async def _fake_get_user_by_id(uid: str) -> User | None:
         if uid == user_id:
-            return User(id=uid, username="a", password_hash="h", role="admin", is_active=True)
-        return User(id=uid, username="u", password_hash="h", role="user", is_active=True)
+            return User(
+                id=uid,
+                username="a",
+                password_hash="h",
+                role="admin",
+                is_active=True,
+                created_at=_PLACEHOLDER_CREATED_AT,
+            )
+        return User(
+            id=uid,
+            username="u",
+            password_hash="h",
+            role="user",
+            is_active=True,
+            created_at=_PLACEHOLDER_CREATED_AT,
+        )
 
     monkeypatch.setattr(st, "get_user_by_id", _fake_get_user_by_id)
 
@@ -356,3 +382,149 @@ def test_tools_registered_in_unified_graph(tool_name: str):
     from src.agents.unified.agent import _TOOL_NAMES
 
     assert tool_name in _TOOL_NAMES
+
+
+# ===========================================================================
+# Builders do composition root (change `wire-scheduling-tools-to-agent`)
+# ===========================================================================
+# REQ-013 cenário 2: cada builder devolve o use case ligado ao mesmo
+# `PostgresScheduledTaskRepository` que `scheduling_router.py` já usa inline
+# e ao `task_scheduler` singleton — exceto `ListScheduledTasks`, que não
+# agenda nem desagenda (só lê).
+
+
+def test_build_create_scheduled_task_uses_postgres_repo_and_singleton_scheduler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unit-2 / REQ-013: `build_create_scheduled_task` MUST devolver
+    `CreateScheduledTask` com `PostgresScheduledTaskRepository(os.environ["POSTGRES_URI"])`
+    e o `task_scheduler` singleton."""
+    from src.application.use_cases.create_scheduled_task import CreateScheduledTask
+    from src.composition.dependencies import build_create_scheduled_task
+    from src.infrastructure.persistence.scheduled_task_repository import (
+        PostgresScheduledTaskRepository,
+    )
+    from src.infrastructure.scheduling.scheduler_instance import task_scheduler
+
+    monkeypatch.setenv("POSTGRES_URI", "postgresql://builder-test@localhost/db")
+
+    use_case = build_create_scheduled_task()
+
+    assert isinstance(use_case, CreateScheduledTask)
+    assert isinstance(use_case._repository, PostgresScheduledTaskRepository)
+    assert use_case._repository._conninfo == "postgresql://builder-test@localhost/db"
+    assert use_case._scheduler is task_scheduler
+
+
+def test_build_list_scheduled_tasks_uses_postgres_repo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unit-3 / REQ-013: `build_list_scheduled_tasks` MUST devolver
+    `ListScheduledTasks` com o mesmo `PostgresScheduledTaskRepository` (sem
+    scheduler — listagem não agenda/desagenda nada)."""
+    from src.application.use_cases.list_scheduled_tasks import ListScheduledTasks
+    from src.composition.dependencies import build_list_scheduled_tasks
+    from src.infrastructure.persistence.scheduled_task_repository import (
+        PostgresScheduledTaskRepository,
+    )
+
+    monkeypatch.setenv("POSTGRES_URI", "postgresql://builder-test@localhost/db")
+
+    use_case = build_list_scheduled_tasks()
+
+    assert isinstance(use_case, ListScheduledTasks)
+    assert isinstance(use_case._repository, PostgresScheduledTaskRepository)
+    assert use_case._repository._conninfo == "postgresql://builder-test@localhost/db"
+    # Listagem é puro read — não tem scheduler.
+    assert not hasattr(use_case, "_scheduler")
+
+
+def test_build_cancel_scheduled_task_uses_postgres_repo_and_singleton_scheduler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unit-4 / REQ-013: `build_cancel_scheduled_task` MUST devolver
+    `CancelScheduledTask` com o mesmo `PostgresScheduledTaskRepository` e o
+    `task_scheduler` singleton (cancelamento precisa desagendar o trigger)."""
+    from src.application.use_cases.cancel_scheduled_task import CancelScheduledTask
+    from src.composition.dependencies import build_cancel_scheduled_task
+    from src.infrastructure.persistence.scheduled_task_repository import (
+        PostgresScheduledTaskRepository,
+    )
+    from src.infrastructure.scheduling.scheduler_instance import task_scheduler
+
+    monkeypatch.setenv("POSTGRES_URI", "postgresql://builder-test@localhost/db")
+
+    use_case = build_cancel_scheduled_task()
+
+    assert isinstance(use_case, CancelScheduledTask)
+    assert isinstance(use_case._repository, PostgresScheduledTaskRepository)
+    assert use_case._repository._conninfo == "postgresql://builder-test@localhost/db"
+    assert use_case._scheduler is task_scheduler
+
+
+def test_scheduling_tools_not_in_interrupt_on() -> None:
+    """Unit-2 / REQ-015: as três tools de agendamento NÃO entram em
+    `_interrupt_on` — `create_scheduled_task` (e as outras) executam direto
+    numa conversa normal (Tier 2), sem pausar aguardando aprovação.
+
+    `build_interrupt_on` é deny-by-default: se a tool NÃO está no
+    `TIER_REGISTRY`, ela entra no gate. Por isso o teste asserta
+    explicitamente que as três estão fora do dict — pra travar a regressão
+    no caso de alguém removê-las de `TIER_2_TOOLS` por engano.
+    """
+    from src.agents.unified.agent import _TOOL_NAMES
+    from src.agents.unified.tier_config import build_interrupt_on
+
+    interrupt_on = build_interrupt_on(_TOOL_NAMES)
+    for name in (
+        "create_scheduled_task",
+        "list_scheduled_tasks",
+        "cancel_scheduled_task",
+    ):
+        assert name not in interrupt_on, (
+            f"{name} está em _interrupt_on — deveria rodar direto (Tier 2)."
+        )
+
+
+def test_create_and_list_scheduled_tasks_pass_envelope_without_grant() -> None:
+    """Trava de regressão: `create_scheduled_task` e `list_scheduled_tasks`
+    DEVEM estar classificadas no `TOOL_EFFECTS` com capability no piso
+    (`WRITE_NEW` / `READ`), para que o `EnvelopeMiddleware` não as bloqueie
+    em chamadas Tier 2 sem envelope.
+
+    Achado em produção (2026-08-06, run 019fd7f0-ab02): as 3 tools estavam
+    registradas em `_UNIFIED_TOOLS` e `TIER_REGISTRY=2`, mas faltavam em
+    `TOOL_EFFECTS` — caíam em `UNKNOWN` (fora do piso) e o `wrap_tool_call`
+    bloqueava cada invocação com `envelope_audit event=block required='unknown'`.
+    O modelo desistia e alucinava que "não tem scheduler interno".
+
+    `cancel_scheduled_task` está EXPLICITAMENTE fora: remover um trigger
+    existente é `WRITE_EXISTING` (fora do piso, exige concessão), e a
+    decisão de design entre Tier 2 e Tier 3 está aberta (ver
+    `wire-scheduling-tools-to-agent-task-verify-1` reaberto).
+    """
+    from src.agents.unified.effects import TOOL_EFFECTS, classify, needs_grant
+
+    # `create_scheduled_task` cria recurso novo → `WRITE_NEW` (piso).
+    assert "create_scheduled_task" in TOOL_EFFECTS
+    assert classify("create_scheduled_task") == (Capability.WRITE_NEW,)
+    assert not needs_grant("create_scheduled_task"), (
+        "create_scheduled_task deveria rodar sem grant (WRITE_NEW no piso)."
+    )
+
+    # `list_scheduled_tasks` é puro read.
+    assert "list_scheduled_tasks" in TOOL_EFFECTS
+    assert classify("list_scheduled_tasks") == (Capability.READ,)
+    assert not needs_grant("list_scheduled_tasks"), (
+        "list_scheduled_tasks deveria rodar sem grant (READ no piso)."
+    )
+
+    # `cancel_scheduled_task` está intencionalmente fora — não fix mínimo.
+    # Trava: qualquer um que tentar classificá-lo como `WRITE_NEW` (meia-verdade)
+    # ou como `WRITE_EXISTING` (vai precisar de grant, quebrando o Tier 2
+    # prometido pelo design) precisa abrir uma change formal primeiro.
+    assert "cancel_scheduled_task" not in TOOL_EFFECTS, (
+        "cancel_scheduled_task NÃO deve ser classificado sem uma change "
+        "explícita (tensão Tier 2 vs Tier 3 — ver reabertura da change "
+        "wire-scheduling-tools-to-agent)."
+    )

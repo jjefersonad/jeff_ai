@@ -43,7 +43,7 @@ def main() -> int:
     uri = os.environ.get("POSTGRES_URI")
     if not uri:
         print(
-            "ERRO: POSTGRES_URI não está definida (esperada em backend/.env).",
+            "ERRO: POSTGRES_URI não está definida (esperada em ./.env).",
             file=sys.stderr,
         )
         return 1

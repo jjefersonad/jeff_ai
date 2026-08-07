@@ -17,6 +17,7 @@ Cobre REQ-001/REQ-002/REQ-003 de `langgraph-native-auth-middleware` (change
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,14 @@ from src.infrastructure.auth.users import User
 from src.infrastructure.web.auth import authenticate
 
 _VALID_SESSION = Session(token="tok", user_id="user-1", expires_at=None)  # type: ignore[arg-type]
-_ADMIN_USER = User(id="user-1", username="alice", password_hash="h", role="admin", is_active=True)
+_ADMIN_USER = User(
+    id="user-1",
+    username="alice",
+    password_hash="h",
+    role="admin",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
 
 
 def _request(path: str, cookie: str | None = None) -> Request:
@@ -126,3 +134,31 @@ def test_langgraph_json_registers_single_auth_handler_for_all_graph_ids() -> Non
     # Um único bloco `auth` no nível raiz cobre todos os graph IDs listados —
     # não há (e não deve haver) configuração de auth por-grafo.
     assert set(config["graphs"]) == {"unified", "agent", "sdd_agent", "assistant"}
+
+
+# --- fix-thread-list-user-isolation: LANGGRAPH_AUTH no Docker ---------------
+#
+# A imagem langchain/langgraph-api NÃO aplica `auth.path` de langgraph.json em
+# runtime — só `LANGGRAPH_*` env vars (mesmo achado empírico de LANGGRAPH_HTTP).
+# Sem LANGGRAPH_AUTH, LANGGRAPH_AUTH_TYPE fica "noop" e o filtro por owner
+# nunca roda (diag-1: test1 role=user via todas as threads).
+
+
+_AUTH_PATH = "./src/infrastructure/web/auth.py:auth"
+_COMPOSE_FILES = (
+    Path(__file__).resolve().parents[2] / "docker-compose.yml",
+    Path(__file__).resolve().parents[2] / "docker-compose.prod.yml",
+    Path(__file__).resolve().parents[2] / "docker-compose.all.yml",
+)
+
+
+@pytest.mark.parametrize("compose_path", _COMPOSE_FILES, ids=lambda p: p.name)
+def test_compose_sets_langgraph_auth_env(compose_path: Path) -> None:
+    """REQ wiring: Docker deve exportar LANGGRAPH_AUTH com o mesmo path do json."""
+    text = compose_path.read_text()
+    assert "LANGGRAPH_AUTH:" in text or "LANGGRAPH_AUTH=" in text, (
+        f"{compose_path.name} não define LANGGRAPH_AUTH — auth custom fica noop"
+    )
+    assert _AUTH_PATH in text, (
+        f"{compose_path.name} deve apontar LANGGRAPH_AUTH para {_AUTH_PATH}"
+    )

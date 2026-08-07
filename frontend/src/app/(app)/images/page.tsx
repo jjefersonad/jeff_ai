@@ -4,9 +4,10 @@ import React, { useState, useCallback } from "react";
 import useSWR from "swr";
 import { ImageGrid } from "@/app/components/ImageGallery";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { ImageIcon, ChevronLeft, ChevronRight } from "lucide-react";
+import { imagesSwrKeyFor } from "@/app/hooks/imagesSwrCache";
 import { apiFetch } from "@/lib/api";
+import { useAuth } from "@/providers/AuthProvider";
 
 interface ImagesResponse {
   images: Array<{
@@ -19,8 +20,10 @@ interface ImagesResponse {
   offset: number;
 }
 
-const fetcher = async (url: string) => {
-  const response = await apiFetch(url);
+const fetcher = async (key: { limit: number; offset: number }) => {
+  const response = await apiFetch(
+    `/api/images?limit=${key.limit}&offset=${key.offset}`
+  );
   if (!response.ok) {
     throw new Error(`Failed to load images (${response.status})`);
   }
@@ -30,11 +33,12 @@ const fetcher = async (url: string) => {
 const PAGE_SIZE = 20;
 
 export default function ImagesPage() {
+  const { user } = useAuth();
   const [page, setPage] = useState(0);
   const offset = page * PAGE_SIZE;
 
   const { data, error, isLoading } = useSWR<ImagesResponse>(
-    `/api/images?limit=${PAGE_SIZE}&offset=${offset}`,
+    imagesSwrKeyFor(user?.id, PAGE_SIZE, offset),
     fetcher
   );
 

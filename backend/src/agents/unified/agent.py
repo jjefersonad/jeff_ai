@@ -67,6 +67,9 @@ from src.agents.unified.envelope_proposal import (
     EnvelopeLifecycleMiddleware,
     propose_envelope_tool,
 )
+from src.agents.unified.mcp_tool_availability import (
+    McpToolAvailabilityMiddleware,
+)
 from src.agents.unified.mcp_tools_middleware import McpToolsMiddleware
 from src.agents.unified.scoped_skills_middleware import ScopedSkillsMiddleware
 from src.agents.unified.tier_config import build_interrupt_on
@@ -105,6 +108,11 @@ from src.tools.memory_tools import (
     search_memory,
 )
 from src.tools.read_document_tool import read_document
+from src.tools.scheduling_tools import (
+    cancel_scheduled_task,
+    create_scheduled_task,
+    list_scheduled_tasks,
+)
 from src.tools.scientific_search_tool import search_arxiv
 from src.tools.sdd_tools import (
     create_feature_directory,
@@ -112,6 +120,10 @@ from src.tools.sdd_tools import (
     get_sdd_state,
     load_template,
     validate_artifact,
+)
+from src.tools.list_mcp_servers_status import (
+    list_mcp_servers_status,
+    set_status_provider,
 )
 from src.tools.self_extension import (
     find_external_skills,
@@ -126,13 +138,12 @@ from src.tools.self_extension import (
 )
 from src.tools.tavily_tool import internet_search
 from src.tools.technical_spec_tools import merge_generated_files
+from src.tools.delivery_tools import send_message
 from src.tools.telegram_tools import (
     send_telegram_document,
-    send_telegram_message,
     send_telegram_photo,
 )
 from src.tools.test_runner_tools import run_tests
-from src.tools.whatsapp_tools import send_whatsapp_message
 
 load_env()
 
@@ -252,7 +263,7 @@ usuário.
 
 ## Ferramentas disponíveis
 
-- **Memória de longo prazo** (TODAS as threads): `search_memory` no início
+- **Memória de longo prazo** (todas as threads do mesmo usuário): `search_memory` no início
   quando o usuário se referir a contexto passado; `save_memory` para fatos
   duráveis (preferências, convenções) — NUNCA para texto longo (rejeitado
   acima de ~1000 chars); `log_episode` para registrar uma decisão e o
@@ -265,10 +276,37 @@ usuário.
 - **Pesquisa externa**: `internet_search`, `search_arxiv`.
 - **Geração de documentos**: `create_docx_document`, `create_xlsx_spreadsheet`,
   `create_pptx_presentation` (Tier 2 — execução direta, sem gate).
+- **Agendamento de tarefas**: `create_scheduled_task` agenda QUALQUER ação
+  sua para rodar no futuro (uma vez em data ISO, ou recorrente via cron) —
+  inclusive **enviar uma mensagem/lembrete ao usuário no canal atual**
+  (WhatsApp, Telegram ou web): o `prompt` da tarefa agendada é uma
+  instrução para você mesmo executar depois, então para "me avise em X
+  minutos" ou "mande uma mensagem agendada" o `prompt` deve instruir você
+  a chamar `send_message` com o texto pedido. Isso é **diferente** de
+  qualquer MCP externo de redes sociais (ex.: `zernio`), que só publica em
+  contas de plataforma configuradas (Twitter/Instagram/etc.) — não serve
+  para mensagens diretas em WhatsApp/Telegram, que são sempre feitas via
+  `create_scheduled_task` + `send_message` (nunca via MCP externo).
+  `list_scheduled_tasks` lista as tarefas do usuário atual;
+  `cancel_scheduled_task` cancela uma tarefa existente. Todas Tier 2
+  (execução direta, frontend notifica). A tarefa roda na MESMA thread da
+  conversa atual e pertence a QUEM está conversando — `owner_user_key` é
+  resolvido do `configurable`, nunca do argumento da tool.
 - **Imagens**: delegue para `image_design_subagent` (sempre).
 - **Leitura do projeto**: `read_project_file`, `list_project_files`
   (somente leitura).
 - **Shell**: `run_shell_command` (Tier 4 — interrupt + denylist).
+
+## Entrega de mensagens
+- Respostas em texto puro (e anexos gerados neste turno por tools como
+  `create_docx_document` / `create_image_from_prompt`) são entregues
+  automaticamente ao usuário — **não** precisa chamar tool só para
+  entregar a resposta.
+- Use `send_message(text, attachment_paths=...)` apenas quando quiser
+  confirmar ou anexar algo fora dessa captura automática (ex.: um
+  arquivo de um turno anterior).
+- Não cite canais específicos — `send_message` resolve o canal corrente
+  a partir da sessão.
 """
 
 
@@ -300,15 +338,23 @@ _UNIFIED_TOOLS: list = [
     create_docx_document,
     create_xlsx_spreadsheet,
     create_pptx_presentation,
-    # --- Telegram (Tier 2, integracao-telegram) ---------------------------- #
-    send_telegram_message,
+    # --- Entrega de mensagens (canal-agnóstica) ---------------------------- #
+    send_message,
+    # --- Telegram mídia (Tier 2; texto unificado em send_message) ---------- #
     send_telegram_photo,
     send_telegram_document,
-    # --- WhatsApp (Tier 2, whatsapp-evolution-channel) ---------------------- #
-    send_whatsapp_message,
     # --- Documentos Office/PDF (markitdown) --------------------------------- #
     # Substitui a change `document-reading-tools`. Tier 1 (auto): só leitura.
     read_document,
+    # --- Agendamento de tarefas (Tier 2) ----------------------------------- #
+    # Cria/lista/cancela tarefas que o agente vai rodar no futuro. `create` e
+    # `cancel` precisam do `task_scheduler` (registrar/desagendar trigger);
+    # `list` é puro read. `owner_user_key`/`caller_user_key` são resolvidos do
+    # `configurable` do run — nunca aceitos como parâmetro de tool-call.
+    # Disponível em web, WhatsApp e Telegram (mesmo `_UNIFIED_TOOLS`).
+    create_scheduled_task,
+    list_scheduled_tasks,
+    cancel_scheduled_task,
     # --- Self-extension (listagens, leitura, tools geradas) --------------- #
     list_project_files,
     read_project_file,
@@ -343,7 +389,11 @@ _UNIFIED_TOOLS: list = [
     git_branch,
     # --- Envelope de permissões (task envelope-7) -------------------------- #
     propose_envelope_tool,
-]
+    # --- Self-debug dos MCPs (change `fix-mcp-tool-not-exposed-error`) ----- #
+    # Tier 1 — agente usa para investigar por que uma tool `mcp__*` falhou
+    # antes de devolver erro genérico ao usuário.
+    list_mcp_servers_status,
+] 
 
 
 # Subagentes registrados no grafo unificado. Reduzido de 9 -> 1 na task
@@ -464,6 +514,7 @@ def build_unified(
         middleware=[
             EnvelopeLifecycleMiddleware(),
             McpToolsMiddleware(),
+            McpToolAvailabilityMiddleware(),
             EnvelopeMiddleware(),
             ScopedSkillsMiddleware(backend=backend_factory, sources=["/skills/"]),
         ],
