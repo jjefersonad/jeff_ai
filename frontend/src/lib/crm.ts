@@ -339,3 +339,35 @@ export function validateContactForm(input: {
   }
   return { valid: true };
 }
+
+export type CrmUiTab = "contacts" | "companies" | "pipeline";
+
+export type NotesListTarget =
+  | { contact_id: string }
+  | { company_id: string }
+  | { deal_id: string };
+
+/**
+ * Resolve o alvo de listagem/criação de notas pela aba ativa.
+ *
+ * Notas têm exatamente um alvo no backend; a UI NÃO pode misturar
+ * seleções residuais de outra aba (ex.: contato ainda selecionado ao
+ * abrir um deal no funil).
+ */
+export function resolveNotesTarget(input: {
+  tab: CrmUiTab;
+  contactId: string | null;
+  companyId: string | null;
+  dealId: string | null;
+}): NotesListTarget | null {
+  if (input.tab === "contacts" && input.contactId) {
+    return { contact_id: input.contactId };
+  }
+  if (input.tab === "companies" && input.companyId) {
+    return { company_id: input.companyId };
+  }
+  if (input.tab === "pipeline" && input.dealId) {
+    return { deal_id: input.dealId };
+  }
+  return null;
+}
