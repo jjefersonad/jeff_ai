@@ -190,6 +190,12 @@ def test_lifespan_calls_scheduled_tasks_schema_and_auth_schema_independently(
     assert "auth:postgresql://scheduling-bootstrap" in calls
     assert "scheduled_tasks_schema:postgresql://scheduling-bootstrap" in calls
     assert "scheduler:start" in calls
+    # REQ-ADD-001: _patch_common_bootstrap MUST stub current lifespan deps so
+    # TestClient never hits a real Postgres / ChannelRegistry bootstrap.
+    assert "build_dependencies" in calls
+    assert "user_mcp_servers_schema:postgresql://scheduling-bootstrap" in calls
+    assert "whatsapp_link_codes_schema:postgresql://scheduling-bootstrap" in calls
+    assert "whatsapp_threads_schema:postgresql://scheduling-bootstrap" in calls
     # REQ-ADD-001: ensure MUST run before pool/reschedule (list_all path).
     schema_idx = calls.index(
         "scheduled_tasks_schema:postgresql://scheduling-bootstrap"

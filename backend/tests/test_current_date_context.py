@@ -46,8 +46,23 @@ def test_resolve_tz_with_invalid_tz_falls_back_to_utc(monkeypatch, caplog):
 
 
 def test_resolve_tz_with_no_env_returns_utc(monkeypatch):
-    """REQ-003: sem `JEFF_AI_TZ` no env, o default é UTC."""
+    """REQ-003: sem `JEFF_AI_TZ` nem `TZ`, o default é UTC."""
     monkeypatch.delenv("JEFF_AI_TZ", raising=False)
+    monkeypatch.delenv("TZ", raising=False)
+    assert agent._resolve_tz() == ZoneInfo("UTC")
+
+
+def test_resolve_tz_falls_back_to_process_tz(monkeypatch):
+    """Sem `JEFF_AI_TZ`, usa `TZ` do container/SO."""
+    monkeypatch.delenv("JEFF_AI_TZ", raising=False)
+    monkeypatch.setenv("TZ", "America/Sao_Paulo")
+    assert agent._resolve_tz() == ZoneInfo("America/Sao_Paulo")
+
+
+def test_resolve_tz_jeff_ai_tz_wins_over_process_tz(monkeypatch):
+    """`JEFF_AI_TZ` tem precedência sobre `TZ`."""
+    monkeypatch.setenv("JEFF_AI_TZ", "UTC")
+    monkeypatch.setenv("TZ", "America/Sao_Paulo")
     assert agent._resolve_tz() == ZoneInfo("UTC")
 
 

@@ -17,6 +17,7 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
       JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
+      TZ: ${JEFF_AI_TZ:-UTC}
       # FRONTEND_ORIGIN/BASE_URL precisam chegar ao processo como env vars
       # próprias (não só interpolação neste YAML) — senão `os.getenv` devolve
       # None em runtime (achado empírico, `fix-whatsapp-document-delivery`).
@@ -211,6 +212,7 @@ services:
       # sobrescrevendo o valor correto do `.env` com warning
       # `variable is not set, defaulting to a blank string`.
       # (registrado durante o verify/2026-07-23)
+      TZ: ${JEFF_AI_TZ:-UTC}
     depends_on:
       jeff_ia_postgres:
         condition: service_healthy

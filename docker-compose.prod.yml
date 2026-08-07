@@ -51,6 +51,7 @@ services:
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
       COOKIE_SAMESITE: ${COOKIE_SAMESITE:-lax}
       JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
+      TZ: ${JEFF_AI_TZ:-UTC}
       # Ver comentário equivalente em docker-compose.yml — sem estas duas, o
       # processo nunca via FRONTEND_ORIGIN/BASE_URL como env var própria
       # (só eram usadas para interpolar CORS_ALLOW_ORIGINS/LANGGRAPH_HTTP
@@ -131,6 +132,7 @@ services:
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       INTEGRATION_CREDENTIALS_KEY: ${INTEGRATION_CREDENTIALS_KEY:-}
       JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
+      TZ: ${JEFF_AI_TZ:-UTC}
     depends_on:
       - backend
     volumes:

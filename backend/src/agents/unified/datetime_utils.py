@@ -21,20 +21,26 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 _log = logging.getLogger(__name__)
 
 
-def _resolve_tz() -> ZoneInfo:
-    """Resolve o timezone do env `JEFF_AI_TZ` (IANA name), com fallback seguro.
+def _tz_name() -> str:
+    """Nome IANA operacional: `JEFF_AI_TZ`, senão `TZ` do processo, senão UTC."""
+    return os.environ.get("JEFF_AI_TZ") or os.environ.get("TZ") or "UTC"
 
-    - Env setado e válido: retorna `ZoneInfo(JEFF_AI_TZ)`.
-    - Env setado mas inválido (e.g., `JEFF_AI_TZ=Atlantis/Lemuria`): loga
-      warning e retorna `ZoneInfo("UTC")` — não raise, não quebra o boot.
-    - Env não setado: retorna `ZoneInfo("UTC")` (default documentado).
+
+def _resolve_tz() -> ZoneInfo:
+    """Resolve o timezone operacional, com fallback seguro.
+
+    Ordem: `JEFF_AI_TZ` → `TZ` (fuso do container/SO) → `UTC`.
+
+    - Nome válido: retorna `ZoneInfo(name)`.
+    - Nome inválido (e.g. `Atlantis/Lemuria`): loga warning e retorna
+      `ZoneInfo("UTC")` — não raise, não quebra o boot.
     """
-    name = os.environ.get("JEFF_AI_TZ", "UTC")
+    name = _tz_name()
     try:
         return ZoneInfo(name)
     except ZoneInfoNotFoundError:
-        _log.warning("JEFF_AI_TZ=%s inválido; usando UTC", name)
+        _log.warning("timezone=%s inválido (JEFF_AI_TZ/TZ); usando UTC", name)
         return ZoneInfo("UTC")
 
 
-__all__ = ["_resolve_tz"]
+__all__ = ["_resolve_tz", "_tz_name"]
