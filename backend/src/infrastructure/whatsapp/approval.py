@@ -32,11 +32,14 @@ que o subagente já sabe fazer, não como merge real de argumentos.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from src.infrastructure.usage.user_key import whatsapp_user_key
 from src.infrastructure.whatsapp import evolution_client
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -150,11 +153,22 @@ async def handle_pending_approval_reply(
         return False
 
     if pending.awaiting_edit_text:
+        thread_id = pending.thread_id
         clear_pending_approval(phone_number)
-        await agent_runner.resume(
-            thread_id=pending.thread_id,
+        result = await _resume_safely(
+            agent_runner,
+            thread_id=thread_id,
             decisions=({"type": "reject", "message": text},),
             user_key=whatsapp_user_key(phone_number),
+        )
+        from src.infrastructure.scheduling.complete_after_resume import (
+            maybe_complete_scheduled_task_after_resume,
+        )
+
+        await maybe_complete_scheduled_task_after_resume(
+            thread_id=thread_id,
+            decision_type="reject",
+            result=result,
         )
         return True
 
@@ -167,13 +181,46 @@ async def handle_pending_approval_reply(
         await evolution_client.send_text(instance, phone_number, _ADJUST_PROMPT_MESSAGE)
         return True
 
+    thread_id = pending.thread_id
     clear_pending_approval(phone_number)
-    await agent_runner.resume(
-        thread_id=pending.thread_id,
+    result = await _resume_safely(
+        agent_runner,
+        thread_id=thread_id,
         decisions=({"type": decision_type},),
         user_key=whatsapp_user_key(phone_number),
     )
+    from src.infrastructure.scheduling.complete_after_resume import (
+        maybe_complete_scheduled_task_after_resume,
+    )
+
+    await maybe_complete_scheduled_task_after_resume(
+        thread_id=thread_id,
+        decision_type=decision_type,
+        result=result,
+    )
     return True
+
+
+async def _resume_safely(
+    agent_runner: _AgentRunnerPort,
+    *,
+    thread_id: str,
+    decisions: tuple[dict[str, Any], ...],
+    user_key: str,
+) -> Any:
+    """Chama `resume` engolindo exceções (espelha Telegram `_do_resume_safely`)."""
+    try:
+        return await agent_runner.resume(
+            thread_id=thread_id,
+            decisions=decisions,
+            user_key=user_key,
+        )
+    except Exception:  # noqa: BLE001 — fronteira do canal
+        logger.exception(
+            "agent_runner.resume() falhou no WhatsApp thread_id=%s",
+            thread_id,
+        )
+        return None
 
 
 __all__ = [

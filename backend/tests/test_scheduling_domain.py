@@ -141,6 +141,29 @@ def test_waiting_human_from_running_only():
         again.waiting_human()
 
 
+def test_resume_succeed_and_fail_from_waiting_human_only():
+    """resume-1: WAITING_HUMAN → SUCCEEDED/FAILED; outros estados rejeitam."""
+    ok = _new_task()
+    ok.start()
+    ok.waiting_human()
+    ok.resume_succeed()
+    assert ok.status == TaskStatus.SUCCEEDED
+
+    fail = _new_task()
+    fail.start()
+    fail.waiting_human()
+    fail.resume_fail("reject")
+    assert fail.status == TaskStatus.FAILED
+    assert fail.error == "reject"
+
+    not_waiting = _new_task()
+    not_waiting.start()
+    with pytest.raises(DomainError, match="WAITING_HUMAN"):
+        not_waiting.resume_succeed()
+    with pytest.raises(DomainError, match="WAITING_HUMAN"):
+        not_waiting.resume_fail("x")
+
+
 def test_rearm_for_cron_from_terminal_states():
     """Decision 5: cron SUCCEEDED/FAILED → SCHEDULED; once rejects."""
     cron = ScheduledTask(

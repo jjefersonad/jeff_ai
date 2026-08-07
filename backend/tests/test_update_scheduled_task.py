@@ -60,6 +60,38 @@ class _FakeScheduler(TaskSchedulerPort):
         self.unscheduled.append(task_id)
 
 
+class _FakeDeliveryResolver:
+    def __init__(
+        self,
+        *,
+        result: str | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.result = result
+        self.error = error
+        self.calls: list[tuple[str, str | None]] = []
+
+    async def resolve(
+        self, *, user_id: str, delivery_channel: str | None
+    ) -> str | None:
+        self.calls.append((user_id, delivery_channel))
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def _update_use_case(
+    repo: _FakeRepository,
+    sched: _FakeScheduler,
+    resolver: _FakeDeliveryResolver | None = None,
+) -> UpdateScheduledTask:
+    return UpdateScheduledTask(
+        repository=repo,
+        scheduler=sched,
+        delivery_resolver=resolver or _FakeDeliveryResolver(),
+    )
+
+
 def _new_task(**overrides: object) -> ScheduledTask:
     defaults: dict[object, object] = dict(
         id="t-1",
@@ -83,7 +115,7 @@ async def test_execute_updates_fields_and_reschedules_when_schedule_changes():
     repo = _FakeRepository()
     sched = _FakeScheduler()
     await repo.save(_new_task())
-    use_case = UpdateScheduledTask(repository=repo, scheduler=sched)
+    use_case = _update_use_case(repo, sched)
 
     new_schedule = Schedule(kind="once", expr="2026-06-15T10:00:00")
     returned = await use_case.execute(
@@ -111,7 +143,7 @@ async def test_execute_does_not_reschedule_when_schedule_unchanged():
     repo = _FakeRepository()
     sched = _FakeScheduler()
     await repo.save(_new_task())
-    use_case = UpdateScheduledTask(repository=repo, scheduler=sched)
+    use_case = _update_use_case(repo, sched)
 
     await use_case.execute(
         task_id="t-1",
@@ -134,7 +166,7 @@ async def test_execute_raises_when_caller_is_not_owner_and_not_admin():
     repo = _FakeRepository()
     sched = _FakeScheduler()
     await repo.save(_new_task())
-    use_case = UpdateScheduledTask(repository=repo, scheduler=sched)
+    use_case = _update_use_case(repo, sched)
 
     with pytest.raises(ScheduledTaskAuthorizationError):
         await use_case.execute(
@@ -156,7 +188,7 @@ async def test_execute_allows_admin_to_edit_others_task():
     repo = _FakeRepository()
     sched = _FakeScheduler()
     await repo.save(_new_task())
-    use_case = UpdateScheduledTask(repository=repo, scheduler=sched)
+    use_case = _update_use_case(repo, sched)
 
     returned = await use_case.execute(
         task_id="t-1",
@@ -181,7 +213,7 @@ async def test_execute_rejects_edit_when_task_not_scheduled(status: TaskStatus):
     task = _new_task()
     task.status = status
     await repo.save(task)
-    use_case = UpdateScheduledTask(repository=repo, scheduler=sched)
+    use_case = _update_use_case(repo, sched)
 
     with pytest.raises(ScheduledTaskNotEditableError):
         await use_case.execute(
@@ -203,12 +235,62 @@ async def test_execute_rejects_edit_when_task_not_scheduled(status: TaskStatus):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
+async def test_execute_update_delivery_channel_without_link_does_not_save():
+    """create-1 / REQ-002: update sem vínculo não persiste mudança."""
+    from src.domain.shared.errors import DomainError
+
+    repo = _FakeRepository()
+    sched = _FakeScheduler()
+    await repo.save(_new_task(delivery_user_key=None))
+    resolver = _FakeDeliveryResolver(error=DomainError("canal telegram sem vínculo"))
+    use_case = _update_use_case(repo, sched, resolver)
+
+    with pytest.raises(DomainError, match="telegram"):
+        await use_case.execute(
+            task_id="t-1",
+            caller_user_key="web:owner-1",
+            caller_user_id="owner-1",
+            is_admin=False,
+            delivery_channel="telegram",
+        )
+
+    stored = await repo.get("t-1")
+    assert stored is not None
+    assert stored.delivery_user_key is None
+    assert sched.scheduled == []
+
+
+@pytest.mark.asyncio
+async def test_execute_update_persists_resolved_delivery_user_key():
+    repo = _FakeRepository()
+    sched = _FakeScheduler()
+    await repo.save(_new_task())
+    resolver = _FakeDeliveryResolver(result="telegram:42")
+    use_case = _update_use_case(repo, sched, resolver)
+
+    returned = await use_case.execute(
+        task_id="t-1",
+        caller_user_key="web:owner-1",
+        caller_user_id="owner-1",
+        is_admin=False,
+        delivery_channel="telegram",
+    )
+
+    assert returned is not None
+    assert returned.delivery_user_key == "telegram:42"
+    assert (await repo.get("t-1")).delivery_user_key == "telegram:42"
+    assert resolver.calls == [("owner-1", "telegram")]
+
+
 def test_constructor_stores_dependencies_by_injection():
     repo = _FakeRepository()
     sched = _FakeScheduler()
-    use_case = UpdateScheduledTask(repository=repo, scheduler=sched)
+    resolver = _FakeDeliveryResolver()
+    use_case = _update_use_case(repo, sched, resolver)
     assert use_case._repository is repo
     assert use_case._scheduler is sched
+    assert use_case._delivery_resolver is resolver
 
 
 def test_constructor_does_not_import_framework():

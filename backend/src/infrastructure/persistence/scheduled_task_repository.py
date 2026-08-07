@@ -17,18 +17,19 @@ from src.application.ports.scheduled_task_repository import ScheduledTaskReposit
 from src.domain.scheduling import Schedule, ScheduledTask, TaskStatus, ToolScope
 
 _COLUMNS = (
-    "id, prompt, thread_id, owner_user_key, skills, tool_scope, "
-    "schedule_kind, schedule_expr, status, timeout_seconds, "
+    "id, prompt, thread_id, owner_user_key, delivery_user_key, skills, "
+    "tool_scope, schedule_kind, schedule_expr, status, timeout_seconds, "
     "started_at, finished_at, last_error, created_at"
 )
 
 _UPSERT = f"""
 INSERT INTO scheduled_tasks ({_COLUMNS})
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (id) DO UPDATE SET
     prompt = EXCLUDED.prompt,
     thread_id = EXCLUDED.thread_id,
     owner_user_key = EXCLUDED.owner_user_key,
+    delivery_user_key = EXCLUDED.delivery_user_key,
     skills = EXCLUDED.skills,
     tool_scope = EXCLUDED.tool_scope,
     schedule_kind = EXCLUDED.schedule_kind,
@@ -64,6 +65,7 @@ class PostgresScheduledTaskRepository(ScheduledTaskRepositoryPort):
                         task.prompt,
                         task.thread_id,
                         task.owner_user_key,
+                        task.delivery_user_key,
                         list(task.skills),
                         task.tool_scope.value,
                         task.schedule.kind,
@@ -116,6 +118,7 @@ def _row_to_task(row: tuple[Any, ...]) -> ScheduledTask:
         prompt,
         thread_id,
         owner_user_key,
+        delivery_user_key,
         skills,
         tool_scope,
         schedule_kind,
@@ -133,6 +136,7 @@ def _row_to_task(row: tuple[Any, ...]) -> ScheduledTask:
         thread_id=thread_id,
         schedule=Schedule(kind=schedule_kind, expr=schedule_expr),
         owner_user_key=owner_user_key,
+        delivery_user_key=delivery_user_key,
         tool_scope=ToolScope(tool_scope),
         skills=tuple(skills),
         timeout_seconds=timeout_seconds,

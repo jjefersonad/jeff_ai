@@ -145,6 +145,28 @@ def _make_task(*, id_: str, owner: str, thread_id: str = "th-1") -> ScheduledTas
 # ===========================================================================
 
 
+class _FakeDeliveryResolver:
+    def __init__(
+        self,
+        *,
+        result: str | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.result = result
+        self.error = error
+        self.calls: list[tuple[str, str | None]] = []
+
+    async def resolve(
+        self, *, user_id: str, delivery_channel: str | None
+    ) -> str | None:
+        self.calls.append((user_id, delivery_channel))
+        if self.error is not None:
+            raise self.error
+        if delivery_channel is None:
+            return None
+        return self.result
+
+
 async def test_create_resolves_owner_user_key_from_configurable(monkeypatch):
     _configurable(monkeypatch, user_key="web:user-a", thread_id="th-9")
     repo = _FakeRepository()
@@ -152,7 +174,11 @@ async def test_create_resolves_owner_user_key_from_configurable(monkeypatch):
     monkeypatch.setattr(
         st,
         "build_create_scheduled_task",
-        lambda: CreateScheduledTask(repository=repo, scheduler=sched),
+        lambda: CreateScheduledTask(
+            repository=repo,
+            scheduler=sched,
+            delivery_resolver=_FakeDeliveryResolver(),
+        ),
     )
 
     result = await st.create_scheduled_task.ainvoke(
@@ -167,11 +193,85 @@ async def test_create_resolves_owner_user_key_from_configurable(monkeypatch):
     assert sched.scheduled == [result["id"]]
 
 
-def test_create_scheduled_task_does_not_expose_owner_argument():
-    """REQ-003: impossível "spoofar" via argumento — a tool não tem esse parâmetro."""
+def test_create_scheduled_task_does_not_expose_owner_or_raw_delivery_user_key():
+    """tools-1 unit-2 / REQ-003: sem spoof; delivery_channel opcional presente."""
     sig = inspect.signature(st.create_scheduled_task.coroutine)
     assert "owner_user_key" not in sig.parameters
+    assert "delivery_user_key" not in sig.parameters
     assert "created_by" not in sig.parameters
+    assert "delivery_channel" in sig.parameters
+    assert sig.parameters["delivery_channel"].default is None
+
+
+async def test_create_with_delivery_channel_returns_canonical_destination(monkeypatch):
+    """tools-1 unit-1 / REQ-ADD-003: retorno com id, schedule e delivery_user_key."""
+    from src.domain.shared.errors import DomainError
+
+    _configurable(monkeypatch, user_key="web:user-a", thread_id="th-1")
+    repo = _FakeRepository()
+    sched = _FakeScheduler()
+    resolver = _FakeDeliveryResolver(result="whatsapp:5511999999999")
+    monkeypatch.setattr(
+        st,
+        "build_create_scheduled_task",
+        lambda: CreateScheduledTask(
+            repository=repo,
+            scheduler=sched,
+            delivery_resolver=resolver,
+        ),
+    )
+
+    result = await st.create_scheduled_task.ainvoke(
+        {
+            "prompt": "mande no zap",
+            "schedule_kind": "once",
+            "schedule_expr": "2026-12-31T23:59:00",
+            "delivery_channel": "whatsapp",
+        }
+    )
+
+    assert "error" not in result
+    assert result["id"]
+    assert result["schedule"] == {"kind": "once", "expr": "2026-12-31T23:59:00"}
+    assert result["delivery_user_key"] == "whatsapp:5511999999999"
+    assert result["effective_delivery_user_key"] == "whatsapp:5511999999999"
+    assert resolver.calls == [("user-a", "whatsapp")]
+    assert sched.scheduled == [result["id"]]
+
+
+async def test_create_delivery_channel_without_link_returns_error(monkeypatch):
+    """Erro de vínculo → {"error": ...} sem criar tarefa."""
+    from src.domain.shared.errors import DomainError
+
+    _configurable(monkeypatch, user_key="web:user-a", thread_id="th-1")
+    repo = _FakeRepository()
+    sched = _FakeScheduler()
+    resolver = _FakeDeliveryResolver(
+        error=DomainError("canal whatsapp sem vínculo ativo")
+    )
+    monkeypatch.setattr(
+        st,
+        "build_create_scheduled_task",
+        lambda: CreateScheduledTask(
+            repository=repo,
+            scheduler=sched,
+            delivery_resolver=resolver,
+        ),
+    )
+
+    result = await st.create_scheduled_task.ainvoke(
+        {
+            "prompt": "x",
+            "schedule_kind": "once",
+            "schedule_expr": "2026-12-31T23:59:00",
+            "delivery_channel": "whatsapp",
+        }
+    )
+
+    assert "error" in result
+    assert "whatsapp" in result["error"].lower()
+    assert sched.scheduled == []
+    assert await repo.list_all() == []
 
 
 async def test_create_without_identity_returns_error_not_exception(monkeypatch):
@@ -190,7 +290,11 @@ async def test_create_runs_without_approval_tier_2(monkeypatch):
     monkeypatch.setattr(
         st,
         "build_create_scheduled_task",
-        lambda: CreateScheduledTask(repository=repo, scheduler=sched),
+        lambda: CreateScheduledTask(
+            repository=repo,
+            scheduler=sched,
+            delivery_resolver=_FakeDeliveryResolver(),
+        ),
     )
     result = await st.create_scheduled_task.ainvoke(
         {"prompt": "x", "schedule_kind": "cron", "schedule_expr": "0 9 * * *"}
@@ -414,6 +518,7 @@ def test_build_create_scheduled_task_uses_postgres_repo_and_singleton_scheduler(
     assert isinstance(use_case._repository, PostgresScheduledTaskRepository)
     assert use_case._repository._conninfo == "postgresql://builder-test@localhost/db"
     assert use_case._scheduler is task_scheduler
+    assert use_case._delivery_resolver is not None
 
 
 def test_build_list_scheduled_tasks_uses_postgres_repo(

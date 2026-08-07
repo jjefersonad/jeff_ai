@@ -225,3 +225,26 @@ async def test_run_returns_0_when_task_no_longer_exists():
     )
 
     assert exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_run_returns_0_when_cron_rearms_to_scheduled():
+    """Cron ok rearma para SCHEDULED — exit 0 (tick concluído com sucesso)."""
+    repo = _FakeRepository()
+    await repo.save(
+        _make_task(schedule=Schedule(kind="cron", expr="0 9 * * *"))
+    )
+    use_case = _make_run_scheduled_task(
+        repository=repo, agent_runner=_FakeRunner(status="ok")
+    )
+
+    exit_code = await jeff_cli._run(
+        job_id="job-1", components=(repo, use_case)
+    )
+
+    assert exit_code == 0
+    stored = await repo.get("job-1")
+    assert stored is not None
+    from src.domain.scheduling import TaskStatus
+
+    assert stored.status == TaskStatus.SCHEDULED

@@ -492,9 +492,10 @@ async def handle_approval_callback(
     # 3. Approve/Reject: resume, ack, cleanup.
     decision: dict[str, Any] = {"type": data}
     await _answer_callback_safely(callback_query)
+    thread_id = pending.thread_id
     result = await _do_resume_safely(
         agent_runner,
-        thread_id=pending.thread_id,
+        thread_id=thread_id,
         decisions=(decision,),
         user_key=telegram_user_key(chat_id),
     )
@@ -504,6 +505,15 @@ async def handle_approval_callback(
         # já falhou.
         await _send_error_to_chat(bot, chat_id)
     clear_pending_approval(chat_id)
+    from src.infrastructure.scheduling.complete_after_resume import (
+        maybe_complete_scheduled_task_after_resume,
+    )
+
+    await maybe_complete_scheduled_task_after_resume(
+        thread_id=thread_id,
+        decision_type=data,
+        result=result,
+    )
 
 
 async def _send_edit_prompt(bot: _BotLike, chat_id: str) -> None:
@@ -581,6 +591,15 @@ async def consume_edit_text_reply(
     if result is None:
         await _send_error_to_chat(bot, chat_id)
     clear_pending_approval(chat_id)
+    from src.infrastructure.scheduling.complete_after_resume import (
+        maybe_complete_scheduled_task_after_resume,
+    )
+
+    await maybe_complete_scheduled_task_after_resume(
+        thread_id=thread_id,
+        decision_type="reject",
+        result=result,
+    )
     return True
 
 

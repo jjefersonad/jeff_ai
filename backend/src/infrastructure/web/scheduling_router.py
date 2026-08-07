@@ -24,6 +24,7 @@ from src.application.use_cases.cancel_scheduled_task import (
 )
 from src.application.use_cases.create_scheduled_task import CreateScheduledTask
 from src.application.use_cases.list_scheduled_tasks import ListScheduledTasks
+from src.application.use_cases.resolve_delivery_target import ResolveDeliveryTarget
 from src.application.use_cases.update_scheduled_task import (
     ScheduledTaskNotEditableError,
     UpdateScheduledTask,
@@ -34,6 +35,9 @@ from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.users import User
 from src.infrastructure.persistence.scheduled_task_repository import (
     PostgresScheduledTaskRepository,
+)
+from src.infrastructure.persistence.user_integrations_repository import (
+    PostgresUserIntegrationRepository,
 )
 from src.infrastructure.scheduling.scheduler_instance import task_scheduler
 
@@ -50,6 +54,13 @@ def _task_scheduler_dependency() -> TaskSchedulerPort:
     return task_scheduler
 
 
+def _delivery_target_resolver() -> ResolveDeliveryTarget:
+    """Resolver de destino de entrega a partir de `user_integrations`."""
+    return ResolveDeliveryTarget(
+        repository=PostgresUserIntegrationRepository(os.environ["POSTGRES_URI"])
+    )
+
+
 class ScheduledTaskCreateRequest(BaseModel):
     """Corpo de `POST /api/scheduled-tasks`. Nenhum campo de ownership."""
 
@@ -59,6 +70,7 @@ class ScheduledTaskCreateRequest(BaseModel):
     tool_scope: str = "restricted"
     skills: list[str] = []
     timeout_seconds: int | None = None
+    delivery_channel: str | None = None
 
 
 class ScheduledTaskUpdateRequest(BaseModel):
@@ -74,6 +86,7 @@ class ScheduledTaskUpdateRequest(BaseModel):
     schedule_expr: str | None = None
     tool_scope: str | None = None
     skills: list[str] | None = None
+    delivery_channel: str | None = None
 
 
 class ScheduledTaskResponse(BaseModel):
@@ -89,10 +102,17 @@ class ScheduledTaskResponse(BaseModel):
     timeout_seconds: int
     status: str
     owner_user_key: str
+    delivery_user_key: str | None
     started_at: datetime | None
     finished_at: datetime | None
     error: str | None
     created_at: datetime
+
+
+class DeliveryChannelsResponse(BaseModel):
+    """Canais de entrega disponíveis ao usuário autenticado."""
+
+    channels: list[str]
 
 
 def _to_response(task: ScheduledTask) -> ScheduledTaskResponse:
@@ -107,11 +127,24 @@ def _to_response(task: ScheduledTask) -> ScheduledTaskResponse:
         timeout_seconds=task.timeout_seconds,
         status=task.status.value,
         owner_user_key=task.owner_user_key,
+        delivery_user_key=task.delivery_user_key,
         started_at=task.started_at,
         finished_at=task.finished_at,
         error=task.error,
         created_at=task.created_at,
     )
+
+
+@router.get("/api/scheduling/delivery-channels")
+async def list_delivery_channels_endpoint(
+    user: User | None = Depends(require_auth),
+    delivery_resolver: ResolveDeliveryTarget = Depends(_delivery_target_resolver),
+) -> DeliveryChannelsResponse:
+    """Canais de notificação/HITL do próprio usuário (+ `web`)."""
+    if user is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    channels = await delivery_resolver.list_channels(user_id=user.id)
+    return DeliveryChannelsResponse(channels=channels)
 
 
 @router.get("/api/scheduled-tasks")
@@ -136,6 +169,7 @@ async def create_scheduled_task_endpoint(
     user: User | None = Depends(require_auth),
     repo: ScheduledTaskRepositoryPort = Depends(_scheduled_task_repository),
     scheduler: TaskSchedulerPort = Depends(_task_scheduler_dependency),
+    delivery_resolver: ResolveDeliveryTarget = Depends(_delivery_target_resolver),
 ) -> ScheduledTaskResponse:
     """REQ-002: `owner_user_key` sempre resolvido da sessão, nunca do corpo."""
     if user is None:
@@ -147,7 +181,11 @@ async def create_scheduled_task_endpoint(
     except (DomainError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    use_case = CreateScheduledTask(repository=repo, scheduler=scheduler)
+    use_case = CreateScheduledTask(
+        repository=repo,
+        scheduler=scheduler,
+        delivery_resolver=delivery_resolver,
+    )
     try:
         task = await use_case.execute(
             task_id=uuid.uuid4().hex,
@@ -155,6 +193,8 @@ async def create_scheduled_task_endpoint(
             thread_id=uuid.uuid4().hex,
             schedule=schedule,
             owner_user_key=f"web:{user.id}",
+            owner_user_id=user.id,
+            delivery_channel=body.delivery_channel,
             tool_scope=scope,
             skills=tuple(body.skills),
             timeout_seconds=body.timeout_seconds,
@@ -171,6 +211,7 @@ async def update_scheduled_task_endpoint(
     user: User | None = Depends(require_auth),
     repo: ScheduledTaskRepositoryPort = Depends(_scheduled_task_repository),
     scheduler: TaskSchedulerPort = Depends(_task_scheduler_dependency),
+    delivery_resolver: ResolveDeliveryTarget = Depends(_delivery_target_resolver),
 ) -> ScheduledTaskResponse:
     """REQ-003: edição restrita a `SCHEDULED`; REQ-005: autorização da sessão."""
     if user is None:
@@ -192,17 +233,25 @@ async def update_scheduled_task_endpoint(
     except (DomainError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    use_case = UpdateScheduledTask(repository=repo, scheduler=scheduler)
+    use_case = UpdateScheduledTask(
+        repository=repo,
+        scheduler=scheduler,
+        delivery_resolver=delivery_resolver,
+    )
     try:
         task = await use_case.execute(
             task_id=task_id,
             caller_user_key=f"web:{user.id}",
+            caller_user_id=user.id,
             is_admin=user.role == "admin",
             prompt=body.prompt,
             schedule=schedule,
             tool_scope=tool_scope,
             skills=tuple(body.skills) if body.skills is not None else None,
+            delivery_channel=body.delivery_channel,
         )
+    except DomainError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ScheduledTaskAuthorizationError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ScheduledTaskNotEditableError as exc:

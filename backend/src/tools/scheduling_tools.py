@@ -84,6 +84,8 @@ def _task_to_dict(task: ScheduledTask) -> dict[str, Any]:
         "timeout_seconds": task.timeout_seconds,
         "status": task.status.value,
         "owner_user_key": task.owner_user_key,
+        "delivery_user_key": task.delivery_user_key,
+        "effective_delivery_user_key": task.effective_delivery_user_key,
     }
 
 
@@ -95,6 +97,7 @@ async def create_scheduled_task(
     tool_scope: str = "restricted",
     skills: list[str] | None = None,
     timeout_seconds: int | None = None,
+    delivery_channel: str | None = None,
 ) -> dict[str, Any]:
     """Agenda uma tarefa para o agente rodar no futuro, uma vez ou de forma recorrente.
 
@@ -104,6 +107,10 @@ async def create_scheduled_task(
     `tool_scope`: "restricted" (default — só tools Tier 1/2, seguro para rodar
     sem supervisão) ou "full" (todas as tools; qualquer Tier 3/4 pausa
     aguardando aprovação humana, igual a uma conversa normal).
+    `delivery_channel` (opcional): canal de notificação/HITL — `"web"`,
+    `"telegram"` ou `"whatsapp"`, resolvido contra os vínculos do usuário
+    autenticado. Omitido → notifica no canal da sessão. NÃO aceite
+    identificadores crus de terceiros.
     A tarefa roda na MESMA thread desta conversa e pertence a QUEM está
     conversando agora — não é possível agendar em nome de outro usuário.
     """
@@ -119,6 +126,7 @@ async def create_scheduled_task(
     except (DomainError, ValueError) as exc:
         return {"error": str(exc)}
 
+    owner_user_id = await resolve_user_id()
     use_case = build_create_scheduled_task()
     try:
         task = await use_case.execute(
@@ -127,6 +135,8 @@ async def create_scheduled_task(
             thread_id=_current_thread_id(),
             schedule=schedule,
             owner_user_key=owner_user_key,
+            owner_user_id=owner_user_id,
+            delivery_channel=delivery_channel,
             tool_scope=scope,
             skills=tuple(skills or ()),
             timeout_seconds=timeout_seconds,
