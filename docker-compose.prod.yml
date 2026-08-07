@@ -138,6 +138,11 @@ services:
     # Substitui o ENTRYPOINT da imagem langgraph-api (uvicorn) — ver nota
     # completa em docker-compose.yml.
     entrypoint: ["/bin/sh", "/deps/backend/telegram_gateway_entrypoint.sh"]
+    # A imagem base traz healthcheck HTTP :8000 (langgraph-api). O gateway
+    # não sobe uvicorn — só polling do Telegram — então o probe marca
+    # unhealthy à toa. Desliga o healthcheck herdado.
+    healthcheck:
+      disable: true
     networks:
       - jeff_ia-network
 
