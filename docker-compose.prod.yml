@@ -1,6 +1,6 @@
 # Stack de produção standalone: `docker compose -f docker-compose.prod.yml up -d`
-# sobe apenas frontend + backend. Telegram e demais canais/infra ficam fora
-# deste arquivo — use `docker-compose.all.yml` ou um processo/stack externo.
+# sobe frontend + backend + telegram_gateway. Infra (Postgres/Redis/Ollama/
+# Evolution) fica externa — use `docker-compose.all.yml` para o stack completo.
 #
 # Diferenças deliberadas em relação a docker-compose.yml (dev local):
 # - Sem jeff_ia_postgres/jeff_ia_redis/jeff_ia_pgadmin: Postgres/Redis do
@@ -14,7 +14,7 @@
 #   _WEBHOOK_TOKEN abaixo, que só apontam pra ela). Já foi um serviço
 #   autocontido aqui (evolution_postgres/evolution_redis/evolution_api);
 #   removido deste arquivo — não confundir com relatos antigos.
-# - telegram_gateway NÃO entra neste arquivo (prod = app only).
+# - telegram_gateway entra aqui (mesma imagem do backend; polling do bot).
 services:
   backend:
     build:
@@ -106,6 +106,40 @@ services:
     networks:
       - jeff_ia-network
 
+  # Polling do bot Telegram (mesma imagem do backend). Sem TELEGRAM_* o
+  # bootstrap falha rápido. Compartilha `backend_outputs` com o backend para
+  # as tools send_telegram_photo/_document resolverem paths gerados.
+  telegram_gateway:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.backend
+    container_name: jeff_ia_telegram_gateway
+    restart: unless-stopped
+    environment:
+      POSTGRES_URI: ${POSTGRES_URI:?defina POSTGRES_URI em .env}
+      REDIS_URI: ${REDIS_URI:?defina REDIS_URI em .env}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?defina TELEGRAM_BOT_TOKEN em .env}
+      TELEGRAM_AUTHORIZED_CHAT_ID: ${TELEGRAM_AUTHORIZED_CHAT_ID:?defina TELEGRAM_AUTHORIZED_CHAT_ID em .env}
+      TELEGRAM_LEGACY_OWNER_USER_ID: ${TELEGRAM_LEGACY_OWNER_USER_ID:-}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
+      BASE_URL: ${BASE_URL:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?defina OPENROUTER_API_KEY em .env}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      INTEGRATION_CREDENTIALS_KEY: ${INTEGRATION_CREDENTIALS_KEY:-}
+      JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
+    depends_on:
+      - backend
+    volumes:
+      - backend_outputs:/deps/backend/outputs
+    # Substitui o ENTRYPOINT da imagem langgraph-api (uvicorn) — ver nota
+    # completa em docker-compose.yml.
+    entrypoint: ["/bin/sh", "/deps/backend/telegram_gateway_entrypoint.sh"]
+    networks:
+      - jeff_ia-network
 
 networks:
   jeff_ia-network:
