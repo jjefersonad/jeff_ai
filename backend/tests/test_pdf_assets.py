@@ -26,3 +26,18 @@ def test_pyproject_declares_fpdf2() -> None:
     data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     deps = data["project"]["dependencies"]
     assert any(dep.startswith("fpdf2") for dep in deps), deps
+
+
+def test_dockerfile_declares_fpdf2() -> None:
+    """Unit: Dockerfile.backend pina fpdf2 na lista explícita de pip install."""
+    dockerfile = _BACKEND_ROOT / "Dockerfile.backend"
+    text = dockerfile.read_text(encoding="utf-8")
+    pins = [
+        line.strip().strip("\\").strip().strip('"').strip("'")
+        for line in text.splitlines()
+        if "fpdf2==" in line
+    ]
+    assert pins, "Dockerfile.backend must pin fpdf2==… in RUN pip install"
+    # Pin esperado do design: 2.8.7 (compatível com pyproject fpdf2>=2.8.0).
+    assert any(pin.startswith("fpdf2==2.8.") for pin in pins), pins
+    assert any(pin == "fpdf2==2.8.7" for pin in pins), pins
