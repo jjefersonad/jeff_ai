@@ -11,22 +11,22 @@ design, "Invocação direta do grafo").
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from datetime import datetime
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 
+from src.agents.unified.datetime_utils import _resolve_tz
 from src.application.ports.task_scheduler import TaskSchedulerPort
 from src.domain.scheduling import Schedule, ScheduledTask
 
 
 def _scheduler_timezone() -> ZoneInfo:
-    """Resolve o fuso do `JEFF_AI_TZ` (mesmo fallback de `agent.py:_resolve_tz`).
+    """Thin-wrapper sobre `_resolve_tz` (mesmo fuso do prompt e da tool).
 
     `schedule.expr` de uma tarefa `once` (ex. `"2026-08-04T08:00:00"`) é
     escrito/lido no fuso de `JEFF_AI_TZ` (ver `current-date-context` — é o
@@ -36,11 +36,7 @@ def _scheduler_timezone() -> ZoneInfo:
     agendamento disparar com o offset de `JEFF_AI_TZ` de diferença (3h em
     `America/Sao_Paulo` — uma tarefa "às 8h" disparava às 8h UTC = 5h BRT).
     """
-    name = os.environ.get("JEFF_AI_TZ", "UTC")
-    try:
-        return ZoneInfo(name)
-    except ZoneInfoNotFoundError:
-        return ZoneInfo("UTC")
+    return _resolve_tz()
 
 
 class APSchedulerTaskScheduler(TaskSchedulerPort):

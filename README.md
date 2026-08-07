@@ -100,7 +100,7 @@ This is a **dev-only default** — change it before any real deployment. Since t
 | `TAVILY_API_KEY` | Enables web search |
 | `GOOGLE_API_KEY` | Enables image generation via Gemini |
 | `LANGSMITH_API_KEY` | Enables LangSmith tracing |
-| `JEFF_AI_TZ` | IANA timezone (e.g. `America/Sao_Paulo`) used to fill in the local date in the system prompt; defaults to `UTC` |
+| `JEFF_AI_TZ` | IANA timezone (e.g. `America/Sao_Paulo`) for the system-prompt date, `get_date_time_current`, and scheduled-task triggers (`once`/`cron` exprs are local wall-clock in this zone). Defaults to `UTC`. **Forward-fix only:** `once` tasks created while the tool returned UTC under a non-UTC `JEFF_AI_TZ` may fire at the wrong instant — recreate them after deploy. **Smoke:** with `JEFF_AI_TZ=America/Sao_Paulo`, ask “que horas são?” (must match local time, not UTC+0 wall-clock) and schedule a one-shot a few minutes ahead to confirm it fires on time. |
 
 ## Share the project
 

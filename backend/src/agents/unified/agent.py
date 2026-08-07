@@ -186,7 +186,8 @@ for d in (WORKSPACE_DIR, OUTPUTS_DIR, SPECIFY_DIR, TEMPLATES_DIR.parent):
 # 24h é tolerável); para precisão de minutos/segundos, o agente usa
 # `get_date_time_current` (que continua existindo, só perde centralidade).
 _CURRENT_DATE: str = datetime.now(_resolve_tz()).date().isoformat()
-_CURRENT_TZ: str = os.environ.get("JEFF_AI_TZ", "UTC")
+# Mesma ordem de `_tz_name()` / `_resolve_tz` (JEFF_AI_TZ → TZ → UTC).
+_CURRENT_TZ: str = os.environ.get("JEFF_AI_TZ") or os.environ.get("TZ") or "UTC"
 
 _SYSTEM_PROMPT = f"""Data atual: {_CURRENT_DATE} ({_CURRENT_TZ})
 

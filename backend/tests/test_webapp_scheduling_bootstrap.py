@@ -86,6 +86,11 @@ def _patch_common_bootstrap(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -
         "ensure_whatsapp_threads_schema",
         lambda conninfo: calls.append(f"whatsapp_threads_schema:{conninfo}"),
     )
+    monkeypatch.setattr(
+        webapp,
+        "ensure_langgraph_checkpoint_schema",
+        lambda conninfo: calls.append(f"checkpoint_schema:{conninfo}"),
+    )
 
     async def _fake_init_pool(conninfo: str) -> None:
         calls.append(f"pool:{conninfo}")
@@ -185,6 +190,18 @@ def test_lifespan_calls_scheduled_tasks_schema_and_auth_schema_independently(
     assert "auth:postgresql://scheduling-bootstrap" in calls
     assert "scheduled_tasks_schema:postgresql://scheduling-bootstrap" in calls
     assert "scheduler:start" in calls
+    # REQ-ADD-001: _patch_common_bootstrap MUST stub current lifespan deps so
+    # TestClient never hits a real Postgres / ChannelRegistry bootstrap.
+    assert "build_dependencies" in calls
+    assert "user_mcp_servers_schema:postgresql://scheduling-bootstrap" in calls
+    assert "whatsapp_link_codes_schema:postgresql://scheduling-bootstrap" in calls
+    assert "whatsapp_threads_schema:postgresql://scheduling-bootstrap" in calls
+    # REQ-ADD-001: ensure MUST run before pool/reschedule (list_all path).
+    schema_idx = calls.index(
+        "scheduled_tasks_schema:postgresql://scheduling-bootstrap"
+    )
+    pool_idx = calls.index("pool:postgresql://scheduling-bootstrap")
+    assert schema_idx < pool_idx
 
 
 def test_lifespan_starts_scheduler_even_when_auth_schema_raises(

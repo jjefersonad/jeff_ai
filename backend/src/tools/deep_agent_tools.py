@@ -1,5 +1,10 @@
-from langchain_core.tools import tool
+from datetime import datetime
 import os
+
+from langchain_core.tools import tool
+
+from src.agents.unified.datetime_utils import _resolve_tz
+
 
 @tool
 def ls(path: str) -> str:
@@ -7,6 +12,7 @@ def ls(path: str) -> str:
     if not os.path.exists(path):
         return f"Diretório não encontrado: {path}"
     return "\n".join(os.listdir(path))
+
 
 @tool
 def read_file(path: str) -> str:
@@ -16,6 +22,7 @@ def read_file(path: str) -> str:
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
+
 @tool
 def write_file(path: str, content: str) -> str:
     """Escreve conteúdo em um arquivo."""
@@ -24,8 +31,8 @@ def write_file(path: str, content: str) -> str:
         f.write(content)
     return f"Arquivo escrito em {path}"
 
+
 @tool
 def get_date_time_current() -> str:
-    """Retorna a data e hora atual no formato DD/MM/YYYY."""
-    from datetime import datetime
-    return datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    """Retorna a data e hora atual (DD/MM/YYYY HH:MM:SS) no fuso `JEFF_AI_TZ` (fallback `TZ`, depois UTC)."""
+    return datetime.now(_resolve_tz()).strftime("%d/%m/%Y %H:%M:%S")

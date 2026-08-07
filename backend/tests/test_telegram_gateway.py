@@ -203,6 +203,10 @@ def test_main_registers_message_and_command_handlers_before_polling(
     monkeypatch.setenv("POSTGRES_URI", "postgresql://fake")
     monkeypatch.setattr(telegram_schema, "ensure_telegram_threads_schema", lambda uri: None)
     monkeypatch.setattr(usage_schema, "ensure_schema", lambda uri: None)
+    monkeypatch.setattr(
+        "src.infrastructure.agent_runtime.checkpoint_schema.ensure_langgraph_checkpoint_schema",
+        lambda uri: None,
+    )
     monkeypatch.setattr(telegram_gateway, "build_runner", lambda *, postgres_uri: object())
 
     recording_app = _RecordingApplication()
@@ -275,6 +279,10 @@ def test_main_registers_callback_query_handler_after_message_and_command(
     monkeypatch.setenv("POSTGRES_URI", "postgresql://fake")
     monkeypatch.setattr(telegram_schema, "ensure_telegram_threads_schema", lambda uri: None)
     monkeypatch.setattr(usage_schema, "ensure_schema", lambda uri: None)
+    monkeypatch.setattr(
+        "src.infrastructure.agent_runtime.checkpoint_schema.ensure_langgraph_checkpoint_schema",
+        lambda uri: None,
+    )
     monkeypatch.setattr(telegram_gateway, "build_runner", lambda *, postgres_uri: object())
 
     # Substitui a fábrica por uma versão controlada ANTES de chamar main(),
@@ -323,3 +331,70 @@ def test_main_registers_callback_query_handler_after_message_and_command(
     assert factory_called_with["authorized_chat_id"] == "123"
     assert factory_called_with["agent_runner"] is not None
     assert factory_called_with["bot"] is recording_app.bot
+
+
+def test_main_calls_checkpoint_schema_ensure_before_run_polling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REQ-ADD-001: ensure checkpoint schema before polling; fail-fast on error.
+
+    WHEN telegram_gateway bootstrap completes successfully
+    THEN `ensure_langgraph_checkpoint_schema` was invoked before `run_polling`
+    AND if ensure raises, the polling loop does not start.
+    """
+    call_order: list[str] = []
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "123")
+    monkeypatch.setenv("POSTGRES_URI", "postgresql://checkpoint-bootstrap")
+
+    monkeypatch.setattr(
+        telegram_schema, "ensure_telegram_threads_schema", lambda uri: None
+    )
+    monkeypatch.setattr(usage_schema, "ensure_schema", lambda uri: None)
+    monkeypatch.setattr(
+        "src.infrastructure.agent_runtime.checkpoint_schema.ensure_langgraph_checkpoint_schema",
+        lambda uri: call_order.append(f"ensure:{uri}"),
+    )
+    monkeypatch.setattr(
+        telegram_gateway, "build_runner", lambda *, postgres_uri: object()
+    )
+
+    recording_app = _RecordingApplication()
+    monkeypatch.setattr(
+        telegram_gateway, "build_application", lambda _cfg: recording_app
+    )
+
+    def _run_polling(*_a: Any, **_k: Any) -> None:
+        call_order.append("run_polling")
+        recording_app.run_polling_called = True
+
+    monkeypatch.setattr(recording_app, "run_polling", _run_polling)
+
+    exit_code = telegram_gateway.main()
+
+    assert exit_code == 0
+    assert "ensure:postgresql://checkpoint-bootstrap" in call_order
+    assert "run_polling" in call_order
+    assert call_order.index("ensure:postgresql://checkpoint-bootstrap") < call_order.index(
+        "run_polling"
+    )
+
+    # Fail-fast: ensure raises → polling MUST NOT start.
+    call_order.clear()
+    recording_app.run_polling_called = False
+
+    def _ensure_fails(uri: str) -> None:
+        call_order.append(f"ensure:{uri}")
+        raise RuntimeError("postgres unreachable")
+
+    monkeypatch.setattr(
+        "src.infrastructure.agent_runtime.checkpoint_schema.ensure_langgraph_checkpoint_schema",
+        _ensure_fails,
+    )
+
+    with pytest.raises(RuntimeError, match="postgres unreachable"):
+        telegram_gateway.main()
+
+    assert recording_app.run_polling_called is False
+    assert "run_polling" not in call_order
