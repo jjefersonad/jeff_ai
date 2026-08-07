@@ -17,12 +17,27 @@ import src.infrastructure.usage.schema as usage_schema
 import src.infrastructure.web.webapp as webapp
 
 
+def _stub_webapp_schemas_not_under_test(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Evita conexão real em ensures/deps que o teste não cobre.
+
+    Schemas adicionados depois (MCP, scheduled_tasks, ChannelRegistry) quebram
+    o TestClient se não forem stubados — o lifespan chama todos em sequência.
+    """
+    monkeypatch.setattr(
+        "src.composition.dependencies.build_dependencies",
+        lambda: None,
+    )
+    monkeypatch.setattr(webapp, "ensure_user_mcp_servers_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_scheduled_tasks_schema", lambda conninfo: None)
+
+
 def test_webapp_lifespan_calls_usage_ensure_schema(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Unit-1: lifespan do webapp invoca usage.ensure_schema com POSTGRES_URI."""
     calls: list[str] = []
     monkeypatch.setenv("POSTGRES_URI", "postgresql://usage-bootstrap")
+    _stub_webapp_schemas_not_under_test(monkeypatch)
 
     monkeypatch.setattr(
         webapp, "init_auth_schema", lambda conninfo: calls.append(f"auth:{conninfo}")
@@ -48,6 +63,9 @@ def test_webapp_lifespan_calls_usage_ensure_schema(
     monkeypatch.setattr(webapp, "ensure_telegram_link_codes_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_whatsapp_link_codes_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_whatsapp_threads_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_user_mcp_servers_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_scheduled_tasks_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_langgraph_checkpoint_schema", lambda conninfo: None)
 
     async def _fake_init_pool(conninfo: str) -> None:
         calls.append(f"pool:{conninfo}")
@@ -86,6 +104,7 @@ def test_webapp_lifespan_calls_user_integrations_and_telegram_link_codes_ensure_
     """
     calls: list[str] = []
     monkeypatch.setenv("POSTGRES_URI", "postgresql://prereq-bootstrap")
+    _stub_webapp_schemas_not_under_test(monkeypatch)
 
     monkeypatch.setattr(webapp, "init_auth_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_ownership_schema", lambda conninfo: None)
@@ -106,6 +125,9 @@ def test_webapp_lifespan_calls_user_integrations_and_telegram_link_codes_ensure_
     # abaixo) — só precisa não tentar conectar de verdade.
     monkeypatch.setattr(webapp, "ensure_whatsapp_link_codes_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_whatsapp_threads_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_user_mcp_servers_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_scheduled_tasks_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_langgraph_checkpoint_schema", lambda conninfo: None)
 
     async def _fake_init_pool(conninfo: str) -> None:
         calls.append(f"pool:{conninfo}")
@@ -139,6 +161,7 @@ def test_webapp_lifespan_calls_whatsapp_link_codes_ensure_schema(
     """
     calls: list[str] = []
     monkeypatch.setenv("POSTGRES_URI", "postgresql://linking-2-bootstrap")
+    _stub_webapp_schemas_not_under_test(monkeypatch)
 
     monkeypatch.setattr(webapp, "init_auth_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_ownership_schema", lambda conninfo: None)
@@ -152,6 +175,9 @@ def test_webapp_lifespan_calls_whatsapp_link_codes_ensure_schema(
         lambda conninfo: calls.append(f"whatsapp_link_codes:{conninfo}"),
     )
     monkeypatch.setattr(webapp, "ensure_whatsapp_threads_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_user_mcp_servers_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_scheduled_tasks_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_langgraph_checkpoint_schema", lambda conninfo: None)
 
     async def _fake_init_pool(conninfo: str) -> None:
         calls.append(f"pool:{conninfo}")
@@ -186,6 +212,7 @@ def test_webapp_lifespan_calls_whatsapp_threads_ensure_schema(
     """
     calls: list[str] = []
     monkeypatch.setenv("POSTGRES_URI", "postgresql://threads-bootstrap")
+    _stub_webapp_schemas_not_under_test(monkeypatch)
 
     monkeypatch.setattr(webapp, "init_auth_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_ownership_schema", lambda conninfo: None)
@@ -199,6 +226,9 @@ def test_webapp_lifespan_calls_whatsapp_threads_ensure_schema(
         "ensure_whatsapp_threads_schema",
         lambda conninfo: calls.append(f"whatsapp_threads:{conninfo}"),
     )
+    monkeypatch.setattr(webapp, "ensure_user_mcp_servers_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_scheduled_tasks_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_langgraph_checkpoint_schema", lambda conninfo: None)
 
     async def _fake_init_pool(conninfo: str) -> None:
         calls.append(f"pool:{conninfo}")
@@ -243,6 +273,10 @@ def test_telegram_gateway_main_calls_usage_ensure_schema(
     )
     monkeypatch.setattr(
         "src.infrastructure.telegram.schema.ensure_telegram_threads_schema",
+        lambda uri: None,
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.agent_runtime.checkpoint_schema.ensure_langgraph_checkpoint_schema",
         lambda uri: None,
     )
     monkeypatch.setattr(

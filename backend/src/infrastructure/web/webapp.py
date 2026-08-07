@@ -31,6 +31,9 @@ from fastapi import Depends, FastAPI
 
 from src.agents.unified.mcp_admin_api import router as mcp_admin_router
 from src.domain.scheduling import TaskStatus
+from src.infrastructure.agent_runtime.checkpoint_schema import (
+    ensure_langgraph_checkpoint_schema,
+)
 from src.infrastructure.attachments.schema import (
     ensure_schema as ensure_attachments_schema,
 )
@@ -125,6 +128,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     ensure_whatsapp_link_codes_schema(conninfo)
     ensure_whatsapp_threads_schema(conninfo)
     ensure_scheduled_tasks_schema(conninfo)
+    # Schema UUID legado do LangGraph API pode faltar colunas aditivas
+    # (`task_path`). Fail-fast no boot — CLI/agendamento no mesmo processo
+    # herdam a pré-condição sem DDL no hot path do runner.
+    ensure_langgraph_checkpoint_schema(conninfo)
     await init_pool(conninfo)
     await _reschedule_pending_tasks(conninfo)
     task_scheduler.start()

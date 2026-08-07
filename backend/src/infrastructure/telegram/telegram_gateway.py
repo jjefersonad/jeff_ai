@@ -8,8 +8,9 @@ Responsabilidades:
 - Construir o `LangGraphDirectAgentRunner` reaproveitando `build_unified()`
   de `src/agents/unified/agent.py` — SEM duplicar a fábrica do grafo.
 - Garantir o schema do mapeamento `chat_id → thread_id`
-  (`ensure_telegram_threads_schema`) e abrir o pool Postgres que o
-  `LangGraphDirectAgentRunner` usará por `run()`.
+  (`ensure_telegram_threads_schema`), o schema aditivo do checkpointer
+  LangGraph (`ensure_langgraph_checkpoint_schema`) e abrir o pool Postgres
+  que o `LangGraphDirectAgentRunner` usará por `run()`.
 - Registrar o `MessageHandler` (`authorization.make_message_handler`,
   filtro `filters.TEXT & ~filters.COMMAND`), o `CommandHandler`
   (`commands.make_command_dispatcher`, comandos `new`/`title`/`resume`/
@@ -131,10 +132,12 @@ def main() -> int:
        `run_polling`).
     3. `ensure_telegram_threads_schema()` — DDL idempotente.
     4. `usage.ensure_schema()` — tabela `token_usage_events` (metering).
-    5. `build_runner()` — constrói o adapter (reusa `build_unified`).
-    6. `build_application()` — registra `MessageHandler` (mensagens normais)
+    5. `ensure_langgraph_checkpoint_schema()` — ALTER aditivo do checkpointer
+       (ex.: `task_path`); fail-fast se falhar.
+    6. `build_runner()` — constrói o adapter (reusa `build_unified`).
+    7. `build_application()` — registra `MessageHandler` (mensagens normais)
        e `CommandHandler` (`/new`, `/title`, `/resume`, `/sessions`).
-    7. `application.run_polling()` — só aqui o loop infinito inicia.
+    8. `application.run_polling()` — só aqui o loop infinito inicia.
 
     Retorna 0 em saída por Ctrl-C limpo e != 0 em qualquer falha de
     bootstrap. Exceções não-tratadas durante o polling são logadas e
@@ -160,6 +163,9 @@ def main() -> int:
     # passado.
     from telegram.ext import CommandHandler, MessageHandler, filters
 
+    from src.infrastructure.agent_runtime.checkpoint_schema import (
+        ensure_langgraph_checkpoint_schema,
+    )
     from src.infrastructure.telegram.approval import make_approval_callback_handler
     from src.infrastructure.telegram.authorization import make_message_handler
     from src.infrastructure.telegram.commands import make_command_dispatcher
@@ -170,6 +176,9 @@ def main() -> int:
     # Mesma tabela que o lifespan do webapp — o gateway grava usage offline
     # do HTTP e precisa do schema antes do primeiro record do DirectRunner.
     usage_schema.ensure_schema(postgres_uri)
+    # Schema UUID legado do LangGraph API pode faltar colunas aditivas
+    # (`task_path`). Fail-fast aqui — nunca iniciar polling sem o DDL.
+    ensure_langgraph_checkpoint_schema(postgres_uri)
     runner = build_runner(postgres_uri=postgres_uri)
 
     application = build_application(config)
