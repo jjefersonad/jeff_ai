@@ -35,6 +35,10 @@ def _task(task_id: str, status: TaskStatus) -> ScheduledTask:
 def _patch_common_bootstrap(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> None:
     monkeypatch.setenv("POSTGRES_URI", "postgresql://scheduling-bootstrap")
     monkeypatch.setattr(
+        "src.composition.dependencies.build_dependencies",
+        lambda: calls.append("build_dependencies"),
+    )
+    monkeypatch.setattr(
         webapp, "init_auth_schema", lambda conninfo: calls.append(f"auth:{conninfo}")
     )
     monkeypatch.setattr(
@@ -64,8 +68,23 @@ def _patch_common_bootstrap(monkeypatch: pytest.MonkeyPatch, calls: list[str]) -
     )
     monkeypatch.setattr(
         webapp,
+        "ensure_user_mcp_servers_schema",
+        lambda conninfo: calls.append(f"user_mcp_servers_schema:{conninfo}"),
+    )
+    monkeypatch.setattr(
+        webapp,
         "ensure_telegram_link_codes_schema",
         lambda conninfo: calls.append(f"telegram_link_codes_schema:{conninfo}"),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "ensure_whatsapp_link_codes_schema",
+        lambda conninfo: calls.append(f"whatsapp_link_codes_schema:{conninfo}"),
+    )
+    monkeypatch.setattr(
+        webapp,
+        "ensure_whatsapp_threads_schema",
+        lambda conninfo: calls.append(f"whatsapp_threads_schema:{conninfo}"),
     )
 
     async def _fake_init_pool(conninfo: str) -> None:
