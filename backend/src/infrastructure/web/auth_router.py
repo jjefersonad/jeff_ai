@@ -16,6 +16,9 @@ cache SWR de threads entre sessões (`fix-thread-list-user-isolation`).
 
 from __future__ import annotations
 
+import os
+from typing import Any, Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.requests import Request
 from pydantic import BaseModel
@@ -30,6 +33,30 @@ from src.infrastructure.auth.sessions import (
 from src.infrastructure.auth.users import User, get_user_by_username
 
 router = APIRouter()
+
+# Front em jeff.X e API em jeff-api.X: sem Domain=.X o cookie fica só no host
+# da API e o middleware do Next (no host do front) não vê a sessão → loop em
+# /public/login. Em localhost deixe COOKIE_DOMAIN vazio.
+_SameSite = Literal["strict", "lax", "none"]
+
+
+def _cookie_kwargs() -> dict[str, Any]:
+    raw_domain = (os.getenv("COOKIE_DOMAIN") or "").strip()
+    raw_samesite = (os.getenv("COOKIE_SAMESITE") or "lax").strip().lower()
+    samesite: _SameSite
+    if raw_samesite in ("strict", "lax", "none"):
+        samesite = raw_samesite  # type: ignore[assignment]
+    else:
+        samesite = "lax"
+    kwargs: dict[str, Any] = {
+        "httponly": True,
+        "secure": True,
+        "samesite": samesite,
+        "path": "/",
+    }
+    if raw_domain:
+        kwargs["domain"] = raw_domain
+    return kwargs
 
 
 class LoginRequest(BaseModel):
@@ -55,9 +82,7 @@ async def login(payload: LoginRequest, response: Response) -> dict[str, str]:
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
-        httponly=True,
-        secure=True,
-        samesite="strict",
+        **_cookie_kwargs(),
     )
     return {"id": user.id, "username": user.username, "role": user.role}
 
@@ -68,7 +93,7 @@ async def logout(request: Request, response: Response) -> dict[str, str]:
     token = request.cookies.get(SESSION_COOKIE_NAME)
     if token:
         await revoke_session(token)
-    response.delete_cookie(SESSION_COOKIE_NAME)
+    response.delete_cookie(SESSION_COOKIE_NAME, **_cookie_kwargs())
     return {"detail": "logged out"}
 
 

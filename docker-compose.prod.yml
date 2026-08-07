@@ -47,6 +47,9 @@ services:
       ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
       SESSION_TTL: ${SESSION_TTL:-3600}
       INTEGRATION_CREDENTIALS_KEY: ${INTEGRATION_CREDENTIALS_KEY:-}
+      # Cookie compartilhado entre jeff.* e jeff-api.* (middleware Next lê no front).
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-lax}
       JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
       # Ver comentário equivalente em docker-compose.yml — sem estas duas, o
       # processo nunca via FRONTEND_ORIGIN/BASE_URL como env var própria
