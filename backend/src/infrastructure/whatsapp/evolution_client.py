@@ -104,7 +104,7 @@ def bootstrap_config() -> EvolutionConfig:
         env_list = ", ".join(missing)
         raise EvolutionConfigError(
             f"Configuração da Evolution API incompleta — faltando: {env_list}. "
-            "Defina-as em backend/.env (ou no ambiente do container) antes de "
+            "Defina-as em ./.env (ou no ambiente do container) antes de "
             "iniciar o webhook do WhatsApp."
         )
 

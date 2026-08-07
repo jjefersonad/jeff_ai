@@ -60,7 +60,7 @@ _TYPING_PRESENCE_DELAY_MS = 5000
 def _delivery_base_url() -> str:
     """Mesma resolução de `composition/dependencies.build_create_document`."""
     return (
-        os.getenv("DOCUMENT_BASE_URL") or os.getenv("FRONTEND_ORIGIN") or "http://localhost:3000"
+        os.getenv("BASE_URL") or os.getenv("FRONTEND_ORIGIN") or "http://localhost:3000"
     ).rstrip("/")
 
 _APPROVAL_TITLE = "Aprovação pendente"

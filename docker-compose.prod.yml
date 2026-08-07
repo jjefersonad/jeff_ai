@@ -1,6 +1,6 @@
 # Stack de produção standalone: `docker compose -f docker-compose.prod.yml up -d`
-# sobe backend, frontend (build de produção) e telegram_gateway sem depender
-# de docker-compose.yml.
+# sobe apenas frontend + backend. Telegram e demais canais/infra ficam fora
+# deste arquivo — use `docker-compose.all.yml` ou um processo/stack externo.
 #
 # Diferenças deliberadas em relação a docker-compose.yml (dev local):
 # - Sem jeff_ia_postgres/jeff_ia_redis/jeff_ia_pgadmin: Postgres/Redis do
@@ -14,6 +14,7 @@
 #   _WEBHOOK_TOKEN abaixo, que só apontam pra ela). Já foi um serviço
 #   autocontido aqui (evolution_postgres/evolution_redis/evolution_api);
 #   removido deste arquivo — não confundir com relatos antigos.
+# - telegram_gateway NÃO entra neste arquivo (prod = app only).
 services:
   backend:
     build:
@@ -23,7 +24,7 @@ services:
     ports:
       - "8005:8000"
     env_file:
-      - backend/.env
+      - .env
     environment:
       POSTGRES_URI: ${POSTGRES_URI:?defina POSTGRES_URI em .env}
       REDIS_URI: ${REDIS_URI:?defina REDIS_URI em .env}
@@ -34,13 +35,13 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
       JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
       # Ver comentário equivalente em docker-compose.yml — sem estas duas, o
-      # processo nunca via FRONTEND_ORIGIN/DOCUMENT_BASE_URL como env var
-      # própria (só eram usadas para interpolar CORS_ALLOW_ORIGINS/LANGGRAPH_HTTP
+      # processo nunca via FRONTEND_ORIGIN/BASE_URL como env var própria
+      # (só eram usadas para interpolar CORS_ALLOW_ORIGINS/LANGGRAPH_HTTP
       # neste arquivo), e `WhatsAppChannel`/`build_create_document` caíam no
       # fallback hardcoded `http://localhost:3000`, inalcançável por chamadores
       # externos (Evolution API).
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
-      DOCUMENT_BASE_URL: ${DOCUMENT_BASE_URL:-}
+      BASE_URL: ${BASE_URL:-}
       EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution_api:8080}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY em .env}
       EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-jeff-ai-central}
@@ -82,26 +83,6 @@ services:
       BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:8000}
     depends_on:
       - backend
-    networks:
-      - jeff_ia-network
-
-  # Gateway do canal Telegram — mesmo papel que em docker-compose.yml (ver lá
-  # a nota completa sobre o entrypoint customizado e os volumes).
-  telegram_gateway:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile.backend
-    container_name: jeff_ia_telegram_gateway
-    restart: unless-stopped
-    env_file:
-      - backend/.env
-    environment:
-      POSTGRES_URI: ${POSTGRES_URI:?defina POSTGRES_URI em .env}
-      REDIS_URI: ${REDIS_URI:?defina REDIS_URI em .env}
-    volumes:
-      - ./backend/outputs:/deps/backend/outputs
-      - ./backend/src:/deps/backend/src
-    entrypoint: ["/bin/sh", "/deps/backend/telegram_gateway_entrypoint.sh"]
     networks:
       - jeff_ia-network
 

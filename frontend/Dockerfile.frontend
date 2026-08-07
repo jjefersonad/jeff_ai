@@ -3,7 +3,9 @@ FROM node:20-alpine AS base
 WORKDIR /app
 
 COPY ./package.json ./yarn.lock ./
-RUN yarn install
+# Yarn Classic (packageManager: yarn@1.22.22). --frozen-lockfile keeps
+# Portainer/prod builds deterministic and fails loudly if lock is stale.
+RUN yarn install --frozen-lockfile
 
 COPY ./ .
 
@@ -23,7 +25,7 @@ CMD ["yarn", "start", "-p", "3000"]
 
 # Stage padrão (nenhum `target:` explícito no build) — precisa ser o ÚLTIMO
 # stage do arquivo, pois `docker build` sem `target:` builda o último por
-# padrão. Usado por docker-compose.yml e docker-compose.evolution.yml (dev
+# padrão. Usado por docker-compose.yml e docker-compose.all.yml (dev
 # local). NEXT_PUBLIC_* é lido em runtime a cada compilação do `next dev`,
 # então a env var do container basta, sem precisar de build ARG.
 FROM base AS dev

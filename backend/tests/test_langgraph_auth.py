@@ -148,7 +148,7 @@ _AUTH_PATH = "./src/infrastructure/web/auth.py:auth"
 _COMPOSE_FILES = (
     Path(__file__).resolve().parents[2] / "docker-compose.yml",
     Path(__file__).resolve().parents[2] / "docker-compose.prod.yml",
-    Path(__file__).resolve().parents[2] / "docker-compose.evolution.yml",
+    Path(__file__).resolve().parents[2] / "docker-compose.all.yml",
 )
 
 

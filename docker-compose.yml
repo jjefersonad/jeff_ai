@@ -7,7 +7,7 @@ services:
     ports:
       - "8001:8000"
     env_file:
-      - backend/.env
+      - .env
     environment:
       POSTGRES_URI: ${POSTGRES_URI:-postgresql://${POSTGRES_USER:-jeff_ia}:${POSTGRES_PASSWORD:-jeff_ia}@jeff_ia_postgres:5432/${POSTGRES_DB:-jeff_ia}}
       REDIS_URI: ${REDIS_URI:-redis://:${REDIS_PASSWORD}@jeff_ia_redis:6379/0}
@@ -17,22 +17,17 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
       JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
-      # FRONTEND_ORIGIN/DOCUMENT_BASE_URL eram usadas SÓ para interpolar outras
-      # vars neste arquivo (CORS_ALLOW_ORIGINS, LANGGRAPH_HTTP) — nunca chegavam
-      # ao processo como env var própria, então `os.getenv("FRONTEND_ORIGIN")`/
-      # `os.getenv("DOCUMENT_BASE_URL")` sempre devolviam `None` em runtime
-      # (achado empírico, `fix-whatsapp-document-delivery`: `WhatsAppChannel`
-      # montava `media_url` com o fallback hardcoded `http://localhost:3000`,
-      # inalcançável pela Evolution API externa). `DOCUMENT_BASE_URL` SHALL
-      # apontar para onde o backend é alcançável por chamadores externos
-      # (Evolution API, etc.) — hoje um túnel ngrok; `FRONTEND_ORIGIN` continua
+      # FRONTEND_ORIGIN/BASE_URL precisam chegar ao processo como env vars
+      # próprias (não só interpolação neste YAML) — senão `os.getenv` devolve
+      # None em runtime (achado empírico, `fix-whatsapp-document-delivery`).
+      # `BASE_URL` SHALL apontar para onde o backend é alcançável por
+      # chamadores externos (Evolution API, etc.); `FRONTEND_ORIGIN` continua
       # sendo só a origin do frontend (CORS).
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
-      DOCUMENT_BASE_URL: ${DOCUMENT_BASE_URL:-}
-      # Evolution API (change whatsapp-evolution-channel) — mesmo tratamento de
-      # REDIS_PASSWORD/REDIS_URI acima: a substituição ${...} do compose só lê
-      # o .env da raiz (não backend/.env), então esses valores precisam chegar
-      # ao processo backend via este bloco environment:, não via env_file.
+      BASE_URL: ${BASE_URL:-}
+      # Evolution API (change whatsapp-evolution-channel) — a substituição
+      # ${...} do compose só lê o .env da raiz; estes valores precisam chegar
+      # ao processo backend via este bloco environment: (além do env_file).
       EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution_api:8080}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY em .env}
       EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-jeff-ai-central}
@@ -90,6 +85,10 @@ services:
     build:
       context: frontend
       dockerfile: Dockerfile.frontend
+      # Pin dev stage — without this, a prior `docker compose -f …prod.yml build`
+      # can leave image `jeff_ai-frontend` as `next start` with NEXT_PUBLIC_*
+      # baked for port 8005, and `up` reuses that image for daily dev.
+      target: dev
     container_name: jeff_ia_frontend
     ports:
       - "3002:3000"
@@ -194,21 +193,21 @@ services:
     container_name: jeff_ia_telegram_gateway
     restart: unless-stopped
     env_file:
-      - backend/.env
+      - .env
     environment:
       # Token do bot e chat_id autorizado (allowlist single-user, REQ-002 do
-      # telegram-channel-spec). `env_file` já propaga `TELEGRAM_BOT_TOKEN` e
-      # `TELEGRAM_AUTHORIZED_CHAT_ID` do `backend/.env`; redeclarar aqui
+      # telegram-channel-spec). `env_file: .env` já propaga
+      # `TELEGRAM_BOT_TOKEN` e `TELEGRAM_AUTHORIZED_CHAT_ID`; redeclarar aqui
       # seria redundante.
       # Mesmo fallback do serviço `backend`: usa o host interno do Postgres
       # na rede docker, não o mapeamento de porta do host.
       POSTGRES_URI: ${POSTGRES_URI:-postgresql://${POSTGRES_USER:-jeff_ia}:${POSTGRES_PASSWORD:-jeff_ia}@jeff_ia_postgres:5432/${POSTGRES_DB:-jeff_ia}}
       REDIS_URI: ${REDIS_URI:-redis://:${REDIS_PASSWORD}@jeff_ia_redis:6379/0}
       # === Telegram Gateway (change telegram-slash-commands) ===
-      # Token e chat_id são propagados pelo `env_file: backend/.env` (linha 192).
-      # Não redeclarar aqui — o `environment:` do compose é expandido a partir
-      # do shell do host (não do `.env`), então ${TELEGRAM_BOT_TOKEN} viraria
-      # string vazia quando o usuário não tem a var exportada no shell,
+      # Token e chat_id são propagados pelo `env_file: .env`. Não redeclarar
+      # aqui — o `environment:` do compose é expandido a partir do shell do
+      # host (não do `.env`), então ${TELEGRAM_BOT_TOKEN} viraria string
+      # vazia quando o usuário não tem a var exportada no shell,
       # sobrescrevendo o valor correto do `.env` com warning
       # `variable is not set, defaulting to a blank string`.
       # (registrado durante o verify/2026-07-23)

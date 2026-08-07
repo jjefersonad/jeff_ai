@@ -102,14 +102,19 @@ def _sanitize_error_text(raw: str) -> str:
     return redacted
 
 
+_LATEST_AVAILABILITY: "McpToolAvailabilityMiddleware | None" = None
+
+
 class McpToolAvailabilityMiddleware(AgentMiddleware[Any, Any, Any]):
     """Intercepta tool calls `mcp__*` ausentes do set e devolve diagnóstico
     categorizado.
 
-    O atributo `last_load_status` é injetado pelo `McpToolsMiddleware`
-    (Decision 3) antes de cada `awrap_model_call` — então no momento em
+    O atributo `last_load_status` é publicado pelo `McpToolsMiddleware`
+    (Decision 3) após cada `awrap_model_call` — então no momento em
     que `awrap_tool_call` é chamado, o estado já reflete o carregamento
-    daquela request.
+    daquela request. Em runtime o snapshot também é lido de
+    `McpToolsMiddleware.get_latest()` se o push ainda não tiver ocorrido
+    (defesa contra ordem de instanciação / hot-reload do grafo).
 
     Attributes
     ----------
@@ -127,12 +132,39 @@ class McpToolAvailabilityMiddleware(AgentMiddleware[Any, Any, Any]):
     def __init__(self) -> None:
         super().__init__()
         # Mesmo shape do `McpToolsMiddleware.last_load_status` (Decision 3).
-        # O grafo preenche este atributo em `awrap_model_call` (próxima
-        # task — wire-up completo); começando vazio, qualquer tool call
-        # `mcp__*` cai em `not_configured`. Esse é o comportamento seguro
-        # default — uma sessão sem o estado carregado é equivalente a
-        # "nenhum servidor configurado".
+        # Preenchido por `McpToolsMiddleware._publish_load_status` após cada
+        # load; começando vazio, qualquer tool call `mcp__*` cai em
+        # `not_configured` até o primeiro model call publicar o snapshot.
         self.last_load_status: dict[str, Any] = {}
+        global _LATEST_AVAILABILITY
+        _LATEST_AVAILABILITY = self
+
+    @classmethod
+    def get_latest(cls) -> "McpToolAvailabilityMiddleware | None":
+        """Devolve a instância registrada mais recentemente, ou `None`."""
+        return _LATEST_AVAILABILITY
+
+    def _effective_load_status(self) -> dict[str, Any]:
+        """Snapshot efetivo para categorizar tool calls.
+
+        Preferência:
+        1. `self.last_load_status` se já tiver sido publicado/injetado
+           (presença da chave `servers` — setada por
+           `McpToolsMiddleware._publish_load_status` ou por testes).
+        2. Snapshot do `McpToolsMiddleware.get_latest()` (fonte da verdade
+           do último model call), se existir.
+        3. `self.last_load_status` (pode estar `{}` → `not_configured`).
+        """
+        if "servers" in self.last_load_status:
+            return self.last_load_status
+        try:
+            from src.agents.unified.mcp_tools_middleware import McpToolsMiddleware
+        except ImportError:  # pragma: no cover — mesmo pacote
+            return self.last_load_status
+        latest = McpToolsMiddleware.get_latest()
+        if latest is not None and "servers" in latest.last_load_status:
+            return latest.last_load_status
+        return self.last_load_status
 
     # -------------------------------------------------------------- #
     # Helpers de categorização
@@ -169,9 +201,10 @@ class McpToolAvailabilityMiddleware(AgentMiddleware[Any, Any, Any]):
             `not_connected`, `unknown_tool_name`, `filtered_by_envelope`}.
         """
         server_name = self._parse_server(tool_name)
-        servers = self.last_load_status.get("servers") or {}
-        tools_by_name = self.last_load_status.get("tools_by_name") or {}
-        model_bound = self.last_load_status.get("model_bound_tools")
+        status = self._effective_load_status()
+        servers = status.get("servers") or {}
+        tools_by_name = status.get("tools_by_name") or {}
+        model_bound = status.get("model_bound_tools")
 
         if server_name not in servers:
             # Servidor não está configurado pra este user_id — categoria
@@ -247,7 +280,7 @@ class McpToolAvailabilityMiddleware(AgentMiddleware[Any, Any, Any]):
             # modelo a detectar typo. Inclui a substring do langgraph
             # vendor `is not a valid tool` para compatibilidade com
             # qualquer caller que dependa dessa string exata.
-            tools_by_name = self.last_load_status.get("tools_by_name") or {}
+            tools_by_name = self._effective_load_status().get("tools_by_name") or {}
             real_tool_names = sorted(
                 {
                     qname.split("__", 2)[-1]
@@ -343,8 +376,9 @@ class McpToolAvailabilityMiddleware(AgentMiddleware[Any, Any, Any]):
         # podemos DISTINGUIR `filtered_by_envelope` (tool em
         # `tools_by_name` mas NÃO em `model_bound_tools`) da
         # não-intercepção (tool em ambos).
-        tools_by_name = self.last_load_status.get("tools_by_name") or {}
-        model_bound = self.last_load_status.get("model_bound_tools")
+        status = self._effective_load_status()
+        tools_by_name = status.get("tools_by_name") or {}
+        model_bound = status.get("model_bound_tools")
         if tool_name in tools_by_name:
             if model_bound is None or tool_name in model_bound:
                 # Sem info do envelope → assume que a tool chegou ao modelo.
@@ -360,9 +394,7 @@ class McpToolAvailabilityMiddleware(AgentMiddleware[Any, Any, Any]):
         # (Task 2) — mas re-sanitizamos em `_format_message` por defesa.
         last_error: str | None = None
         if category == "not_connected":
-            server_record = (
-                self.last_load_status.get("servers") or {}
-            ).get(server_name) or {}
+            server_record = (status.get("servers") or {}).get(server_name) or {}
             err = server_record.get("last_error")
             last_error = err if isinstance(err, str) else None
 

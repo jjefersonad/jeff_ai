@@ -95,7 +95,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
-from langchain.agents.middleware.types import ModelRequest
+from langchain.agents.middleware.types import ModelRequest, ToolCallRequest
 from langchain_core.tools import BaseTool
 
 from src.agents.unified.mcp_client import (
@@ -167,6 +167,11 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
         # `fix-mcp-tool-not-exposed-error`). Inicializado vazio — qualquer
         # leitura antes da primeira chamada ao grafo vê o estado default.
         self.last_load_status: dict[str, Any] = {}
+        # Tools MCP do último load, indexadas pelo nome qualificado. O
+        # ToolNode só conhece `_UNIFIED_TOOLS` estáticas — `wrap_tool_call`
+        # injeta estas instâncias em `request.tool` para execução dinâmica
+        # (padrão suportado pelo ToolNode para tools de middleware).
+        self._loaded_tools: dict[str, BaseTool] = {}
         # Registra esta instância no module-level registry (Decision 4 da
         # mesma change) — a tool `list_mcp_servers_status` consulta via
         # `get_latest()` pra descobrir a instância ativa.
@@ -203,14 +208,18 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
         user_id = await resolve_user_id()
         if user_id is None:
             self.connection_errors = []
+            self._loaded_tools = {}
             self.last_load_status = self._build_empty_status()
+            self._publish_load_status()
             return []
 
         connections = await load_mcp_server_config(user_id)
         if not connections:
             # Usuário sem nenhum servidor configurado. Não é erro.
             self.connection_errors = []
+            self._loaded_tools = {}
             self.last_load_status = self._build_empty_status()
+            self._publish_load_status()
             return []
 
         tools, errors = await list_mcp_tools(connections)
@@ -241,7 +250,9 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
 
         # Snapshot serializável para o `McpToolAvailabilityMiddleware`
         # (Decision 3 da change `fix-mcp-tool-not-exposed-error`).
+        self._loaded_tools = {tool.name: tool for tool in tools}
         self.last_load_status = self._build_status(connections, tools, errors)
+        self._publish_load_status()
         return tools
 
     @staticmethod
@@ -329,7 +340,9 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
                     "error=cannot_run_async_in_sync_wrapper"
                 )
                 self.connection_errors = []
+                self._loaded_tools = {}
                 self.last_load_status = self._build_empty_status()
+                self._publish_load_status()
                 return []
             raise
         except Exception as exc:  # noqa: BLE001 — REQ-004: falha de resolução/config não pode travar o agente
@@ -339,8 +352,27 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
                 exc_info=True,
             )
             self.connection_errors = []
+            self._loaded_tools = {}
             self.last_load_status = self._build_empty_status()
-            return []    
+            self._publish_load_status()
+            return []
+
+    def _publish_load_status(self) -> None:
+        """Copia `last_load_status` para o `McpToolAvailabilityMiddleware` ativo.
+
+        Sem este push, o nó `tools` categoriza toda call `mcp__*` como
+        `not_configured` mesmo quando o nó `model` acabou de carregar as
+        tools com sucesso (bug observado com zernio em produção).
+        """
+        try:
+            from src.agents.unified.mcp_tool_availability import (
+                McpToolAvailabilityMiddleware,
+            )
+        except ImportError:  # pragma: no cover
+            return
+        availability = McpToolAvailabilityMiddleware.get_latest()
+        if availability is not None:
+            availability.last_load_status = self.last_load_status
 
     def wrap_model_call(
         self,
@@ -374,10 +406,45 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
                 exc_info=True,
             )
             self.connection_errors = []
+            self._loaded_tools = {}
+            self.last_load_status = self._build_empty_status()
+            self._publish_load_status()
             return await handler(request)
 
         combined = list(request.tools or []) + mcp_tools
         return await handler(request.override(tools=combined))
+
+    def _inject_loaded_tool(self, request: ToolCallRequest) -> ToolCallRequest:
+        """Anexa a BaseTool MCP em `request.tool` quando o ToolNode não a tem.
+
+        O ToolNode só registra tools estáticas do grafo. Tools MCP entram
+        via `wrap_model_call` (visíveis ao modelo) mas `request.tool` chega
+        `None` na execução. Sem esta injeção, `execute()` cai em
+        `_validate_tool_call` → "is not a valid tool".
+        """
+        if request.tool is not None:
+            return request
+        tool_name = request.tool_call.get("name", "")
+        mcp_tool = self._loaded_tools.get(tool_name)
+        if mcp_tool is None:
+            return request
+        return request.override(tool=mcp_tool)
+
+    def wrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Any],
+    ) -> Any:
+        """Injeta a tool MCP carregada e delega (envelope/availability/execute)."""
+        return handler(self._inject_loaded_tool(request))
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Any],
+    ) -> Any:
+        """Versão async de `wrap_tool_call` — obrigatória em produção."""
+        return await handler(self._inject_loaded_tool(request))
 
 
 def _qualify_tool_names(

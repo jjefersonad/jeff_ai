@@ -461,3 +461,78 @@ async def test_last_load_status_records_failed_server_no_creds() -> None:
     # connection_errors preserva o contrato (sem mutar)
     assert len(middleware.connection_errors) == 1
     assert middleware.connection_errors[0].server_name == "zernio"
+
+
+# --------------------------------------------------------------------------- #
+# wrap_tool_call — inject loaded MCP BaseTool for ToolNode execution
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_wrap_tool_call_injects_loaded_mcp_tool(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tools MCP entram no modelo via wrap_model_call mas o ToolNode não as
+    registra. wrap_tool_call MUST set request.tool so execute() não cai em
+    'is not a valid tool'."""
+    from langchain.agents.middleware.types import ToolCallRequest
+    from langchain_core.messages import ToolCall
+
+    mcp_tool = _mock_mcp_tool("zernio/accounts_list")
+    # After qualification the name becomes mcp__zernio__accounts_list
+    qualified = MagicMock()
+    qualified.name = "mcp__zernio__accounts_list"
+    qualified.description = "list accounts"
+    qualified.model_copy = lambda **kw: qualified
+    # _qualify_tool_names will try model_copy — use a real-ish tool instead
+    monkeypatch.setattr(
+        "src.agents.unified.mcp_tools_middleware.resolve_user_id",
+        AsyncMock(return_value="user-admin"),
+    )
+    monkeypatch.setattr(
+        "src.agents.unified.mcp_tools_middleware.load_mcp_server_config",
+        AsyncMock(
+            return_value={
+                "zernio": {
+                    "transport": "http",
+                    "url": "https://mcp.zernio.com/mcp",
+                    "headers": {},
+                }
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
+        AsyncMock(return_value=([mcp_tool], [])),
+    )
+
+    middleware = McpToolsMiddleware()
+    model_request = MagicMock()
+    model_request.tools = []
+    model_request.override = lambda **kw: MagicMock(tools=kw.get("tools"))
+
+    async def model_handler(req: object) -> object:
+        return req
+
+    await middleware.awrap_model_call(model_request, model_handler)
+
+    assert "mcp__zernio__accounts_list" in middleware._loaded_tools
+
+    tool_request = ToolCallRequest(
+        tool_call=ToolCall(
+            name="mcp__zernio__accounts_list", args={}, id="call-1"
+        ),
+        tool=None,
+        state={"messages": []},
+        runtime=None,  # type: ignore[arg-type]
+    )
+
+    seen: dict[str, object] = {}
+
+    async def tool_handler(req: ToolCallRequest) -> str:
+        seen["tool"] = req.tool
+        seen["name"] = req.tool.name if req.tool is not None else None
+        return "ok"
+
+    result = await middleware.awrap_tool_call(tool_request, tool_handler)
+    assert result == "ok"
+    assert seen["tool"] is not None
+    assert seen["name"] == "mcp__zernio__accounts_list"

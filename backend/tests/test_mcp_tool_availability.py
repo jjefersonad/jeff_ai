@@ -390,3 +390,83 @@ async def test_end_to_end_intercept_before_langgraph_template() -> None:
     assert "is not a valid tool, try one of [" not in result.content, (
         f"middleware falhou em interceptar; resultado = {result.content!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Regression: McpToolsMiddleware MUST publish status to availability
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_availability_reads_status_published_by_tools_middleware(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug: model node loaded zernio (51 tools) but tools node still
+    returned `not_configured` because availability.last_load_status
+    stayed empty. Publish + effective status MUST let a loaded tool pass.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from src.agents.unified import mcp_tools_middleware as tools_mod
+    from src.agents.unified.mcp_tools_middleware import McpToolsMiddleware
+
+    availability = McpToolAvailabilityMiddleware()
+    # Graph build order: tools mw then availability — both registered.
+    tools_mw = McpToolsMiddleware()
+
+    echo = MagicMock()
+    echo.name = "zernio/accounts_list"
+    echo.description = "list accounts"
+
+    def _copy(*, update: dict[str, Any]) -> MagicMock:
+        cloned = MagicMock()
+        cloned.name = update.get("name", echo.name)
+        cloned.description = echo.description
+        return cloned
+
+    echo.model_copy = _copy
+
+    monkeypatch.setattr(
+        tools_mod, "resolve_user_id", AsyncMock(return_value="user-admin")
+    )
+    monkeypatch.setattr(
+        tools_mod,
+        "load_mcp_server_config",
+        AsyncMock(
+            return_value={
+                "zernio": {
+                    "transport": "http",
+                    "url": "https://mcp.zernio.com/mcp",
+                    "headers": {},
+                }
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        tools_mod, "list_mcp_tools", AsyncMock(return_value=([echo], []))
+    )
+
+    model_request = MagicMock()
+    model_request.tools = []
+    model_request.override = lambda **kw: MagicMock(tools=kw.get("tools"))
+
+    async def model_handler(req: Any) -> Any:
+        return req
+
+    await tools_mw.awrap_model_call(model_request, model_handler)
+
+    assert "servers" in availability.last_load_status
+    assert "zernio" in availability.last_load_status["servers"]
+    assert "mcp__zernio__accounts_list" in availability.last_load_status["tools_by_name"]
+
+    request = _mcp_tool_call("mcp__zernio__accounts_list")
+    expected = ToolMessage(
+        content="ok",
+        name="mcp__zernio__accounts_list",
+        tool_call_id="call-1",
+        status="success",
+    )
+
+    async def tool_handler(_req: ToolCallRequest) -> ToolMessage:
+        return expected
+
+    result = await availability.awrap_tool_call(request, tool_handler)
+    assert result is expected

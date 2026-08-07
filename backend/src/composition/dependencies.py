@@ -122,15 +122,15 @@ def build_create_document(writer: DocumentWriterPort | None = None) -> CreateDoc
     único ponto que escolhe o adapter concreto. A aplicação permanece agnóstica.
 
     A `url` retornada precisa ser absoluta para que o agente nunca precise
-    inventar um domínio ao apresentá-la (ver `DOCUMENT_BASE_URL` em `.env.example`).
-    Sem `DOCUMENT_BASE_URL` explícita, cai para `FRONTEND_ORIGIN` — a mesma env
+    inventar um domínio ao apresentá-la (ver `BASE_URL` em `.env.example`).
+    Sem `BASE_URL` explícita, cai para `FRONTEND_ORIGIN` — a mesma env
     var já usada como fonte da verdade para CORS — e só então para o default de
     dev `http://localhost:3000`. `image_server.py:8080` não serve mais estas
     rotas desde `consolidate-http-routes-langgraph`; um default apontando pra lá
     gerava um link morto por padrão (achado em `fix-docx-download-404-file-serving`).
     """
     base_url = (
-        os.getenv("DOCUMENT_BASE_URL")
+        os.getenv("BASE_URL")
         or os.getenv("FRONTEND_ORIGIN")
         or "http://localhost:3000"
     ).rstrip("/")

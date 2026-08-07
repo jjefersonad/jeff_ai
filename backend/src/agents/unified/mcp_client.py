@@ -105,7 +105,7 @@ def _resolve_env_value(raw: str) -> str:
     if var_name not in os.environ:
         raise McpConfigError(
             f"variável de ambiente '{var_name}' referenciada em "
-            "mcp_servers.json não está definida (esperada em backend/.env)."
+            "mcp_servers.json não está definida (esperada em ./.env)."
         )
     return os.environ[var_name]
 

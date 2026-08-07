@@ -102,6 +102,79 @@ def test_succeed_from_succeeded_is_rejected():
 
 
 # ---------------------------------------------------------------------------
+# scheduled-channel-routines — delivery_user_key / WAITING_HUMAN / rearm
+# ---------------------------------------------------------------------------
+
+
+def test_delivery_user_key_optional_and_effective_destination():
+    """REQ-001 targeting: optional delivery; effective falls back to owner."""
+    with_delivery = ScheduledTask(
+        id="t-d1",
+        prompt="olá",
+        thread_id="th-1",
+        schedule=Schedule(kind="once", expr="2026-01-01T00:00:00"),
+        owner_user_key="web:1",
+        delivery_user_key="whatsapp:5511",
+    )
+    without_delivery = ScheduledTask(
+        id="t-d2",
+        prompt="olá",
+        thread_id="th-2",
+        schedule=Schedule(kind="once", expr="2026-01-01T00:00:00"),
+        owner_user_key="web:1",
+    )
+    assert with_delivery.delivery_user_key == "whatsapp:5511"
+    assert with_delivery.effective_delivery_user_key == "whatsapp:5511"
+    assert without_delivery.delivery_user_key is None
+    assert without_delivery.effective_delivery_user_key == "web:1"
+
+
+def test_waiting_human_from_running_only():
+    """REQ-001 human-intervention: RUNNING → WAITING_HUMAN; else DomainError."""
+    t = _new_task()
+    t.start()
+    t.waiting_human()
+    assert t.status == TaskStatus.WAITING_HUMAN
+
+    again = _new_task()
+    with pytest.raises(DomainError, match="RUNNING"):
+        again.waiting_human()
+
+
+def test_rearm_for_cron_from_terminal_states():
+    """Decision 5: cron SUCCEEDED/FAILED → SCHEDULED; once rejects."""
+    cron = ScheduledTask(
+        id="t-cron",
+        prompt="olá",
+        thread_id="th-cron",
+        schedule=Schedule(kind="cron", expr="0 9 * * *"),
+    )
+    cron.start()
+    cron.succeed()
+    cron.rearm_for_cron()
+    assert cron.status == TaskStatus.SCHEDULED
+    cron.start()  # elegível de novo
+    assert cron.status == TaskStatus.RUNNING
+
+    cron_fail = ScheduledTask(
+        id="t-cron-f",
+        prompt="olá",
+        thread_id="th-cron-f",
+        schedule=Schedule(kind="cron", expr="0 9 * * *"),
+    )
+    cron_fail.start()
+    cron_fail.fail("x")
+    cron_fail.rearm_for_cron()
+    assert cron_fail.status == TaskStatus.SCHEDULED
+
+    once = _new_task()
+    once.start()
+    once.succeed()
+    with pytest.raises(DomainError, match="cron"):
+        once.rearm_for_cron()
+
+
+# ---------------------------------------------------------------------------
 # REQ-006 — tool_scope tipado
 # ---------------------------------------------------------------------------
 

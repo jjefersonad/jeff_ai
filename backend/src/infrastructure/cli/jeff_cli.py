@@ -104,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
 
     postgres_uri = os.environ.get("POSTGRES_URI")
     if not postgres_uri:
-        logger.error("POSTGRES_URI não está configurado (esperada em backend/.env).")
+        logger.error("POSTGRES_URI não está configurado (esperada em ./.env).")
         return 1
 
     _register_channels()

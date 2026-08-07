@@ -133,7 +133,7 @@ def test_main_returns_1_and_skips_wiring_when_postgres_uri_missing(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.delenv("POSTGRES_URI", raising=False)
-    # main() chama load_env() — sem isso, backend/.env / ./.env reporiam a var.
+    # main() chama load_env() — sem isso, ./.env reporia a var.
     monkeypatch.setattr(jeff_cli, "load_env", lambda: None)
     called = False
 

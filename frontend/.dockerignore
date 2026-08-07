@@ -1,0 +1,16 @@
+# Keep the Docker build context small and deterministic for Portainer /
+# docker-compose.prod.yml. Host node_modules/.next must NOT enter the image
+# (Alpine vs host ABI, upload size, OOM/timeouts).
+
+node_modules
+.next
+
+.git
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+coverage
+
+.DS_Store
+*.tsbuildinfo

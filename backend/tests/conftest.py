@@ -1,6 +1,6 @@
 """Configuração global de testes.
 
-Desliga o tracing do LangSmith para a suíte inteira. `backend/.env` traz
+Desliga o tracing do LangSmith para a suíte inteira. `./.env` traz
 `LANGCHAIN_TRACING_V2=true` (uso normal do assistente rodando de verdade),
 mas testes que invocam o grafo (`graph.invoke(...)`) herdam isso e o
 LangChain tenta exportar cada execução para a API do LangSmith em uma

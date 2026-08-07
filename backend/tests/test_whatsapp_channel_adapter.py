@@ -108,7 +108,7 @@ async def test_deliver_image_attachment_calls_send_media_with_delivery_url(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     """fix-whatsapp-document-delivery-task-adapters-2-unit-1."""
-    monkeypatch.delenv("DOCUMENT_BASE_URL", raising=False)
+    monkeypatch.delenv("BASE_URL", raising=False)
     monkeypatch.delenv("FRONTEND_ORIGIN", raising=False)
     image_path = tmp_path / "foo.png"
     image_path.write_bytes(b"fake-png-bytes")
@@ -139,6 +139,60 @@ async def test_deliver_image_attachment_calls_send_media_with_delivery_url(
     token = media_url.rsplit("/", 1)[-1]
     payload = resolve_delivery_token(token)
     assert payload == {"file_path": str(image_path), "filename": "foo.png", "mime": "image/png"}
+
+
+@pytest.mark.asyncio
+async def test_deliver_image_attachment_uses_base_url(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """unify-root-env-and-compose-layout-task-code-1-unit-2: origem = BASE_URL."""
+    monkeypatch.setenv("BASE_URL", "https://api.example.com")
+    monkeypatch.delenv("FRONTEND_ORIGIN", raising=False)
+    image_path = tmp_path / "foo.png"
+    image_path.write_bytes(b"fake-png-bytes")
+    channel = WhatsAppChannel(instance="jeff-ai-central")
+    attachment = OutputAttachment(path=str(image_path), mime="image/png", display_name="foo.png")
+
+    with patch(
+        "src.infrastructure.channels.whatsapp_channel.evolution_client.send_media",
+        new_callable=AsyncMock,
+    ) as send_media_mock:
+        await channel.deliver(
+            user_key="whatsapp:5511999998888",
+            text="Aqui está",
+            attachments=(attachment,),
+            kind="normal",
+        )
+
+    media_url = send_media_mock.await_args.args[2]
+    assert media_url.startswith("https://api.example.com/public/media-delivery/")
+
+
+@pytest.mark.asyncio
+async def test_deliver_image_attachment_falls_back_to_frontend_origin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """unify-root-env-and-compose-layout-task-code-1-unit-2: fallback FRONTEND_ORIGIN."""
+    monkeypatch.delenv("BASE_URL", raising=False)
+    monkeypatch.setenv("FRONTEND_ORIGIN", "http://localhost:3002")
+    image_path = tmp_path / "foo.png"
+    image_path.write_bytes(b"fake-png-bytes")
+    channel = WhatsAppChannel(instance="jeff-ai-central")
+    attachment = OutputAttachment(path=str(image_path), mime="image/png", display_name="foo.png")
+
+    with patch(
+        "src.infrastructure.channels.whatsapp_channel.evolution_client.send_media",
+        new_callable=AsyncMock,
+    ) as send_media_mock:
+        await channel.deliver(
+            user_key="whatsapp:5511999998888",
+            text="Aqui está",
+            attachments=(attachment,),
+            kind="normal",
+        )
+
+    media_url = send_media_mock.await_args.args[2]
+    assert media_url.startswith("http://localhost:3002/public/media-delivery/")
 
 
 @pytest.mark.parametrize(

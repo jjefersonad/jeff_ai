@@ -323,6 +323,10 @@ TOOL_EFFECTS: Final[Mapping[str, tuple[Any, ...]]] = {
     # `test_every_agent_tool_has_an_effect_entry` (toda tool do agente
     # precisa de uma entrada explícita) — `READ` por ser a mais inócua.
     "propose_envelope": _read_only(),
+    # Diagnóstico MCP (change `fix-mcp-tool-not-exposed-error`) — snapshot
+    # read-only do último load; piso `READ` para não cair em `UNKNOWN` e
+    # ser bloqueada pelo envelope quando a tarefa ainda não concedeu nada.
+    "list_mcp_servers_status": _read_only(),
     # --- Escrita de NOVOS arquivos (Tier 2) ------------------------------
     "create_docx_document": _write_new(),
     "create_xlsx_spreadsheet": _write_new(),

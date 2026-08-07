@@ -10,7 +10,7 @@ Cobrem os critérios de aceitação da task `custom-office-doc-tools-task-docx-1
 
 E os da task `fix-docx-generation-url-and-json-content-task-test-1`:
 - REQ-005: `create_docx_document` retorna `url` absoluta (default e com
-  `DOCUMENT_BASE_URL` sobrescrita).
+  `BASE_URL` sobrescrita).
 - REQ-006: payload string serializado em JSON produz blocos (não título com
   JSON bruto); JSON malformado retorna `{"error": ...}` sem arquivo parcial.
 
@@ -23,6 +23,7 @@ E os da task `fix-docx-empty-content-task-docx-2`:
 from __future__ import annotations
 
 import json
+import re
 import struct
 import zlib
 from pathlib import Path
@@ -318,10 +319,10 @@ async def test_tool_returns_error_on_invalid_input(monkeypatch, tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-# --- REQ-005: URL absoluta via DOCUMENT_BASE_URL ---------------------------
+# --- REQ-005 / root-env-config REQ-003: URL absoluta via BASE_URL -----------
 #
 # Exercitam `build_create_document()` de verdade (sem override de writer) para
-# validar a leitura de `DOCUMENT_BASE_URL` — só redirecionam o diretório físico
+# validar a leitura de `BASE_URL` — só redirecionam o diretório físico
 # de saída (via `output_target._DEFAULT_BASE`) para não poluir `outputs/`.
 
 
@@ -332,37 +333,60 @@ def _redirect_default_output_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(output_target, "_DEFAULT_BASE", tmp_path)
 
 
-async def test_build_create_document_defaults_to_localhost_8080(
+async def test_build_create_document_defaults_to_localhost_3000(
     monkeypatch, _redirect_default_output_dir
 ):
-    monkeypatch.delenv("DOCUMENT_BASE_URL", raising=False)
+    monkeypatch.delenv("BASE_URL", raising=False)
+    monkeypatch.delenv("FRONTEND_ORIGIN", raising=False)
     use_case = dep.build_create_document()
 
     result = await use_case.execute(
         DocxSpec(title="Só título", blocks=(Paragraph(text="corpo"),))
     )
 
-    assert result.url.startswith("http://localhost:8080/api/files/docx/")
+    assert result.url.startswith("http://localhost:3000/api/files/docx/")
 
 
-async def test_build_create_document_uses_overridden_base_url(
+async def test_build_create_document_uses_base_url(
     monkeypatch, _redirect_default_output_dir
 ):
-    monkeypatch.setenv("DOCUMENT_BASE_URL", "https://files.example.com")
+    """unify-root-env-and-compose-layout-task-code-1-unit-1: origem = BASE_URL."""
+    monkeypatch.setenv("BASE_URL", "https://api.example.com")
+    monkeypatch.delenv("FRONTEND_ORIGIN", raising=False)
     use_case = dep.build_create_document()
 
     result = await use_case.execute(
         DocxSpec(title="Só título", blocks=(Paragraph(text="corpo"),))
     )
 
-    assert result.url.startswith("https://files.example.com/api/files/docx/")
+    assert result.url.startswith("https://api.example.com/api/files/docx/")
+
+
+def test_suite_does_not_monkeypatch_document_base_url():
+    """unify-root-env-and-compose-layout-task-code-2-unit-1: suite uses BASE_URL only."""
+    # Nome legado partido para este próprio arquivo não se auto-flagrar.
+    # Só flagra uso ativo (setenv/delenv/getenv/environ) — asserts negativas
+    # em testes de Compose (`"…" not in env`) podem citar o nome aposentado.
+    legacy = "DOCUMENT" + "_BASE_URL"
+    active = re.compile(
+        rf'(?:monkeypatch\.(?:setenv|delenv)|os\.getenv|os\.environ(?:\.get)?)\(\s*["\']{re.escape(legacy)}["\']'
+    )
+    tests_root = Path(__file__).resolve().parent
+    offenders = [
+        str(path.relative_to(tests_root))
+        for path in tests_root.rglob("*.py")
+        if path.resolve() != Path(__file__).resolve()
+        and active.search(path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == [], f"{legacy} ainda usado ativamente em: {offenders}"
 
 
 async def test_tool_returns_absolute_url_end_to_end(
     monkeypatch, _redirect_default_output_dir
 ):
     """A tool `create_docx_document`, de ponta a ponta, devolve `url` absoluta."""
-    monkeypatch.delenv("DOCUMENT_BASE_URL", raising=False)
+    monkeypatch.delenv("BASE_URL", raising=False)
+    monkeypatch.delenv("FRONTEND_ORIGIN", raising=False)
 
     result = await docx_tool.create_docx_document.coroutine(
         DocxDocumentInput(
@@ -371,7 +395,7 @@ async def test_tool_returns_absolute_url_end_to_end(
         )
     )
 
-    assert result["url"].startswith("http://localhost:8080/api/files/docx/")
+    assert result["url"].startswith("http://localhost:3000/api/files/docx/")
 
 
 # --- REQ-006: string JSON serializada vs. string simples vs. JSON malformado

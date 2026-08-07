@@ -381,6 +381,46 @@ def test_get_servers_includes_transport_and_url_for_http(client: TestClient) -> 
         client.app.dependency_overrides.pop(require_auth, None)
 
 
+def test_get_servers_distinguishes_http_and_stdio_by_transport(
+    client: TestClient,
+) -> None:
+    """REQ-001 list delta: UI usa `transport`, não infere só por `command`."""
+    client.app.dependency_overrides[require_auth] = lambda: _AUTH_USER
+    try:
+        assert (
+            client.post(
+                "/api/mcp/servers",
+                json={
+                    "name": "local",
+                    "command": "npx",
+                    "args": ["-y", "local-mcp"],
+                    "env": {},
+                },
+            ).status_code
+            == 201
+        )
+        assert (
+            client.post(
+                "/api/mcp/servers",
+                json={
+                    "name": "zernio",
+                    "transport": "http",
+                    "url": "https://mcp.zernio.com/mcp",
+                    "headers": {},
+                },
+            ).status_code
+            == 201
+        )
+        res = client.get("/api/mcp/servers")
+        assert res.status_code == 200
+        by_name = {s["name"]: s for s in res.json()["servers"]}
+        assert by_name["local"]["transport"] == "stdio"
+        assert by_name["zernio"]["transport"] == "http"
+        assert by_name["zernio"]["url"] == "https://mcp.zernio.com/mcp"
+    finally:
+        client.app.dependency_overrides.pop(require_auth, None)
+
+
 def test_update_server_changes_args(client: TestClient) -> None:
     client.app.dependency_overrides[require_auth] = lambda: _AUTH_USER
     try:
