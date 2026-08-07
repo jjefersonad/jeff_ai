@@ -9,13 +9,27 @@ Cobre REQ-009 do delta `task-scheduling` (change `agendamento-jeff-cli-frontend`
 - Não-dono sem ser admin → `ScheduledTaskAuthorizationError` (mesmo tipo usado
   por `CancelScheduledTask`).
 - Tarefa fora de `SCHEDULED` → `ScheduledTaskNotEditableError`.
+
+`delivery_channel` (scheduled-channel-routines): resolvido via
+`ResolveDeliveryTarget` antes de `save` — sem vínculo não persiste mudança.
 """
 from __future__ import annotations
+
+from typing import Protocol
 
 from src.application.ports.scheduled_task_repository import ScheduledTaskRepositoryPort
 from src.application.ports.task_scheduler import TaskSchedulerPort
 from src.application.use_cases.cancel_scheduled_task import ScheduledTaskAuthorizationError
 from src.domain.scheduling import Schedule, ScheduledTask, TaskStatus, ToolScope
+from src.domain.shared.errors import DomainError
+
+
+class DeliveryTargetResolver(Protocol):
+    """Contrato mínimo de `ResolveDeliveryTarget.resolve` (testável com fake)."""
+
+    async def resolve(
+        self, *, user_id: str, delivery_channel: str | None
+    ) -> str | None: ...
 
 
 class ScheduledTaskNotEditableError(Exception):
@@ -50,10 +64,12 @@ class UpdateScheduledTask:
         *,
         repository: ScheduledTaskRepositoryPort,
         scheduler: TaskSchedulerPort,
+        delivery_resolver: DeliveryTargetResolver,
     ) -> None:
         """Recebe as implementações das portas por injeção de dependência."""
         self._repository = repository
         self._scheduler = scheduler
+        self._delivery_resolver = delivery_resolver
 
     async def execute(
         self,
@@ -65,6 +81,8 @@ class UpdateScheduledTask:
         schedule: Schedule | None = None,
         tool_scope: ToolScope | None = None,
         skills: tuple[str, ...] | None = None,
+        delivery_channel: str | None = None,
+        caller_user_id: str | None = None,
     ) -> ScheduledTask | None:
         """Aplica os campos fornecidos e re-agenda se o `schedule` mudou.
 
@@ -75,6 +93,10 @@ class UpdateScheduledTask:
             is_admin: True se o chamador tem `role=admin`.
             prompt, schedule, tool_scope, skills: campos opcionais — apenas
                 os fornecidos (não-`None`) são alterados.
+            delivery_channel: Se informado, resolve e grava
+                `delivery_user_key` (requer `caller_user_id`).
+            caller_user_id: UUID do chamador — necessário com
+                `delivery_channel`.
 
         Returns:
             A tarefa persistida, ou `None` se `task_id` não existir (no-op
@@ -83,6 +105,7 @@ class UpdateScheduledTask:
         Raises:
             ScheduledTaskAuthorizationError: chamador não é dono nem admin.
             ScheduledTaskNotEditableError: tarefa não está em `SCHEDULED`.
+            DomainError: destino de entrega inválido / sem vínculo.
         """
         task = await self._repository.get(task_id)
         if task is None:
@@ -96,6 +119,16 @@ class UpdateScheduledTask:
 
         if task.status is not TaskStatus.SCHEDULED:
             raise ScheduledTaskNotEditableError(task_id=task_id, status=task.status)
+
+        if delivery_channel is not None:
+            if not caller_user_id:
+                raise DomainError(
+                    "delivery_channel exige caller_user_id do caller autenticado"
+                )
+            task.delivery_user_key = await self._delivery_resolver.resolve(
+                user_id=caller_user_id,
+                delivery_channel=delivery_channel,
+            )
 
         schedule_changed = schedule is not None and schedule != task.schedule
 

@@ -226,3 +226,36 @@ async def test_error_status_does_not_notify() -> None:
 
     assert call_log == ["save:failed"]
     notifier.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_notify_uses_effective_delivery_user_key() -> None:
+    """run-1 unit-1: sucesso notifica com delivery_user_key, não owner web."""
+    call_log: list[str] = []
+    repo = _FakeRepository(call_log=call_log)
+    await repo.save(
+        _make_task(
+            owner_user_key="web:1",
+            delivery_user_key="whatsapp:9",
+        )
+    )
+    call_log.clear()
+
+    outcome = AgentRunOutcome(text="ok no zap", attachments=())
+    runner = _RecordingRunner(
+        result=AgentRunResult(thread_id="th-1", status="ok", output=outcome)
+    )
+    notifier = _make_notifier(call_log=call_log)
+    use_case = RunScheduledTask(
+        repository=repo,
+        agent_runner=runner,
+        handle_chat_message=notifier,
+        notify_channel=ScheduledChannel(),
+    )
+
+    await use_case.execute(task_id="t-1")
+
+    notifier.execute.assert_awaited_once()
+    kwargs = notifier.execute.await_args.kwargs
+    assert kwargs["user_key"] == "whatsapp:9"
+    assert kwargs["text"] == "ok no zap"

@@ -38,10 +38,17 @@ from src.infrastructure.filesystem.filesystem_sdd_artifact_store import (
     FilesystemSddArtifactStore,
 )
 from src.infrastructure.llm.gemini_image_adapter import GeminiImageAdapter
+from src.application.use_cases.complete_scheduled_task_after_resume import (
+    CompleteScheduledTaskAfterResume,
+)
+from src.application.use_cases.resolve_delivery_target import ResolveDeliveryTarget
 from src.infrastructure.persistence.scheduled_task_repository import (
     PostgresScheduledTaskRepository,
 )
 from src.infrastructure.persistence.store_style_repository import StoreStyleRepository
+from src.infrastructure.persistence.user_integrations_repository import (
+    PostgresUserIntegrationRepository,
+)
 from src.infrastructure.scheduling.scheduler_instance import task_scheduler
 from src.infrastructure.usage.repository import UsageRepository
 from src.infrastructure.web.httpx_reference_image_fetch import HttpxReferenceImageFetch
@@ -143,6 +150,13 @@ def _scheduled_task_repository() -> PostgresScheduledTaskRepository:
     return PostgresScheduledTaskRepository(os.environ["POSTGRES_URI"])
 
 
+def _delivery_target_resolver() -> ResolveDeliveryTarget:
+    """Resolver de destino de entrega (vínculos em `user_integrations`)."""
+    return ResolveDeliveryTarget(
+        repository=PostgresUserIntegrationRepository(os.environ["POSTGRES_URI"])
+    )
+
+
 def build_create_scheduled_task() -> CreateScheduledTask:
     """Monta CreateScheduledTask com o repositório Postgres e o `task_scheduler` singleton.
 
@@ -155,6 +169,7 @@ def build_create_scheduled_task() -> CreateScheduledTask:
     return CreateScheduledTask(
         repository=_scheduled_task_repository(),
         scheduler=task_scheduler,
+        delivery_resolver=_delivery_target_resolver(),
     )
 
 
@@ -179,3 +194,8 @@ def build_cancel_scheduled_task() -> CancelScheduledTask:
         repository=_scheduled_task_repository(),
         scheduler=task_scheduler,
     )
+
+
+def build_complete_scheduled_task_after_resume() -> CompleteScheduledTaskAfterResume:
+    """Monta o hook pós-resume HITL para tarefas `WAITING_HUMAN`."""
+    return CompleteScheduledTaskAfterResume(repository=_scheduled_task_repository())

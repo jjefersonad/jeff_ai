@@ -5,18 +5,26 @@ import userEvent from "@testing-library/user-event";
 import SchedulingPage from "./page";
 
 const mockListScheduledTasks = vi.fn();
+const mockListDeliveryChannels = vi.fn();
 const mockCreateScheduledTask = vi.fn();
 const mockUpdateScheduledTask = vi.fn();
 const mockCancelScheduledTask = vi.fn();
 
-vi.mock("@/lib/scheduling", () => ({
-  listScheduledTasks: (...args: unknown[]) => mockListScheduledTasks(...args),
-  createScheduledTask: (...args: unknown[]) => mockCreateScheduledTask(...args),
-  updateScheduledTask: (...args: unknown[]) => mockUpdateScheduledTask(...args),
-  cancelScheduledTask: (...args: unknown[]) => mockCancelScheduledTask(...args),
-}));
+vi.mock("@/lib/scheduling", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/scheduling")>(
+    "@/lib/scheduling"
+  );
+  return {
+    ...actual,
+    listScheduledTasks: (...args: unknown[]) => mockListScheduledTasks(...args),
+    listDeliveryChannels: (...args: unknown[]) => mockListDeliveryChannels(...args),
+    createScheduledTask: (...args: unknown[]) => mockCreateScheduledTask(...args),
+    updateScheduledTask: (...args: unknown[]) => mockUpdateScheduledTask(...args),
+    cancelScheduledTask: (...args: unknown[]) => mockCancelScheduledTask(...args),
+  };
+});
 
-const taskFor = (id: string, owner: string) => ({
+const taskFor = (id: string, owner: string, extras: Record<string, unknown> = {}) => ({
   id,
   prompt: `Prompt ${id}`,
   thread_id: `thread-${id}`,
@@ -25,18 +33,22 @@ const taskFor = (id: string, owner: string) => ({
   tool_scope: "restricted",
   skills: [],
   timeout_seconds: 300,
-  status: "SCHEDULED",
+  status: "scheduled",
   owner_user_key: owner,
+  delivery_user_key: null,
   started_at: null,
   finished_at: null,
   error: null,
   created_at: "2026-07-28T00:00:00Z",
+  ...extras,
 });
 
 describe("SchedulingPage (frontend-page-1 unit-1/unit-2 / REQ-001)", () => {
   beforeEach(() => {
     mockListScheduledTasks.mockReset();
+    mockListDeliveryChannels.mockReset();
     mockCreateScheduledTask.mockReset();
+    mockListDeliveryChannels.mockResolvedValue(["web"]);
   });
 
   it("unit-1: WHEN listScheduledTasks() resolves N tasks THEN the page renders N entries matching them", async () => {
@@ -71,8 +83,10 @@ describe("SchedulingPage (frontend-page-1 unit-1/unit-2 / REQ-001)", () => {
 describe("SchedulingPage — create form (frontend-page-2 unit-1 / REQ-002)", () => {
   beforeEach(() => {
     mockListScheduledTasks.mockReset();
+    mockListDeliveryChannels.mockReset();
     mockCreateScheduledTask.mockReset();
     mockListScheduledTasks.mockResolvedValue([]);
+    mockListDeliveryChannels.mockResolvedValue(["web"]);
   });
 
   it("unit-1: WHEN the user submits the create form with valid fields THEN createScheduledTask is called and the returned task is appended to the list without a full reload", async () => {
@@ -91,17 +105,84 @@ describe("SchedulingPage — create form (frontend-page-2 unit-1 / REQ-002)", ()
         prompt: created.prompt,
         schedule_kind: "cron",
         schedule_expr: "0 9 * * *",
+        delivery_channel: "web",
       })
     );
     expect(await screen.findByText(created.prompt)).toBeInTheDocument();
   });
 });
 
+describe("SchedulingPage — delivery destination (ui-1)", () => {
+  beforeEach(() => {
+    mockListScheduledTasks.mockReset();
+    mockListDeliveryChannels.mockReset();
+    mockCreateScheduledTask.mockReset();
+    mockListScheduledTasks.mockResolvedValue([]);
+  });
+
+  it("unit-2: WHEN delivery-channels returns web and whatsapp THEN the selector exposes those options", async () => {
+    mockListDeliveryChannels.mockResolvedValue(["web", "whatsapp"]);
+    const user = userEvent.setup();
+
+    render(<SchedulingPage />);
+
+    await screen.findByLabelText(/destino de entrega/i);
+    await user.click(screen.getByLabelText(/destino de entrega/i));
+
+    expect(await screen.findByRole("option", { name: "Web" })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "WhatsApp" })).toBeInTheDocument();
+  });
+
+  it("unit-1: WHEN telegram is selected THEN createScheduledTask is called with delivery_channel telegram", async () => {
+    mockListDeliveryChannels.mockResolvedValue(["web", "telegram"]);
+    mockCreateScheduledTask.mockResolvedValue(
+      taskFor("task-tg", "web:alice", {
+        delivery_user_key: "telegram:42",
+        prompt: "mande no telegram",
+      })
+    );
+    const user = userEvent.setup();
+
+    render(<SchedulingPage />);
+
+    await screen.findByLabelText(/destino de entrega/i);
+    await user.click(screen.getByLabelText(/destino de entrega/i));
+    await user.click(await screen.findByRole("option", { name: "Telegram" }));
+
+    await user.type(screen.getByLabelText(/^prompt$/i), "mande no telegram");
+    await user.type(screen.getByLabelText(/expressão/i), "0 9 * * *");
+    await user.click(screen.getByRole("button", { name: /criar/i }));
+
+    expect(mockCreateScheduledTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        delivery_channel: "telegram",
+      })
+    );
+  });
+
+  it("lists show effective destination when delivery_user_key is present", async () => {
+    mockListDeliveryChannels.mockResolvedValue(["web", "whatsapp"]);
+    mockListScheduledTasks.mockResolvedValue([
+      taskFor("task-1", "web:alice", {
+        delivery_user_key: "whatsapp:5511999999999",
+        prompt: "zap task",
+      }),
+    ]);
+
+    render(<SchedulingPage />);
+
+    expect(await screen.findByText(/Destino: WhatsApp/)).toBeInTheDocument();
+    expect(screen.getByText(/whatsapp:5511999999999/)).toBeInTheDocument();
+  });
+});
+
 describe("SchedulingPage — edit action (frontend-page-3 / REQ-003)", () => {
   beforeEach(() => {
     mockListScheduledTasks.mockReset();
+    mockListDeliveryChannels.mockReset();
     mockCreateScheduledTask.mockReset();
     mockUpdateScheduledTask.mockReset();
+    mockListDeliveryChannels.mockResolvedValue(["web"]);
   });
 
   it("unit-1: WHEN the user submits the edit form for an editable SCHEDULED task THEN updateScheduledTask is called with the changed fields and the list reflects the new values", async () => {
@@ -132,9 +213,9 @@ describe("SchedulingPage — edit action (frontend-page-3 / REQ-003)", () => {
   it("unit-2: WHEN a rendered task has status RUNNING, SUCCEEDED, or FAILED THEN its edit control is absent or disabled, while a SCHEDULED task's edit control stays enabled", async () => {
     const scheduledTask = taskFor("task-scheduled", "web:alice");
     const nonEditableTasks = [
-      { ...taskFor("task-running", "web:alice"), status: "RUNNING" },
-      { ...taskFor("task-succeeded", "web:alice"), status: "SUCCEEDED" },
-      { ...taskFor("task-failed", "web:alice"), status: "FAILED" },
+      { ...taskFor("task-running", "web:alice"), status: "running" },
+      { ...taskFor("task-succeeded", "web:alice"), status: "succeeded" },
+      { ...taskFor("task-failed", "web:alice"), status: "failed" },
     ];
     mockListScheduledTasks.mockResolvedValue([scheduledTask, ...nonEditableTasks]);
 
@@ -163,9 +244,11 @@ describe("SchedulingPage — edit action (frontend-page-3 / REQ-003)", () => {
 describe("SchedulingPage — delete action (frontend-page-4 unit-1 / REQ-004)", () => {
   beforeEach(() => {
     mockListScheduledTasks.mockReset();
+    mockListDeliveryChannels.mockReset();
     mockCreateScheduledTask.mockReset();
     mockUpdateScheduledTask.mockReset();
     mockCancelScheduledTask.mockReset();
+    mockListDeliveryChannels.mockResolvedValue(["web"]);
   });
 
   it("unit-1: WHEN the user triggers delete and confirms it THEN cancelScheduledTask is called with the task's id and the task is removed from the list", async () => {

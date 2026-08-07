@@ -23,7 +23,10 @@ import {
 } from "@/components/ui/dialog";
 import {
   cancelScheduledTask,
+  channelFromDeliveryUserKey,
   createScheduledTask,
+  deliveryChannelLabel,
+  listDeliveryChannels,
   listScheduledTasks,
   updateScheduledTask,
   type ScheduledTask,
@@ -36,12 +39,20 @@ function parseSkills(value: string): string[] {
     .filter(Boolean);
 }
 
+function effectiveDestinationLabel(task: ScheduledTask): string {
+  const key = task.delivery_user_key ?? task.owner_user_key;
+  const channel = channelFromDeliveryUserKey(key);
+  return deliveryChannelLabel(channel);
+}
+
 export default function SchedulingPage() {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
+  const [deliveryChannels, setDeliveryChannels] = useState<string[]>(["web"]);
   const [prompt, setPrompt] = useState("");
   const [scheduleKind, setScheduleKind] = useState("cron");
   const [scheduleExpr, setScheduleExpr] = useState("");
   const [toolScope, setToolScope] = useState("restricted");
+  const [deliveryChannel, setDeliveryChannel] = useState("web");
   const [skills, setSkills] = useState("");
 
   const [deletingTask, setDeletingTask] = useState<ScheduledTask | null>(null);
@@ -51,10 +62,17 @@ export default function SchedulingPage() {
   const [editScheduleKind, setEditScheduleKind] = useState("cron");
   const [editScheduleExpr, setEditScheduleExpr] = useState("");
   const [editToolScope, setEditToolScope] = useState("restricted");
+  const [editDeliveryChannel, setEditDeliveryChannel] = useState("web");
   const [editSkills, setEditSkills] = useState("");
 
   useEffect(() => {
     listScheduledTasks().then(setTasks);
+    listDeliveryChannels().then((channels) => {
+      setDeliveryChannels(channels.length > 0 ? channels : ["web"]);
+      setDeliveryChannel((current) =>
+        channels.includes(current) ? current : channels[0] ?? "web"
+      );
+    });
   }, []);
 
   const onSubmit = async (event: FormEvent) => {
@@ -64,6 +82,7 @@ export default function SchedulingPage() {
       schedule_kind: scheduleKind,
       schedule_expr: scheduleExpr,
       tool_scope: toolScope,
+      delivery_channel: deliveryChannel,
       skills: parseSkills(skills),
     });
     setTasks((current) => [...current, created]);
@@ -85,6 +104,7 @@ export default function SchedulingPage() {
     setEditScheduleKind(task.schedule_kind);
     setEditScheduleExpr(task.schedule_expr);
     setEditToolScope(task.tool_scope);
+    setEditDeliveryChannel(channelFromDeliveryUserKey(task.delivery_user_key));
     setEditSkills(task.skills.join(", "));
   };
 
@@ -96,6 +116,7 @@ export default function SchedulingPage() {
       schedule_kind: editScheduleKind,
       schedule_expr: editScheduleExpr,
       tool_scope: editToolScope,
+      delivery_channel: editDeliveryChannel,
       skills: parseSkills(editSkills),
     });
     setTasks((current) =>
@@ -170,13 +191,29 @@ export default function SchedulingPage() {
             </div>
 
             <div className="flex flex-1 flex-col gap-2">
-              <Label htmlFor="scheduling-skills">Skills (separadas por vírgula)</Label>
-              <Input
-                id="scheduling-skills"
-                value={skills}
-                onChange={(e) => setSkills(e.target.value)}
-              />
+              <Label htmlFor="scheduling-delivery-channel">Destino de entrega</Label>
+              <Select value={deliveryChannel} onValueChange={setDeliveryChannel}>
+                <SelectTrigger id="scheduling-delivery-channel">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {deliveryChannels.map((channel) => (
+                    <SelectItem key={channel} value={channel}>
+                      {deliveryChannelLabel(channel)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="scheduling-skills">Skills (separadas por vírgula)</Label>
+            <Input
+              id="scheduling-skills"
+              value={skills}
+              onChange={(e) => setSkills(e.target.value)}
+            />
           </div>
 
           <Button type="submit">Criar agendamento</Button>
@@ -188,7 +225,13 @@ export default function SchedulingPage() {
               key={task.id}
               className="flex items-center justify-between gap-4 rounded-md border border-border bg-card p-4 text-sm"
             >
-              <span>{task.prompt}</span>
+              <div className="flex min-w-0 flex-col gap-1">
+                <span>{task.prompt}</span>
+                <span className="text-xs text-muted-foreground">
+                  Destino: {effectiveDestinationLabel(task)}
+                  {task.delivery_user_key ? ` (${task.delivery_user_key})` : ""}
+                </span>
+              </div>
               <div className="flex items-center gap-2">
                 <Button
                   type="button"
@@ -275,13 +318,29 @@ export default function SchedulingPage() {
               </div>
 
               <div className="flex flex-1 flex-col gap-2">
-                <Label htmlFor="edit-scheduling-skills">Skills (separadas por vírgula)</Label>
-                <Input
-                  id="edit-scheduling-skills"
-                  value={editSkills}
-                  onChange={(e) => setEditSkills(e.target.value)}
-                />
+                <Label htmlFor="edit-scheduling-delivery-channel">Destino de entrega</Label>
+                <Select value={editDeliveryChannel} onValueChange={setEditDeliveryChannel}>
+                  <SelectTrigger id="edit-scheduling-delivery-channel">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {deliveryChannels.map((channel) => (
+                      <SelectItem key={channel} value={channel}>
+                        {deliveryChannelLabel(channel)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="edit-scheduling-skills">Skills (separadas por vírgula)</Label>
+              <Input
+                id="edit-scheduling-skills"
+                value={editSkills}
+                onChange={(e) => setEditSkills(e.target.value)}
+              />
             </div>
 
             <DialogFooter>

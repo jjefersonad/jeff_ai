@@ -11,7 +11,13 @@ from src.domain.documents.blocks import (
     Paragraph,
     Table,
 )
+from src.domain.documents.markdown_table import contains_markdown_table
 from src.domain.shared.errors import DomainError
+
+_MARKDOWN_TABLE_ERROR = (
+    'DocxSpec: parágrafo contém tabela Markdown; use type="table" com rows '
+    "(e header opcional) em vez de sintaxe | col | em paragraph."
+)
 
 # Re-export para importadores que ainda leem os VOs via docx_spec.
 __all__ = [
@@ -48,6 +54,9 @@ class DocxSpec:
         allowed = (Heading, Paragraph, ListBlock, Table, ImageRef)
         if not all(isinstance(block, allowed) for block in blocks):
             raise DomainError("DocxSpec.blocks contém um tipo de bloco não suportado.")
+        for block in blocks:
+            if isinstance(block, Paragraph) and contains_markdown_table(block.text):
+                raise DomainError(_MARKDOWN_TABLE_ERROR)
         object.__setattr__(self, "blocks", blocks)
 
     def metadata(self) -> dict[str, object]:

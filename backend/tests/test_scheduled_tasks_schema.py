@@ -65,6 +65,7 @@ def test_ensure_schema_creates_scheduled_tasks_table(monkeypatch: pytest.MonkeyP
         "last_run_at",
         "last_error",
         "owner_user_key",
+        "delivery_user_key",
     ],
 )
 def test_ensure_schema_table_has_required_column(
@@ -77,6 +78,32 @@ def test_ensure_schema_table_has_required_column(
 
     executed_sql = "\n".join(fake_conn._cursor.executed)
     assert column in executed_sql
+
+
+def test_ensure_schema_status_check_includes_waiting_human(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """scheduled-channel-routines schema-1: CHECK de status inclui waiting_human."""
+    fake_conn = _FakeConnection()
+    monkeypatch.setattr(schema.psycopg, "connect", lambda *a, **kw: fake_conn)
+
+    schema.ensure_schema("postgresql://fake")
+
+    executed_sql = "\n".join(fake_conn._cursor.executed)
+    assert "waiting_human" in executed_sql
+
+
+def test_ensure_schema_adds_delivery_user_key_for_existing_tables(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ALTER ADD COLUMN IF NOT EXISTS — bancos já provisionados sem a coluna."""
+    fake_conn = _FakeConnection()
+    monkeypatch.setattr(schema.psycopg, "connect", lambda *a, **kw: fake_conn)
+
+    schema.ensure_schema("postgresql://fake")
+
+    executed_sql = "\n".join(fake_conn._cursor.executed)
+    assert "ADD COLUMN IF NOT EXISTS delivery_user_key" in executed_sql
 
 
 def test_owner_user_key_column_is_not_null_without_fk(

@@ -41,6 +41,9 @@ class _FakeRepository(ScheduledTaskRepositoryPort):
     async def list_all(self) -> list[ScheduledTask]:
         return list(self._store.values())
 
+    async def list_by_owner(self, owner_user_key: str) -> list[ScheduledTask]:
+        return [t for t in self._store.values() if t.owner_user_key == owner_user_key]
+
     async def delete(self, task_id: str) -> None:
         self._store.pop(task_id, None)
 
@@ -57,6 +60,48 @@ class _FakeScheduler(TaskSchedulerPort):
         self.unscheduled.append(task_id)
 
 
+class _FakeDeliveryResolver:
+    """Fake do `ResolveDeliveryTarget.resolve` (create-1 unit tests)."""
+
+    def __init__(
+        self,
+        *,
+        result: str | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self.result = result
+        self.error = error
+        self.calls: list[tuple[str, str | None]] = []
+
+    async def resolve(
+        self, *, user_id: str, delivery_channel: str | None
+    ) -> str | None:
+        self.calls.append((user_id, delivery_channel))
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def _use_case(
+    repo: _FakeRepository | None = None,
+    sched: _FakeScheduler | None = None,
+    resolver: _FakeDeliveryResolver | None = None,
+) -> tuple[CreateScheduledTask, _FakeRepository, _FakeScheduler, _FakeDeliveryResolver]:
+    repository = repo or _FakeRepository()
+    scheduler = sched or _FakeScheduler()
+    delivery = resolver or _FakeDeliveryResolver()
+    return (
+        CreateScheduledTask(
+            repository=repository,
+            scheduler=scheduler,
+            delivery_resolver=delivery,
+        ),
+        repository,
+        scheduler,
+        delivery,
+    )
+
+
 # ---------------------------------------------------------------------------
 # REQ-003 — execute() persiste E agenda
 # ---------------------------------------------------------------------------
@@ -64,9 +109,7 @@ class _FakeScheduler(TaskSchedulerPort):
 
 @pytest.mark.asyncio
 async def test_execute_persists_and_schedules_task():
-    repo = _FakeRepository()
-    sched = _FakeScheduler()
-    use_case = CreateScheduledTask(repository=repo, scheduler=sched)
+    use_case, repo, sched, _ = _use_case()
 
     returned = await use_case.execute(
         task_id="t-1",
@@ -94,9 +137,7 @@ async def test_execute_persists_and_schedules_task():
 @pytest.mark.asyncio
 async def test_execute_uses_provided_tool_scope():
     """REQ-006: caller pode pedir FULL explicitamente."""
-    repo = _FakeRepository()
-    sched = _FakeScheduler()
-    use_case = CreateScheduledTask(repository=repo, scheduler=sched)
+    use_case, repo, _, _ = _use_case()
 
     returned = await use_case.execute(
         task_id="t-2",
@@ -113,9 +154,7 @@ async def test_execute_uses_provided_tool_scope():
 @pytest.mark.asyncio
 async def test_execute_default_tool_scope_is_restricted():
     """Default seguro da entidade (não do use case) é RESTRICTED."""
-    repo = _FakeRepository()
-    sched = _FakeScheduler()
-    use_case = CreateScheduledTask(repository=repo, scheduler=sched)
+    use_case, _, _, _ = _use_case()
 
     returned = await use_case.execute(
         task_id="t-3",
@@ -129,10 +168,8 @@ async def test_execute_default_tool_scope_is_restricted():
 
 @pytest.mark.asyncio
 async def test_execute_persists_optional_fields():
-    """`skills`, `created_by` e `timeout_seconds` são repassados quando fornecidos."""
-    repo = _FakeRepository()
-    sched = _FakeScheduler()
-    use_case = CreateScheduledTask(repository=repo, scheduler=sched)
+    """`skills` e `timeout_seconds` são repassados quando fornecidos."""
+    use_case, _, _, _ = _use_case()
 
     returned = await use_case.execute(
         task_id="t-4",
@@ -140,21 +177,17 @@ async def test_execute_persists_optional_fields():
         thread_id="th-1",
         schedule=Schedule(kind="once", expr="2026-01-01T00:00:00"),
         skills=("brand-guidelines", "canvas-design"),
-        created_by="user-123",
         timeout_seconds=120,
     )
 
     assert returned.skills == ("brand-guidelines", "canvas-design")
-    assert returned.created_by == "user-123"
     assert returned.timeout_seconds == 120
 
 
 @pytest.mark.asyncio
 async def test_execute_default_timeout_is_entity_default_when_none():
     """Quando `timeout_seconds=None`, o default da entidade (300s) é usado."""
-    repo = _FakeRepository()
-    sched = _FakeScheduler()
-    use_case = CreateScheduledTask(repository=repo, scheduler=sched)
+    use_case, _, _, _ = _use_case()
 
     returned = await use_case.execute(
         task_id="t-5",
@@ -167,16 +200,91 @@ async def test_execute_default_timeout_is_entity_default_when_none():
 
 
 # ---------------------------------------------------------------------------
+# scheduled-channel-routines create-1
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_persists_resolved_delivery_user_key_and_schedules():
+    """unit-1: delivery_channel=whatsapp + resolver → delivery_user_key persistido."""
+    resolver = _FakeDeliveryResolver(result="whatsapp:1")
+    use_case, repo, sched, _ = _use_case(resolver=resolver)
+
+    returned = await use_case.execute(
+        task_id="t-wa",
+        prompt="mande no zap",
+        thread_id="th-1",
+        schedule=Schedule(kind="once", expr="2026-12-31T23:59:00"),
+        owner_user_key="web:owner-uuid",
+        owner_user_id="owner-uuid",
+        delivery_channel="whatsapp",
+    )
+
+    assert returned.delivery_user_key == "whatsapp:1"
+    assert returned.owner_user_key == "web:owner-uuid"
+    stored = await repo.get("t-wa")
+    assert stored is not None
+    assert stored.delivery_user_key == "whatsapp:1"
+    assert sched.scheduled == ["t-wa"]
+    assert resolver.calls == [("owner-uuid", "whatsapp")]
+    # owner nunca vem do delivery_channel
+    assert returned.owner_user_key == "web:owner-uuid"
+
+
+@pytest.mark.asyncio
+async def test_execute_omitted_delivery_channel_leaves_delivery_user_key_none():
+    """REQ-001: omitido → delivery_user_key None (fallback owner no domínio)."""
+    use_case, _, _, resolver = _use_case()
+
+    returned = await use_case.execute(
+        task_id="t-omit",
+        prompt="x",
+        thread_id="th-1",
+        schedule=Schedule(kind="once", expr="2026-01-01T00:00:00"),
+        owner_user_key="web:owner-uuid",
+        owner_user_id="owner-uuid",
+    )
+
+    assert returned.delivery_user_key is None
+    assert returned.effective_delivery_user_key == "web:owner-uuid"
+    assert resolver.calls == []
+
+
+@pytest.mark.asyncio
+async def test_execute_without_link_does_not_persist_or_schedule():
+    """unit-2: resolver falha → nada salvo e scheduler não chamado."""
+    from src.domain.shared.errors import DomainError
+
+    resolver = _FakeDeliveryResolver(
+        error=DomainError("canal whatsapp sem vínculo ativo")
+    )
+    use_case, repo, sched, _ = _use_case(resolver=resolver)
+
+    with pytest.raises(DomainError, match="whatsapp"):
+        await use_case.execute(
+            task_id="t-fail",
+            prompt="x",
+            thread_id="th-1",
+            schedule=Schedule(kind="once", expr="2026-01-01T00:00:00"),
+            owner_user_key="web:owner-uuid",
+            owner_user_id="owner-uuid",
+            delivery_channel="whatsapp",
+        )
+
+    assert await repo.get("t-fail") is None
+    assert sched.scheduled == []
+
+
+# ---------------------------------------------------------------------------
 # Injeção de dependência
 # ---------------------------------------------------------------------------
 
 
 def test_constructor_stores_dependencies_by_injection():
-    repo = _FakeRepository()
-    sched = _FakeScheduler()
-    use_case = CreateScheduledTask(repository=repo, scheduler=sched)
+    use_case, repo, sched, resolver = _use_case()
     assert use_case._repository is repo
     assert use_case._scheduler is sched
+    assert use_case._delivery_resolver is resolver
 
 
 def test_constructor_does_not_import_framework():
@@ -204,9 +312,7 @@ def test_constructor_does_not_import_framework():
 @pytest.mark.asyncio
 async def test_execute_rejects_empty_prompt_without_persisting():
     """`DomainError` da entidade deve propagar; nada é persistido nem agendado."""
-    repo = _FakeRepository()
-    sched = _FakeScheduler()
-    use_case = CreateScheduledTask(repository=repo, scheduler=sched)
+    use_case, repo, sched, _ = _use_case()
 
     with pytest.raises(Exception):  # DomainError, duck-typed
         await use_case.execute(

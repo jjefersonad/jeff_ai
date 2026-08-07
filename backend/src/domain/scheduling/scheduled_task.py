@@ -272,6 +272,28 @@ class ScheduledTask:
         self.status = TaskStatus.WAITING_HUMAN
         self.error = None
 
+    def resume_succeed(self) -> None:
+        """WAITING_HUMAN → SUCCEEDED após resume HITL aprovado."""
+        if self.status is not TaskStatus.WAITING_HUMAN:
+            raise DomainError(
+                "ScheduledTask.resume_succeed() exige status=WAITING_HUMAN; "
+                f"status atual: {self.status.value!r}"
+            )
+        self.status = TaskStatus.SUCCEEDED
+        self.finished_at = datetime.now(UTC)
+        self.error = None
+
+    def resume_fail(self, error: str) -> None:
+        """WAITING_HUMAN → FAILED após reject / falha no resume HITL."""
+        if self.status is not TaskStatus.WAITING_HUMAN:
+            raise DomainError(
+                "ScheduledTask.resume_fail() exige status=WAITING_HUMAN; "
+                f"status atual: {self.status.value!r}"
+            )
+        self.status = TaskStatus.FAILED
+        self.finished_at = datetime.now(UTC)
+        self.error = str(error)
+
     def rearm_for_cron(self) -> None:
         """SUCCEEDED|FAILED → SCHEDULED para o próximo tick cron.
 

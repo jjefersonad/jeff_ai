@@ -187,3 +187,26 @@ async def test_delete_missing_task_is_noop() -> None:
     repo = PostgresScheduledTaskRepository(_uri())
 
     await repo.delete(str(uuid.uuid4()))  # não deve levantar exceção
+
+
+async def test_ensure_schema_idempotent_and_round_trips_delivery_waiting_human() -> None:
+    """schema-1 unit-1: ensure_schema ×2 + save/get com delivery_user_key e WAITING_HUMAN."""
+    from src.infrastructure.persistence.scheduled_task_repository import (
+        PostgresScheduledTaskRepository,
+    )
+
+    ensure_schema(_uri())
+    ensure_schema(_uri())
+
+    repo = PostgresScheduledTaskRepository(_uri())
+    task = _new_task(delivery_user_key="whatsapp:5511999999999")
+    task.start()
+    task.waiting_human()
+
+    await repo.save(task)
+    fetched = await repo.get(task.id)
+
+    assert fetched is not None
+    assert fetched.delivery_user_key == "whatsapp:5511999999999"
+    assert fetched.status == TaskStatus.WAITING_HUMAN
+    assert fetched.effective_delivery_user_key == "whatsapp:5511999999999"

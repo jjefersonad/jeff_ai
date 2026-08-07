@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ApiError, setUnauthorizedHandler } from "./api";
 import {
   listScheduledTasks,
+  listDeliveryChannels,
   createScheduledTask,
   updateScheduledTask,
   cancelScheduledTask,
@@ -16,8 +17,9 @@ const sampleTask = {
   tool_scope: "restricted",
   skills: [],
   timeout_seconds: 300,
-  status: "SCHEDULED",
+  status: "scheduled",
   owner_user_key: "web:user-1",
+  delivery_user_key: null,
   started_at: null,
   finished_at: null,
   error: null,
@@ -51,6 +53,20 @@ describe("scheduling.ts", () => {
     expect(init.credentials).toBe("include");
   });
 
+  it("listDeliveryChannels() calls GET /api/scheduling/delivery-channels", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ channels: ["web", "whatsapp"] }), { status: 200 })
+    );
+    global.fetch = fetchMock;
+
+    const result = await listDeliveryChannels();
+
+    expect(result).toEqual(["web", "whatsapp"]);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://backend.test/api/scheduling/delivery-channels");
+    expect(init.credentials).toBe("include");
+  });
+
   it("createScheduledTask(payload) calls POST /api/scheduled-tasks with the payload as JSON body and returns the created task", async () => {
     const fetchMock = vi
       .fn()
@@ -70,6 +86,30 @@ describe("scheduling.ts", () => {
     expect(url).toBe("http://backend.test/api/scheduled-tasks");
     expect(init.method).toBe("POST");
     expect(init.credentials).toBe("include");
+    expect(JSON.parse(init.body as string)).toEqual(payload);
+  });
+
+  it("ui-1 unit-1: createScheduledTask includes delivery_channel when selected", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ...sampleTask,
+          delivery_user_key: "telegram:42",
+        }),
+        { status: 201 }
+      )
+    );
+    global.fetch = fetchMock;
+
+    const payload = {
+      prompt: "Notify me",
+      schedule_kind: "once",
+      schedule_expr: "2026-12-31T23:59:00",
+      delivery_channel: "telegram",
+    };
+    await createScheduledTask(payload);
+
+    const [, init] = fetchMock.mock.calls[0];
     expect(JSON.parse(init.body as string)).toEqual(payload);
   });
 

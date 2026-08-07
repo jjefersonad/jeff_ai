@@ -6,7 +6,8 @@ src.infrastructure.cli.jeff_cli --job-id <id>`: roda uma única
 design da mudança `agendamento-jeff-cli`, "Invocação direta do grafo").
 
 Humble Object: este módulo só faz parsing de argv, monta o composition root
-(`ChannelRegistry` ← só `ScheduledChannel`; `PostgresScheduledTaskRepository`
+(`ChannelRegistry` ← `ScheduledChannel` + `WebChannel` e, se houver env,
+Telegram/WhatsApp; `PostgresScheduledTaskRepository`
 + `LangGraphDirectAgentRunner` → `RunScheduledTask`) e traduz o status final
 da tarefa em exit code (jeff-cli REQ-004: 0 em sucesso, != 0 em
 falha/timeout/tarefa que não terminou SUCCEEDED). Toda decisão de negócio
@@ -29,6 +30,7 @@ from src.composition.env import load_env
 from src.domain.scheduling import TaskStatus
 from src.infrastructure.channels.registry import ChannelRegistry
 from src.infrastructure.channels.scheduled_channel import ScheduledChannel
+from src.infrastructure.channels.web_channel import WebChannel
 
 logger = logging.getLogger(__name__)
 
@@ -40,14 +42,35 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _register_channels() -> None:
-    """Popula o `ChannelRegistry` deste subprocesso (REQ-002 chat-channel-port).
+async def _noop_web_emit(_payload: dict) -> None:
+    """Sink no-op: o subprocesso do job não tem SSE web."""
+    return None
 
-    Registra apenas `ScheduledChannel` — web/telegram/whatsapp ficam de fora
-    deste processo (composition-2 / design Step 4).
+
+def _register_channels() -> None:
+    """Popula o `ChannelRegistry` deste subprocesso (REQ-005 targeting).
+
+    Sempre: `ScheduledChannel` (delegator) + `WebChannel` (emit no-op — o
+    job não tem SSE; evita `canal web não registrado` no notify).
+    Condicional: Telegram/WhatsApp só quando as envs de credencial existem,
+    para o boot não depender de tokens em jobs que não os usam.
     """
     ChannelRegistry.register(ScheduledChannel())
+    ChannelRegistry.register(WebChannel(emit=_noop_web_emit))
 
+    telegram_token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+    if telegram_token:
+        from telegram import Bot
+
+        from src.infrastructure.channels.telegram_channel import TelegramChannel
+
+        ChannelRegistry.register(TelegramChannel(bot=Bot(token=telegram_token)))
+
+    whatsapp_instance = (os.environ.get("EVOLUTION_INSTANCE_NAME") or "").strip()
+    if whatsapp_instance:
+        from src.infrastructure.channels.whatsapp_channel import WhatsAppChannel
+
+        ChannelRegistry.register(WhatsAppChannel(instance=whatsapp_instance))
 
 def _build_components(
     postgres_uri: str,
@@ -83,16 +106,18 @@ async def _run(
 ) -> int:
     """Executa `job_id` e traduz o status final em exit code (REQ-004).
 
-    `SUCCEEDED` ou tarefa inexistente (no-op tolerante, ver
-    `RunScheduledTask`) viram 0; qualquer outro status (`FAILED`, ou
-    `RUNNING`/`SCHEDULED` caso `execute()` não tenha conseguido concluir a
-    transição) vira 1.
+    `SUCCEEDED`, cron rearmado (`SCHEDULED` após o tick — Decision 5) ou
+    tarefa inexistente (no-op tolerante) → 0. `FAILED` (once),
+    `WAITING_HUMAN`, `RUNNING` ou outros → 1.
     """
     repository, use_case = components
     await use_case.execute(task_id=job_id)
 
     task = await repository.get(job_id)
-    if task is None or task.status == TaskStatus.SUCCEEDED:
+    if task is None or task.status in (
+        TaskStatus.SUCCEEDED,
+        TaskStatus.SCHEDULED,
+    ):
         return 0
     return 1
 

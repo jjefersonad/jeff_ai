@@ -18,7 +18,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.application.ports.agent_runner import AgentRunnerPort, AgentRunResult
+from src.application.ports.agent_runner import (
+    AgentRunnerPort,
+    AgentRunResult,
+    InterruptInfo,
+)
 from src.application.ports.scheduled_task_repository import ScheduledTaskRepositoryPort
 from src.application.use_cases.run_scheduled_task import RunScheduledTask
 from src.domain.scheduling import Schedule, ScheduledTask, TaskStatus, ToolScope
@@ -254,6 +258,180 @@ async def test_execute_is_noop_when_task_does_not_exist():
     await use_case.execute(task_id="does-not-exist")
 
     assert runner.calls == []
+
+
+# ---------------------------------------------------------------------------
+# scheduled-channel-routines run-1 — interrupted / overlap
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_interrupted_becomes_waiting_human_and_delivers():
+    """unit-2: interrupted → WAITING_HUMAN + deliver interruption no destino."""
+    repo = _FakeRepository()
+    task = _make_task(
+        owner_user_key="web:1",
+        delivery_user_key="whatsapp:9",
+        tool_scope=ToolScope.FULL,
+    )
+    await repo.save(task)
+
+    interrupt = InterruptInfo(
+        action_requests=({"name": "edit_file", "args": {}},),
+        review_configs=({"allowed_decisions": ["approve", "reject"]},),
+    )
+    runner = _RecordingRunner(
+        result=AgentRunResult(
+            thread_id="th-1",
+            status="interrupted",
+            interrupt=interrupt,
+        )
+    )
+    notifier = MagicMock()
+    notifier.execute = AsyncMock()
+    channel = MagicMock()
+    channel.deliver = AsyncMock()
+    use_case = RunScheduledTask(
+        repository=repo,
+        agent_runner=runner,
+        handle_chat_message=notifier,
+        notify_channel=channel,
+    )
+
+    await use_case.execute(task_id="t-1")
+
+    stored = await repo.get("t-1")
+    assert stored is not None
+    assert stored.status == TaskStatus.WAITING_HUMAN
+    assert stored.status is not TaskStatus.FAILED
+    channel.deliver.assert_awaited_once()
+    deliver_kwargs = channel.deliver.await_args.kwargs
+    assert deliver_kwargs["user_key"] == "whatsapp:9"
+    assert deliver_kwargs["kind"] == "interruption"
+    assert deliver_kwargs["interrupt"] is interrupt
+    assert deliver_kwargs["thread_id"] == "th-1"
+    notifier.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [TaskStatus.RUNNING, TaskStatus.WAITING_HUMAN])
+async def test_execute_is_noop_when_already_running_or_waiting_human(status: TaskStatus):
+    """unit-3: overlap RUNNING/WAITING_HUMAN → no-op, runner não chamado."""
+    repo = _FakeRepository()
+    task = _make_task()
+    task.status = status
+    await repo.save(task)
+    runner = _RecordingRunner(result=AgentRunResult(thread_id="th-1", status="ok"))
+    use_case = _make_use_case(repository=repo, agent_runner=runner)
+
+    await use_case.execute(task_id="t-1")
+
+    assert runner.calls == []
+    stored = await repo.get("t-1")
+    assert stored is not None
+    assert stored.status == status
+
+
+# ---------------------------------------------------------------------------
+# scheduled-channel-routines run-2 — rearme cron
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_cron_success_rearms_to_scheduled_same_thread():
+    """run-2 unit-1: cron ok → status salvo SCHEDULED; mesmo thread_id; 2º tick ok."""
+    repo = _FakeRepository()
+    task = _make_task(
+        schedule=Schedule(kind="cron", expr="0 9 * * *"),
+        thread_id="th-cron-shared",
+    )
+    await repo.save(task)
+    runner = _RecordingRunner(result=AgentRunResult(thread_id="th-cron-shared", status="ok"))
+    use_case = _make_use_case(repository=repo, agent_runner=runner)
+
+    await use_case.execute(task_id="t-1")
+
+    stored = await repo.get("t-1")
+    assert stored is not None
+    assert stored.status == TaskStatus.SCHEDULED
+    assert stored.thread_id == "th-cron-shared"
+
+    # Segundo disparo: start() funciona de novo na mesma thread
+    await use_case.execute(task_id="t-1")
+    assert len(runner.calls) == 2
+    assert runner.calls[0]["thread_id"] == runner.calls[1]["thread_id"] == "th-cron-shared"
+    stored_again = await repo.get("t-1")
+    assert stored_again is not None
+    assert stored_again.status == TaskStatus.SCHEDULED
+
+
+@pytest.mark.asyncio
+async def test_execute_cron_failure_also_rearms_to_scheduled():
+    """OQ-1 / Decision 5: cron FAILED também rearma."""
+    repo = _FakeRepository()
+    task = _make_task(schedule=Schedule(kind="cron", expr="0 9 * * *"))
+    await repo.save(task)
+    runner = _RecordingRunner(
+        result=AgentRunResult(thread_id="th-1", status="error", error="boom")
+    )
+    use_case = _make_use_case(repository=repo, agent_runner=runner)
+
+    await use_case.execute(task_id="t-1")
+
+    stored = await repo.get("t-1")
+    assert stored is not None
+    assert stored.status == TaskStatus.SCHEDULED
+    assert stored.error is None
+
+
+@pytest.mark.asyncio
+async def test_execute_once_success_stays_succeeded():
+    """run-2 unit-2: once permanece SUCCEEDED (sem rearme)."""
+    repo = _FakeRepository()
+    task = _make_task(schedule=Schedule(kind="once", expr="2026-01-01T00:00:00"))
+    await repo.save(task)
+    runner = _RecordingRunner(result=AgentRunResult(thread_id="th-1", status="ok"))
+    use_case = _make_use_case(repository=repo, agent_runner=runner)
+
+    await use_case.execute(task_id="t-1")
+
+    stored = await repo.get("t-1")
+    assert stored is not None
+    assert stored.status == TaskStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_execute_cron_interrupted_does_not_rearm():
+    """WAITING_HUMAN não rearma até o resume."""
+    repo = _FakeRepository()
+    task = _make_task(
+        schedule=Schedule(kind="cron", expr="0 9 * * *"),
+        tool_scope=ToolScope.FULL,
+    )
+    await repo.save(task)
+    interrupt = InterruptInfo(
+        action_requests=({"name": "edit_file", "args": {}},),
+        review_configs=({"allowed_decisions": ["approve"]},),
+    )
+    runner = _RecordingRunner(
+        result=AgentRunResult(
+            thread_id="th-1", status="interrupted", interrupt=interrupt
+        )
+    )
+    channel = MagicMock()
+    channel.deliver = AsyncMock()
+    use_case = RunScheduledTask(
+        repository=repo,
+        agent_runner=runner,
+        handle_chat_message=MagicMock(execute=AsyncMock()),
+        notify_channel=channel,
+    )
+
+    await use_case.execute(task_id="t-1")
+
+    stored = await repo.get("t-1")
+    assert stored is not None
+    assert stored.status == TaskStatus.WAITING_HUMAN
 
 
 # ---------------------------------------------------------------------------
