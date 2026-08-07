@@ -36,6 +36,7 @@ import {
   listDeals,
   listNotes,
   moveDeal,
+  resolveNotesTarget,
   updateCompany,
   updateContact,
   validateContactForm,
@@ -43,9 +44,10 @@ import {
   type CrmContact,
   type CrmDeal,
   type CrmNote,
+  type CrmUiTab,
 } from "@/lib/crm";
 
-type TabId = "contacts" | "companies" | "pipeline";
+type TabId = CrmUiTab;
 
 function errMessage(err: unknown): string {
   return err instanceof ApiError ? err.message : "Falha inesperada";
@@ -85,6 +87,8 @@ export default function CrmPage() {
 
   const [dealTitle, setDealTitle] = useState("");
   const [dealStage, setDealStage] = useState("lead");
+  const [dealLinkContactId, setDealLinkContactId] = useState<string>("none");
+  const [dealLinkCompanyId, setDealLinkCompanyId] = useState<string>("none");
   const [noteBody, setNoteBody] = useState("");
 
   const selectedContact = useMemo(
@@ -106,6 +110,22 @@ export default function CrmPage() {
         ? contacts.filter((c) => c.company_id === selectedCompany.id)
         : [],
     [contacts, selectedCompany]
+  );
+
+  const selectedDealContact = useMemo(
+    () =>
+      selectedDeal?.contact_id
+        ? (contacts.find((c) => c.id === selectedDeal.contact_id) ?? null)
+        : null,
+    [contacts, selectedDeal]
+  );
+
+  const selectedDealCompany = useMemo(
+    () =>
+      selectedDeal?.company_id
+        ? (companies.find((c) => c.id === selectedDeal.company_id) ?? null)
+        : null,
+    [companies, selectedDeal]
   );
 
   const refreshLists = useCallback(async () => {
@@ -138,21 +158,18 @@ export default function CrmPage() {
   );
 
   useEffect(() => {
-    if (selectedContactId) {
-      loadNotesFor({ contact_id: selectedContactId }).catch((err) =>
-        setError(errMessage(err))
-      );
-    } else if (selectedCompanyId && tab === "companies") {
-      loadNotesFor({ company_id: selectedCompanyId }).catch((err) =>
-        setError(errMessage(err))
-      );
-    } else if (selectedDealId && tab === "pipeline") {
-      loadNotesFor({ deal_id: selectedDealId }).catch((err) =>
-        setError(errMessage(err))
-      );
-    } else {
+    const target = resolveNotesTarget({
+      tab,
+      contactId: selectedContactId,
+      companyId: selectedCompanyId,
+      dealId: selectedDealId,
+    });
+    setNoteBody("");
+    if (!target) {
       setNotes([]);
+      return;
     }
+    loadNotesFor(target).catch((err) => setError(errMessage(err)));
   }, [
     selectedContactId,
     selectedCompanyId,
@@ -184,7 +201,10 @@ export default function CrmPage() {
       setContactName("");
       setContactEmail("");
       setContactPhone("");
+      setSelectedCompanyId(null);
+      setSelectedDealId(null);
       setSelectedContactId(created.id);
+      setTab("contacts");
     } catch (err) {
       setError(errMessage(err));
     }
@@ -240,7 +260,10 @@ export default function CrmPage() {
       setCompanies((prev) => [created, ...prev]);
       setCompanyName("");
       setCompanyWebsite("");
+      setSelectedContactId(null);
+      setSelectedDealId(null);
       setSelectedCompanyId(created.id);
+      setTab("companies");
     } catch (err) {
       setError(errMessage(err));
     }
@@ -278,15 +301,23 @@ export default function CrmPage() {
   const onCreateDeal = async (event: FormEvent) => {
     event.preventDefault();
     if (!dealTitle.trim()) return;
+    const linkContactId =
+      dealLinkContactId !== "none" ? dealLinkContactId : null;
+    const linkCompanyId =
+      dealLinkCompanyId !== "none" ? dealLinkCompanyId : null;
     try {
       const created = await createDeal({
         title: dealTitle,
         stage: dealStage,
-        contact_id: selectedContactId,
-        company_id: selectedCompanyId,
+        contact_id: linkContactId,
+        company_id: linkCompanyId,
       });
       setDeals((prev) => [created, ...prev]);
       setDealTitle("");
+      setDealLinkContactId("none");
+      setDealLinkCompanyId("none");
+      setSelectedContactId(null);
+      setSelectedCompanyId(null);
       setSelectedDealId(created.id);
       setTab("pipeline");
     } catch (err) {
@@ -317,17 +348,19 @@ export default function CrmPage() {
   const onAddNote = async (event: FormEvent) => {
     event.preventDefault();
     if (!noteBody.trim()) return;
-    const payload =
-      tab === "contacts" && selectedContactId
-        ? { body: noteBody, contact_id: selectedContactId, source: "user" }
-        : tab === "companies" && selectedCompanyId
-          ? { body: noteBody, company_id: selectedCompanyId, source: "user" }
-          : selectedDealId
-            ? { body: noteBody, deal_id: selectedDealId, source: "user" }
-            : null;
-    if (!payload) return;
+    const target = resolveNotesTarget({
+      tab,
+      contactId: selectedContactId,
+      companyId: selectedCompanyId,
+      dealId: selectedDealId,
+    });
+    if (!target) return;
     try {
-      const created = await createNote(payload);
+      const created = await createNote({
+        body: noteBody,
+        source: "user",
+        ...target,
+      });
       setNotes((prev) => [created, ...prev]);
       setNoteBody("");
     } catch (err) {
@@ -710,6 +743,44 @@ export default function CrmPage() {
                   </SelectContent>
                 </Select>
               </div>
+              <div className="flex w-48 flex-col gap-1">
+                <Label>Contato (opcional)</Label>
+                <Select
+                  value={dealLinkContactId}
+                  onValueChange={setDealLinkContactId}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Sem contato" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sem contato</SelectItem>
+                    {contacts.map((contact) => (
+                      <SelectItem key={contact.id} value={contact.id}>
+                        {contact.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex w-48 flex-col gap-1">
+                <Label>Empresa (opcional)</Label>
+                <Select
+                  value={dealLinkCompanyId}
+                  onValueChange={setDealLinkCompanyId}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Sem empresa" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sem empresa</SelectItem>
+                    {companies.map((company) => (
+                      <SelectItem key={company.id} value={company.id}>
+                        {company.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <Button type="submit">Criar</Button>
             </form>
 
@@ -743,6 +814,10 @@ export default function CrmPage() {
             {selectedDeal && (
               <section className="mt-6 rounded-md border border-border p-4">
                 <h2 className="font-medium">{selectedDeal.title}</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Contato: {selectedDealContact?.name ?? "—"} · Empresa:{" "}
+                  {selectedDealCompany?.name ?? "—"}
+                </p>
                 <div className="mt-3 flex flex-wrap items-center gap-3">
                   <Label>Mover para</Label>
                   <Select
