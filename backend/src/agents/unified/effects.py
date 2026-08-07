@@ -97,8 +97,9 @@ CAPABILITY_NAMES: Final[tuple[str, ...]] = tuple(c.value for c in Capability)
 # default (deny-all) esconderia até o `read_file`, e uma tarefa de leitura pura
 # ficaria sem nenhuma tool. O piso é o que torna o deny-all utilizável.
 #
-# `NETWORK` está no piso porque `internet_search` e `search_arxiv` são Tier 1 —
-# "pesquisa" é literalmente o caso que o REQ-001 nomeia como sem-atrito.
+# `NETWORK` está no piso porque `internet_search`, `search_arxiv` e `web_fetch`
+# são Tier 1 — "pesquisa"/leitura remota é o caso que o REQ-001 nomeia como
+# sem-atrito.
 # `WRITE_NEW` está no piso porque Tier 2 (criar arquivo NOVO, gerar .docx,
 # `save_memory`) já executa direto pela política de tier; o envelope não
 # alarga nada ao incluí-lo (REQ-006).
@@ -331,6 +332,7 @@ TOOL_EFFECTS: Final[Mapping[str, tuple[Any, ...]]] = {
     "create_docx_document": _write_new(),
     "create_xlsx_spreadsheet": _write_new(),
     "create_pptx_presentation": _write_new(),
+    "create_pdf_document": _write_new(),
     "save_memory": _write_new(),
     "log_episode": _write_new(),
     "merge_generated_files": _write_new(),
@@ -388,6 +390,7 @@ TOOL_EFFECTS: Final[Mapping[str, tuple[Any, ...]]] = {
     # --- Network ---------------------------------------------------------
     "internet_search": _network(),
     "search_arxiv": _network(),
+    "web_fetch": _network(),
     # `install_external_skill`: baixa de um repositório remoto, escreve em
     # `backend/skills/` E roda `npx` (shell). Ver `_network_write_new_shell`.
     "install_external_skill": _network_write_new_shell(),

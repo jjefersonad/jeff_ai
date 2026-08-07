@@ -69,16 +69,18 @@ EXPECTED_AGENT_TOOLS: frozenset[str] = frozenset(
         "list_memories",
         "delete_memory",
         "get_date_time_current",
-        # Pesquisa externa
+        # Pesquisa externa / leitura de URL
         "internet_search",
         "search_arxiv",
+        "web_fetch",
         # Imagens (referência)
         "fetch_reference_image",
         "check_reference_image",
-        # Documentos Office (Tier 2)
+        # Documentos Office/PDF (Tier 2)
         "create_docx_document",
         "create_xlsx_spreadsheet",
         "create_pptx_presentation",
+        "create_pdf_document",
         # Entrega canal-agnóstica + mídia Telegram restante
         "send_message",
         "send_telegram_photo",
@@ -138,8 +140,8 @@ def test_every_agent_tool_has_an_effect_entry() -> None:
     # tool nova e atualizou `EXPECTED_AGENT_TOOLS` MAS esqueceu o
     # registry, o teste (1) pega. Se esqueceu AMBOS, este teste
     # falha por "agent snapshot desatualizado".
-    assert len(EXPECTED_AGENT_TOOLS) == 41, (
-        f"EXPECTED_AGENT_TOOLS deveria ter 38 tools; tem "
+    assert len(EXPECTED_AGENT_TOOLS) == 43, (
+        f"EXPECTED_AGENT_TOOLS deveria ter 43 tools; tem "
         f"{len(EXPECTED_AGENT_TOOLS)}. Atualize o snapshot ao adicionar "
         "ou remover tools do agente."
     )

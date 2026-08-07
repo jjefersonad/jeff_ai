@@ -1,4 +1,4 @@
-"""Rotas HTTP de documentos Office (docx/xlsx/pptx) e diagramas HTML
+"""Rotas HTTP de documentos (docx/xlsx/pptx/pdf) e diagramas HTML
 gerados pelas tools/skills.
 
 Portado 1:1 de `backend/image_server.py` para ser montado como `APIRouter`
@@ -25,16 +25,17 @@ router = APIRouter()
 
 DOCUMENTS_DIR = Path(os.environ.get("DOCUMENTS_DIR", "/deps/backend/outputs/documents"))
 
-_DOCUMENT_KINDS: frozenset[str] = frozenset({"docx", "xlsx", "pptx", "html"})
+_DOCUMENT_KINDS: frozenset[str] = frozenset({"docx", "xlsx", "pptx", "html", "pdf"})
 
 _DOCUMENT_MEDIA_TYPES: dict[str, str] = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ".html": "text/html",
+    ".pdf": "application/pdf",
 }
 
-_ATTACHMENT_KINDS: frozenset[str] = frozenset({"docx", "xlsx", "pptx"})
+_ATTACHMENT_KINDS: frozenset[str] = frozenset({"docx", "xlsx", "pptx", "pdf"})
 
 
 def _document_kind_dir(kind: str) -> Path | None:

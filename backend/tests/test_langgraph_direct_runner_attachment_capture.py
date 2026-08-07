@@ -143,3 +143,39 @@ async def test_mime_resolution_known_and_unknown_extensions() -> None:
     assert known.display_name == "foo.png"
     assert unknown.mime == "application/octet-stream"
     assert unknown.display_name == "foo.xyz123"
+
+
+@pytest.mark.asyncio
+async def test_create_pdf_document_tool_message_yields_pdf_attachment() -> None:
+    """Regressão REQ-004: ToolMessage de create_pdf_document vira anexo application/pdf.
+
+    O capturador é shape-based (sem allowlist por nome de tool) — path `.pdf`
+    + url bastam para mime application/pdf.
+    """
+    messages = [
+        HumanMessage(content="gere um pdf"),
+        ToolMessage(
+            content=json.dumps(
+                {
+                    "path": "outputs/documents/pdf/x.pdf",
+                    "url": "/api/files/pdf/x.pdf",
+                    "metadata": {"kind": "pdf"},
+                }
+            ),
+            name="create_pdf_document",
+            tool_call_id="call-pdf-1",
+        ),
+        AIMessage(content="Aqui está o PDF", tool_calls=[]),
+    ]
+
+    result = await _run_with_fake_state(messages)
+
+    assert result.output is not None
+    assert result.output.attachments == (
+        OutputAttachment(
+            path="outputs/documents/pdf/x.pdf",
+            mime="application/pdf",
+            display_name="x.pdf",
+            url="/api/files/pdf/x.pdf",
+        ),
+    )

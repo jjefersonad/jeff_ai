@@ -11,7 +11,13 @@ Dois lados simétricos e deliberadamente separados:
 - **Leitura** (`DocumentContent` e seus blocos) descreve *o que se leu*, e é
   permissiva: um `.docx` real contém parágrafos vazios.
 """
-from src.domain.documents.blocks import ImageRef, Table
+from src.domain.documents.blocks import (
+    Heading,
+    ImageRef,
+    ListBlock,
+    Paragraph,
+    Table,
+)
 from src.domain.documents.document_content import (
     READABLE_KINDS,
     ContentBlock,
@@ -27,13 +33,8 @@ from src.domain.documents.document_content import (
 )
 from src.domain.documents.document_result import DocumentResult
 from src.domain.documents.document_spec import DocumentSpec
-from src.domain.documents.docx_spec import (
-    DocxBlock,
-    DocxSpec,
-    Heading,
-    ListBlock,
-    Paragraph,
-)
+from src.domain.documents.docx_spec import DocxBlock, DocxSpec
+from src.domain.documents.pdf_spec import PdfBlock, PdfSpec
 from src.domain.documents.pptx_spec import (
     BulletSlide,
     ImageSlide,
@@ -63,6 +64,8 @@ __all__ = [
     "PageContent",
     "Paragraph",
     "ParagraphBlock",
+    "PdfBlock",
+    "PdfSpec",
     "PptxSpec",
     "ReadBudget",
     "ReadCellValue",

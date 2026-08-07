@@ -1,6 +1,6 @@
 """Resolução de diretório de saída e URL pública dos documentos gerados.
 
-Compartilhado pelos writers de infraestrutura (docx/xlsx/pptx). Mantém a mesma
+Compartilhado pelos writers de infraestrutura (docx/xlsx/pptx/pdf). Mantém a mesma
 topologia de `outputs/` usada pelas imagens: arquivos em `backend/outputs/` e URL
 servida pelo servidor de mídia.
 """
@@ -23,7 +23,7 @@ class DocumentOutput:
         output_dir: Path | None = None,
         url_prefix: str = "/api/files",
     ) -> None:
-        """Configura o tipo (`docx`/`xlsx`/`pptx`), o destino e o prefixo de URL."""
+        """Configura o tipo (`docx`/`xlsx`/`pptx`/`pdf`), o destino e o prefixo de URL."""
         self._kind = kind
         self._dir = output_dir or (_DEFAULT_BASE / kind)
         self._url_prefix = url_prefix.rstrip("/")

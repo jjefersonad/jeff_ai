@@ -63,6 +63,7 @@ def fake_documents_root(
     (root / "docx").mkdir(parents=True)
     (root / "xlsx").mkdir(parents=True)
     (root / "pptx").mkdir(parents=True)
+    (root / "pdf").mkdir(parents=True)
     monkeypatch.setattr(documents_router, "DOCUMENTS_DIR", root)
     return root
 
@@ -147,13 +148,46 @@ def test_serve_pptx_returns_200_with_correct_content_type(
     assert response.content == b"pptx-bytes"
 
 
+def test_serve_pdf_returns_200_with_correct_content_type(
+    fake_documents_root: Path, client: TestClient
+):
+    """Unit: serve PDF autorizado (add-pdf-creation-tool-task-serve-1)."""
+    name = _seed(fake_documents_root, "pdf", "20260807.pdf", b"%PDF-1.4 fake")
+    response = client.get("/api/files/pdf/20260807.pdf")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["content-disposition"] == f'attachment; filename="{name}"'
+    assert response.content == b"%PDF-1.4 fake"
+
+
+def test_serve_pdf_unauthorized_returns_opaque_404(
+    fake_documents_root: Path,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Unit: serve PDF não autorizado 404 (add-pdf-creation-tool-task-serve-1)."""
+    from unittest.mock import AsyncMock
+
+    _seed(fake_documents_root, "pdf", "secret.pdf", b"%PDF-secret-bytes")
+    monkeypatch.setattr(
+        documents_router, "is_authorized", AsyncMock(return_value=False)
+    )
+
+    response = client.get("/api/files/pdf/secret.pdf")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Document not found"
+    assert b"%PDF-secret-bytes" not in response.content
+
+
 # --- Restrição de `kind` e validação de nome ------------------------------
 
 
 def test_serve_unknown_kind_returns_400(
     fake_documents_root: Path, client: TestClient
 ):
-    response = client.get("/api/files/pdf/20260708.pdf")
+    """Unit: kind inválido ainda 400 — usa `exe` (pdf agora é válido)."""
+    response = client.get("/api/files/exe/20260708.exe")
     assert response.status_code == 400
     assert response.json()["detail"] == "Invalid document kind"
 

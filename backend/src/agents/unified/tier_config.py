@@ -58,9 +58,10 @@ TIER_1_TOOLS: tuple[str, ...] = (
     "git_branch",
     # Utilitários.
     "get_date_time_current",
-    # Buscas externas.
+    # Buscas externas / leitura de URL.
     "internet_search",
     "search_arxiv",
+    "web_fetch",
     # Imagens — leitura/referência.
     "fetch_reference_image",
     "check_reference_image",
@@ -95,6 +96,7 @@ TIER_2_TOOLS: tuple[str, ...] = (
     "create_docx_document",
     "create_xlsx_spreadsheet",
     "create_pptx_presentation",
+    "create_pdf_document",
     "save_memory",
     "log_episode",
     "ingest_document",

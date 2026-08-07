@@ -219,11 +219,12 @@ def _extract_attachments(messages: list[Any]) -> tuple[OutputAttachment, ...]:
     Uma `ToolMessage` é "geradora" quando seu `content` faz parse como JSON
     e o resultado é um dict com a chave `path` — o shape que
     `create_docx_document`/`create_xlsx_spreadsheet`/`create_pptx_presentation`/
-    `create_image_from_prompt` (e futuras tools geradoras) sempre devolvem
-    (`{path, url, metadata}`, ver CLAUDE.md). Não há allowlist por nome de
-    tool — qualquer `ToolMessage` com esse shape vira anexo, na ordem em
-    que aparece, sem dedup por `path` (dedup é responsabilidade do caso de
-    uso consumidor, não desta extração).
+    `create_pdf_document`/`create_image_from_prompt` (e futuras tools
+    geradoras) sempre devolvem (`{path, url, metadata}`, ver CLAUDE.md).
+    Não há allowlist por nome de tool — qualquer `ToolMessage` com esse
+    shape vira anexo, na ordem em que aparece, sem dedup por `path`
+    (dedup é responsabilidade do caso de uso consumidor, não desta
+    extração).
     """
     attachments: list[OutputAttachment] = []
     for message in _current_turn_messages(messages):

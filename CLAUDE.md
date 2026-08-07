@@ -131,11 +131,11 @@ The safety model. `build_interrupt_on()` turns the declarative registry into the
 
 Image requests go to `image_design_subagent`, which presents a design plan and then calls `create_image_from_prompt` immediately (no HITL `interrupt_on` on image generation). The image is generated via Gemini and saved to `backend/outputs/images/`; the style is stored per-thread via `save_design_style` after a successful generation. The tool returns `{path, url, metadata}` — **always use `url` in markdown, never `path`.**
 
-### Office documents
+### Office documents / PDF
 
-`create_docx_document` (python-docx), `create_xlsx_spreadsheet` (openpyxl), `create_pptx_presentation` (python-pptx). No subagent, no approval gate. Each returns `{path, url, metadata}` — **always use `url`**. Files land in `backend/outputs/documents/{kind}/` and are served by the backend's own `http.app` (`src/infrastructure/web/webapp.py`, mounted via the `LANGGRAPH_HTTP` env var — see `docker-compose.yml`) at `GET /api/files/{kind}/{name}` (restricted to `kind ∈ {docx,xlsx,pptx}`; rejects traversal with 400, missing files with 404). **`image_server.py:8080` no longer serves this route** (migrated in `consolidate-http-routes-langgraph`) — reach it via the frontend origin (`http://localhost:3000`, rewritten server-side per `next.config.ts`) or the backend's docker-exposed port directly.
+`create_docx_document` (python-docx), `create_xlsx_spreadsheet` (openpyxl), `create_pptx_presentation` (python-pptx), `create_pdf_document` (fpdf2). No subagent, no approval gate. Each returns `{path, url, metadata}` — **always use `url`**. Files land in `backend/outputs/documents/{kind}/` and are served by the backend's own `http.app` (`src/infrastructure/web/webapp.py`, mounted via the `LANGGRAPH_HTTP` env var — see `docker-compose.yml`) at `GET /api/files/{kind}/{name}` (restricted to `kind ∈ {docx,xlsx,pptx,pdf}`; rejects traversal with 400, missing files with 404). **`image_server.py:8080` no longer serves this route** (migrated in `consolidate-http-routes-langgraph`) — reach it via the frontend origin (`http://localhost:3000`, rewritten server-side per `next.config.ts`) or the backend's docker-exposed port directly.
 
-**Creation only** — editing existing Office files is out of scope. The skills in `backend/skills/{docx,xlsx,pptx}/SKILL.md` point at these tools; anything under `scripts/office/*` is marked `⚠️ LEGADO` and kept only for reference.
+**Creation only** — editing existing Office/PDF files is out of scope. The skills in `backend/skills/{docx,xlsx,pptx,pdf}/SKILL.md` point at these tools; anything under `scripts/office/*` is marked `⚠️ LEGADO` and kept only for reference.
 
 ### Persistence
 
