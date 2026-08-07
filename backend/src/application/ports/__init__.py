@@ -7,6 +7,7 @@ framework.
 """
 from src.application.ports.document_sink import DocumentSinkPort
 from src.application.ports.document_writer import DocumentWriterPort
+from src.application.ports.html_document_converter import HtmlDocumentConverter
 from src.application.ports.image_gen import GeneratedImage, ImageGenPort
 from src.application.ports.reference_image_fetch import (
     ReferenceImageFetchError,
@@ -19,6 +20,7 @@ __all__ = [
     "DocumentSinkPort",
     "DocumentWriterPort",
     "GeneratedImage",
+    "HtmlDocumentConverter",
     "ImageGenPort",
     "ReferenceImageFetchError",
     "ReferenceImageFetchPort",

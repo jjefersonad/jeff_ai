@@ -29,6 +29,7 @@ def _stub_webapp_schemas_not_under_test(monkeypatch: pytest.MonkeyPatch) -> None
     )
     monkeypatch.setattr(webapp, "ensure_user_mcp_servers_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_scheduled_tasks_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_crm_schema", lambda conninfo: None)
 
 
 def test_webapp_lifespan_calls_usage_ensure_schema(
@@ -65,6 +66,7 @@ def test_webapp_lifespan_calls_usage_ensure_schema(
     monkeypatch.setattr(webapp, "ensure_whatsapp_threads_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_user_mcp_servers_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_scheduled_tasks_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_crm_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_langgraph_checkpoint_schema", lambda conninfo: None)
 
     async def _fake_init_pool(conninfo: str) -> None:
@@ -127,6 +129,7 @@ def test_webapp_lifespan_calls_user_integrations_and_telegram_link_codes_ensure_
     monkeypatch.setattr(webapp, "ensure_whatsapp_threads_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_user_mcp_servers_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_scheduled_tasks_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_crm_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_langgraph_checkpoint_schema", lambda conninfo: None)
 
     async def _fake_init_pool(conninfo: str) -> None:
@@ -177,6 +180,7 @@ def test_webapp_lifespan_calls_whatsapp_link_codes_ensure_schema(
     monkeypatch.setattr(webapp, "ensure_whatsapp_threads_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_user_mcp_servers_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_scheduled_tasks_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_crm_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_langgraph_checkpoint_schema", lambda conninfo: None)
 
     async def _fake_init_pool(conninfo: str) -> None:
@@ -228,6 +232,7 @@ def test_webapp_lifespan_calls_whatsapp_threads_ensure_schema(
     )
     monkeypatch.setattr(webapp, "ensure_user_mcp_servers_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_scheduled_tasks_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_crm_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_langgraph_checkpoint_schema", lambda conninfo: None)
 
     async def _fake_init_pool(conninfo: str) -> None:

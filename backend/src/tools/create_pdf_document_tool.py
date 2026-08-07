@@ -1,87 +1,48 @@
-"""Tool `create_pdf_document` — adapter fino sobre o caso de uso `CreateDocument`.
+"""Tool `create_pdf_document` — HTML/CSS (WeasyPrint) → PDF.
 
-Borda deepagents: traduz a entrada (string JSON ou `PdfDocumentInput`) para
-o domínio `PdfSpec`, delega ao caso de uso via `PdfWriter`, carimba ownership
-e devolve `{path, url, metadata}`.
+Pipeline canônico: resolve entrada unificada → `RenderHtmlDocument` +
+`WeasyPrintPdfConverter` → ownership fail-closed → `{path, url, metadata}`.
+Também aceita `from_preview` (filename ou URL `/api/files/html/...`).
 """
 from __future__ import annotations
 
-import json
 import os
+import re
 from pathlib import Path
 from typing import Union
+from urllib.parse import unquote, urlparse
 
 from langchain_core.tools import tool
 from pydantic import ValidationError
 
-from src.composition.dependencies import build_create_document
-from src.domain.documents import (
-    Heading,
-    ImageRef,
-    ListBlock,
-    Paragraph,
-    PdfSpec,
-    Table,
+from src.application.documents.resolve_html_document_input import (
+    parse_tool_payload,
+    resolve_html_document_input,
 )
+from src.application.use_cases.render_html_document import RenderHtmlDocument
 from src.domain.shared.errors import DomainError
-from src.infrastructure.documents.pdf_writer import PdfWriter
-from src.infrastructure.ownership.store import record_ownership
-from src.models.pdf_document import PdfBlockInput, PdfDocumentInput
+from src.infrastructure.documents.html_template_repository import (
+    FilesystemHtmlTemplateRepository,
+)
+from src.infrastructure.documents.weasyprint_pdf_converter import WeasyPrintPdfConverter
+from src.infrastructure.ownership.store import record_ownership, resolve_user_id
+from src.models.html_document_input import HtmlDocumentInput
+from src.models.pdf_document import PdfDocumentInput
+
+# backend/outputs/documents
+_DEFAULT_DOCUMENTS = Path(__file__).resolve().parents[2] / "outputs" / "documents"
+
+_PREVIEW_URL_RE = re.compile(
+    r"/api/files/html/([^/?#]+\.html)$",
+    re.IGNORECASE,
+)
 
 
-def _to_blocks(raw_blocks: list[PdfBlockInput]) -> tuple[object, ...]:
-    """Convert blocks to domain value objects (tipos desconhecidos ignorados)."""
-    rendered: list[object] = []
-    for block in raw_blocks:
-        kind = block.type
-        if kind == "heading":
-            if not block.text:
-                continue
-            rendered.append(Heading(text=block.text, level=block.level or 1))
-        elif kind == "paragraph":
-            if not block.text:
-                continue
-            rendered.append(Paragraph(text=block.text))
-        elif kind == "list":
-            if not block.items:
-                continue
-            rendered.append(
-                ListBlock(items=tuple(block.items), ordered=bool(block.ordered)),
-            )
-        elif kind == "table":
-            if not block.rows:
-                continue
-            rendered.append(
-                Table(
-                    rows=tuple(tuple(row) for row in block.rows),
-                    header=bool(block.header) if block.header is not None else True,
-                ),
-            )
-        elif kind == "image":
-            if not block.path:
-                continue
-            rendered.append(
-                ImageRef(path=block.path, width_inches=block.width_inches),
-            )
-    return tuple(rendered)
-
-
-def _to_pdf_spec(payload: Union[str, PdfDocumentInput]) -> PdfSpec:
-    """Constrói o `PdfSpec` a partir da entrada (string JSON ou input estruturado)."""
-    if isinstance(payload, str):
-        stripped = payload.strip()
-        if stripped.startswith("{"):
-            try:
-                parsed = json.loads(stripped)
-                payload = PdfDocumentInput.model_validate(parsed)
-            except (json.JSONDecodeError, ValidationError) as exc:
-                raise DomainError(f"payload JSON inválido: {exc}") from exc
-        else:
-            raise DomainError(
-                "Entrada string simples requer conteúdo estruturado (blocks); "
-                "use PdfDocumentInput ou um JSON serializado."
-            )
-    return PdfSpec(title=payload.title, blocks=_to_blocks(payload.blocks))
+def _documents_base_dir() -> Path:
+    env = os.environ.get("DOCUMENTS_DIR")
+    if env:
+        return Path(env)
+    return _DEFAULT_DOCUMENTS
 
 
 def _document_url_prefix() -> str:
@@ -93,40 +54,136 @@ def _document_url_prefix() -> str:
     return f"{base_url}/api/files"
 
 
+def _build_pdf_render() -> RenderHtmlDocument:
+    return RenderHtmlDocument(
+        converters={"pdf": WeasyPrintPdfConverter()},
+        output_base_dir=_documents_base_dir(),
+        url_prefix=_document_url_prefix(),
+    )
+
+
+def _preview_filename(ref: str) -> str:
+    """Extrai basename seguro de filename ou URL `/api/files/html/...`."""
+    raw = ref.strip()
+    if not raw:
+        raise DomainError("from_preview vazio.")
+
+    match = _PREVIEW_URL_RE.search(urlparse(raw).path if "://" in raw else raw)
+    if match:
+        name = unquote(match.group(1))
+    elif raw.startswith("http://") or raw.startswith("https://") or "/api/files/" in raw:
+        path = urlparse(raw).path if "://" in raw else raw
+        match = _PREVIEW_URL_RE.search(path)
+        if not match:
+            raise DomainError(
+                "from_preview URL deve apontar para /api/files/html/<arquivo>.html"
+            )
+        name = unquote(match.group(1))
+    else:
+        # Filename bare — rejeita qualquer path relativo/absoluto.
+        if ".." in raw or "/" in raw or "\\" in raw:
+            raise DomainError(f"from_preview inválido: {ref!r}")
+        name = raw
+
+    if (
+        not name
+        or name != Path(name).name
+        or ".." in name
+        or "/" in name
+        or "\\" in name
+        or not name.lower().endswith(".html")
+    ):
+        raise DomainError(f"from_preview inválido: {ref!r}")
+    return name
+
+
+async def _current_user_owns_preview(filename: str) -> bool:
+    """True se o user_key do run é dono do HTML em generated_files."""
+    user_id = await resolve_user_id()
+    if user_id is None:
+        return False
+
+    from src.infrastructure.auth.db import get_pool
+
+    pool = get_pool()
+    async with pool.connection() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "SELECT user_id FROM generated_files "
+            "WHERE kind = %s AND filename = %s",
+            ("html", filename),
+        )
+        row = await cur.fetchone()
+    return row is not None and str(row[0]) == user_id
+
+
+async def _load_preview_html(from_preview: str) -> str:
+    """Carrega HTML de preview autorizado; DomainError se inválido/não authorized."""
+    filename = _preview_filename(from_preview)
+    if not await _current_user_owns_preview(filename):
+        raise DomainError(
+            "Preview HTML não encontrado ou sem permissão para o usuário atual."
+        )
+
+    path = _documents_base_dir() / "html" / filename
+    if not path.is_file():
+        raise DomainError(f"Arquivo de preview não encontrado: {filename}")
+    return path.read_text(encoding="utf-8")
+
+
 @tool
 async def create_pdf_document(
-    payload: Union[str, PdfDocumentInput],
+    payload: Union[str, HtmlDocumentInput, PdfDocumentInput],
 ) -> dict:
-    """Cria um documento PDF (.pdf) a partir de um título e blocos estruturados.
+    """Cria um documento PDF (.pdf) a partir de HTML/CSS, template, blocos ou preview.
 
-    Gera o `.pdf` usando apenas a biblioteca Python `fpdf2` (sem `pandoc`,
-    `soffice` ou Node) e devolve um dicionário com o mesmo contrato de
-    `create_docx_document` / `create_image_from_prompt`:
-    - path: caminho local no filesystem (uso interno — NÃO mostrar ao usuário).
-    - url: URL servida para download — SEMPRE usar em markdown para exibir o link.
-    - metadata: metadados do documento gerado (kind, título, contagem de blocos).
+    Pipeline canônico: HTML → WeasyPrint (não fpdf2). Aceita:
+    - `HtmlDocumentInput` (`html` | `template`+`data` | `title`+`blocks`)
+    - `from_preview`: filename sob `documents/html/` ou URL `/api/files/html/...`
+      owned pelo usuário (finalize sem reenviar o HTML)
+    - legado `PdfDocumentInput` (title+blocks)
 
-    Requer conteúdo estruturado — SEMPRE envie `PdfDocumentInput` (Pydantic)
-    com `title` e `blocks` não vazio (heading/paragraph/list/table/image).
-    Uma string simples (não-JSON) NÃO é aceita — é rejeitada com `error`.
+    Devolve `{path, url, metadata}` com `metadata.kind=\"pdf\"`. Use `url` no markdown.
 
-    Em caso de entrada inválida ou falha ao registrar ownership, retorna
-    `{"error": ...}` sem devolver `path`/`url` de sucesso.
-
-    Example return:
-    {"path": "/app/backend/outputs/documents/pdf/20260807120000123456.pdf",
-     "url": "http://localhost:3000/api/files/pdf/20260807120000123456.pdf",
-     "metadata": {"kind": "pdf", "title": "Relatório", "block_count": 3}}
+    Para propostas, prefira `preview_html_document` antes e só então esta tool
+    com `from_preview`. String simples não-JSON é rejeitada. Falha de ownership
+    é fail-closed.
     """
     try:
-        spec = _to_pdf_spec(payload)
-    except DomainError as exc:
+        parsed = parse_tool_payload(payload)
+    except (DomainError, ValidationError) as exc:
         return {"error": f"Entrada inválida: {exc}"}
 
-    use_case = build_create_document(
-        writer=PdfWriter(url_prefix=_document_url_prefix()),
-    )
-    result = await use_case.execute(spec)
+    try:
+        if parsed.from_preview and parsed.from_preview.strip():
+            html = await _load_preview_html(parsed.from_preview)
+            css = None
+            title = parsed.title
+        else:
+            templates = FilesystemHtmlTemplateRepository()
+            resolved = resolve_html_document_input(
+                parsed,
+                render_template=templates.render,
+            )
+            html = resolved.html
+            css = resolved.css
+            title = resolved.title
+    except DomainError as exc:
+        return {"error": f"Entrada inválida: {exc}"}
+    except ValidationError as exc:
+        return {"error": f"Entrada inválida: {exc}"}
+
+    use_case = _build_pdf_render()
+    try:
+        result = await use_case.execute(
+            html=html,
+            css=css,
+            kind="pdf",
+            title=title,
+        )
+    except DomainError as exc:
+        return {"error": f"Entrada inválida: {exc}"}
+    except Exception as exc:  # noqa: BLE001 — falha do motor PDF
+        return {"error": f"Falha ao gerar PDF: {exc}"}
 
     try:
         await record_ownership(kind="pdf", filename=Path(result.path).name)

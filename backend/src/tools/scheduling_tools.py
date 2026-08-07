@@ -86,6 +86,8 @@ def _task_to_dict(task: ScheduledTask) -> dict[str, Any]:
         "owner_user_key": task.owner_user_key,
         "delivery_user_key": task.delivery_user_key,
         "effective_delivery_user_key": task.effective_delivery_user_key,
+        "notify_status": task.notify_status,
+        "notify_error": task.notify_error,
     }
 
 
@@ -109,8 +111,12 @@ async def create_scheduled_task(
     aguardando aprovação humana, igual a uma conversa normal).
     `delivery_channel` (opcional): canal de notificação/HITL — `"web"`,
     `"telegram"` ou `"whatsapp"`, resolvido contra os vínculos do usuário
-    autenticado. Omitido → notifica no canal da sessão. NÃO aceite
-    identificadores crus de terceiros.
+    autenticado. Omitido → notifica no canal da sessão (na web isso NÃO
+    chega no WhatsApp). Se o usuário pediu entrega em WhatsApp/Telegram
+    a partir de outra sessão, passe o canal explicitamente
+    (`delivery_channel="whatsapp"` etc.). O texto notificado é a
+    resposta final do agente ao `prompt` — não instrua o prompt a chamar
+    `send_message`. NÃO aceite identificadores crus de terceiros.
     A tarefa roda na MESMA thread desta conversa e pertence a QUEM está
     conversando agora — não é possível agendar em nome de outro usuário.
     """

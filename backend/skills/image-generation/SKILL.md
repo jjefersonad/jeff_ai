@@ -71,15 +71,16 @@ def create_image_from_prompt(design_input: Union[str, ImageDesignInput]) -> dict
 ```python
 {
   "path": "/app/backend/outputs/images/20260705091430.png",  # uso interno; NÃO mostrar
-  "url": "/api/images/20260705091430.png",                    # usar no markdown
+  "url": "http://localhost:8001/api/images/20260705091430.png",  # URL absoluta — usar no markdown
   "metadata": {"prompt": "...", "art_style": "...", ...},
 }
 ```
 
-Para EXIBIR a imagem ao usuário, use SEMPRE o campo `url`:
+Para EXIBIR ou COMPARTILHAR a imagem com o usuário, use SEMPRE o campo `url`
+(absoluta, montada a partir de `NEXT_PUBLIC_API_URL` / fallbacks). NÃO use `path`.
 
 ```markdown
-![descrição](/api/images/20260705091430.png)
+![descrição](http://localhost:8001/api/images/20260705091430.png)
 ```
 
 Um sidecar `..._metadata.json` é salvo junto do PNG em `backend/outputs/images/`.
@@ -102,8 +103,7 @@ Ferramentas em `backend/src/tools/style_memory_tools.py`, sobre o Store do LangG
 |----------|-----|
 | `GOOGLE_API_KEY` | Autenticação com a Gemini API (obrigatória para gerar). |
 | `POSTGRES_URI` | Checkpointer + Store (memória de estilos e histórico). |
-
-Nenhuma variável nova foi introduzida por este fluxo.
+| `NEXT_PUBLIC_API_URL` | Origem pública do API para a `url` absoluta no retorno da tool (fallback: `BASE_URL` → `FRONTEND_ORIGIN` → `http://localhost:3000`). |
 
 ## Referências
 

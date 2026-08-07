@@ -333,6 +333,7 @@ TOOL_EFFECTS: Final[Mapping[str, tuple[Any, ...]]] = {
     "create_xlsx_spreadsheet": _write_new(),
     "create_pptx_presentation": _write_new(),
     "create_pdf_document": _write_new(),
+    "preview_html_document": _write_new(),
     "save_memory": _write_new(),
     "log_episode": _write_new(),
     "merge_generated_files": _write_new(),
@@ -365,6 +366,13 @@ TOOL_EFFECTS: Final[Mapping[str, tuple[Any, ...]]] = {
     # da change — NÃO aceitar como fix mínimo.
     "create_scheduled_task": _write_new(),
     "list_scheduled_tasks": _read_only(),
+    # --- CRM (Tier 1 read / Tier 2 write; add-simple-crm-module) ---------
+    "crm_search_contacts": _read_only(),
+    "crm_list_deals": _read_only(),
+    "crm_upsert_contact": _write_new(),
+    "crm_add_note": _write_new(),
+    "crm_create_deal": _write_new(),
+    "crm_move_deal": _write_new(),
     # --- Entrega de mensagens (Tier 2) ----------------------------------
     # `send_message` resolve o canal via registry e chama a API do canal
     # corrente (Telegram Bot API / Evolution / SSE) — `Capability.NETWORK`.

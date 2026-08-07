@@ -79,6 +79,127 @@ def test_generated_files_accepts_a_valid_row(user_id: str) -> None:
     assert row == (uuid.UUID(user_id), "docx")
 
 
+def test_generated_files_accepts_pdf_kind(user_id: str) -> None:
+    """REQ-ADD-010 / unit-1: insert com kind=pdf deve ser aceito após ensure_schema."""
+    filename = f"report-{uuid.uuid4()}.pdf"
+    with psycopg.connect(_uri(), autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO generated_files (user_id, kind, filename) VALUES (%s, %s, %s)",
+            (user_id, "pdf", filename),
+        )
+        cur.execute(
+            "SELECT user_id, kind FROM generated_files WHERE filename = %s", (filename,)
+        )
+        row = cur.fetchone()
+    assert row == (uuid.UUID(user_id), "pdf")
+
+
+def test_generated_files_accepts_html_kind(user_id: str) -> None:
+    """REQ-ADD-012 / schema-html unit-1: insert kind=html após ensure_schema."""
+    filename = f"preview-{uuid.uuid4()}.html"
+    with psycopg.connect(_uri(), autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO generated_files (user_id, kind, filename) VALUES (%s, %s, %s)",
+            (user_id, "html", filename),
+        )
+        cur.execute(
+            "SELECT user_id, kind FROM generated_files WHERE filename = %s", (filename,)
+        )
+        row = cur.fetchone()
+    assert row == (uuid.UUID(user_id), "html")
+
+
+def test_ensure_schema_migrates_legacy_kind_check_without_pdf(user_id: str) -> None:
+    """REQ-ADD-010 / unit-2: CHECK legado sem pdf é migrado por ensure_schema."""
+    # Restaura a constraint pré-html-document-tools (sem pdf), depois migra.
+    with psycopg.connect(_uri(), autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM generated_files WHERE kind = 'pdf'")
+        cur.execute(
+            """
+            ALTER TABLE generated_files
+                DROP CONSTRAINT IF EXISTS generated_files_kind_check
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE generated_files
+                ADD CONSTRAINT generated_files_kind_check
+                CHECK (kind IN ('docx', 'xlsx', 'pptx', 'image', 'reference'))
+            """
+        )
+
+    filename_blocked = f"blocked-{uuid.uuid4()}.pdf"
+    with psycopg.connect(_uri(), autocommit=True) as conn:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO generated_files (user_id, kind, filename) "
+                    "VALUES (%s, %s, %s)",
+                    (user_id, "pdf", filename_blocked),
+                )
+
+    ensure_schema(_uri())
+    ensure_schema(_uri())  # idempotente
+
+    filename = f"migrated-{uuid.uuid4()}.pdf"
+    with psycopg.connect(_uri(), autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO generated_files (user_id, kind, filename) VALUES (%s, %s, %s)",
+            (user_id, "pdf", filename),
+        )
+        cur.execute(
+            "SELECT kind FROM generated_files WHERE filename = %s", (filename,)
+        )
+        row = cur.fetchone()
+    assert row == ("pdf",)
+
+
+def test_ensure_schema_migrates_kind_check_without_html(user_id: str) -> None:
+    """REQ-ADD-012 / schema-html unit-2: CHECK com pdf mas sem html é migrado."""
+    with psycopg.connect(_uri(), autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM generated_files WHERE kind = 'html'")
+        cur.execute(
+            """
+            ALTER TABLE generated_files
+                DROP CONSTRAINT IF EXISTS generated_files_kind_check
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE generated_files
+                ADD CONSTRAINT generated_files_kind_check
+                CHECK (kind IN (
+                    'docx', 'xlsx', 'pptx', 'pdf', 'image', 'reference'
+                ))
+            """
+        )
+
+    filename_blocked = f"blocked-{uuid.uuid4()}.html"
+    with psycopg.connect(_uri(), autocommit=True) as conn:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO generated_files (user_id, kind, filename) "
+                    "VALUES (%s, %s, %s)",
+                    (user_id, "html", filename_blocked),
+                )
+
+    ensure_schema(_uri())
+    ensure_schema(_uri())  # idempotente
+
+    filename = f"migrated-{uuid.uuid4()}.html"
+    with psycopg.connect(_uri(), autocommit=True) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO generated_files (user_id, kind, filename) VALUES (%s, %s, %s)",
+            (user_id, "html", filename),
+        )
+        cur.execute(
+            "SELECT kind FROM generated_files WHERE filename = %s", (filename,)
+        )
+        row = cur.fetchone()
+    assert row == ("html",)
+
+
 def test_generated_files_rejects_invalid_kind(user_id: str) -> None:
     with psycopg.connect(_uri(), autocommit=True) as conn:
         with pytest.raises(psycopg.errors.CheckViolation):

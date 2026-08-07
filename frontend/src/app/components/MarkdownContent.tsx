@@ -10,6 +10,10 @@ import { DownloadError, downloadAuthenticatedFile } from "@/lib/api";
 import { AuthenticatedImage } from "@/app/components/AuthenticatedImage";
 import { MermaidDiagram } from "@/app/components/MermaidDiagram";
 import { ImageZoomModal } from "@/app/components/ImageZoomModal";
+import {
+  DocumentHtmlPreview,
+  isHtmlDocumentUrl,
+} from "@/app/components/DocumentHtmlPreview";
 
 interface MarkdownContentProps {
   content: string;
@@ -72,7 +76,7 @@ function normalizeImagePaths(markdown: string): string {
  */
 function normalizeDocumentPaths(markdown: string): string {
   return markdown.replace(
-    /\[([^\]]*)\]\(([^)]*\/(?:backend\/)?outputs\/documents\/(docx|xlsx|pptx)\/([^/)]+\.(?:docx|xlsx|pptx)))\)/gi,
+    /\[([^\]]*)\]\(([^)]*\/(?:backend\/)?outputs\/documents\/(docx|xlsx|pptx|html|pdf)\/([^/)]+\.(?:docx|xlsx|pptx|html|pdf)))\)/gi,
     (_match, label, _fullPath, kind, filename) => {
       return `[${label}](/api/files/${kind}/${filename})`;
     }
@@ -253,6 +257,17 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
               href?: string;
               children?: React.ReactNode;
             }) {
+              // Preview HTML (proposta etc.): iframe embutido, não lightbox/img.
+              if (href && isHtmlDocumentUrl(href)) {
+                const label =
+                  typeof children === "string"
+                    ? children
+                    : Array.isArray(children) &&
+                        children.every((c) => typeof c === "string")
+                      ? children.join("")
+                      : undefined;
+                return <DocumentHtmlPreview url={href} title={label} />;
+              }
               // Documentos Office gerados: renderiza um chip de download (DocumentDownloadChip).
               const docMatch = href?.match(/\/api\/files\/(docx|xlsx|pptx)\/([^/?#]+)/);
               if (docMatch && href) {
@@ -308,6 +323,10 @@ export const MarkdownContent = React.memo<MarkdownContentProps>(
             }) {
               const url = typeof src === "string" ? src : undefined;
               const altText = alt || "";
+              // HTML de documento/proposta: preview via iframe (não ImageZoomModal).
+              if (url && isHtmlDocumentUrl(url)) {
+                return <DocumentHtmlPreview url={url} title={altText || undefined} />;
+              }
               // Rotas de mídia do backend exigem cookie de sessão — bare
               // `<img src>` quebra no split frontend (:3002) / API (:8001).
               const needsAuth =

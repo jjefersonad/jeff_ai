@@ -1,107 +1,172 @@
-"""Tool `create_pptx_presentation` — adapter fino sobre o caso de uso `CreateDocument`.
+"""Tool `create_pptx_presentation` — HTML/CSS → PPTX via pipeline.
 
-Borda deepagents: traduz a entrada (`PptxDocumentInput`) para o domínio
-`PptxSpec`, delega ao caso de uso via composição de dependências e devolve o
-mesmo contrato `{path, url, metadata}` da tool de imagem.
-
-NÃO contém regra de negócio — montagem/validação de slides e gravação em disco
-vivem no domínio + writer de infraestrutura.
+Pipeline canônico: resolve entrada unificada (ou slides legados → HTML) →
+`RenderHtmlDocument` + `HtmlPptxConverter` → ownership fail-closed →
+`{path, url, metadata}`.
 """
 from __future__ import annotations
 
-from langchain_core.tools import tool
+import html as html_lib
+import os
+from pathlib import Path
+from typing import Union
 
-from src.composition.dependencies import build_create_document
-from src.domain.documents import (
-    BulletSlide,
-    ImageRef,
-    ImageSlide,
-    PptxSpec,
-    Table,
-    TableSlide,
-    TitleSlide,
+from langchain_core.tools import tool
+from pydantic import ValidationError
+
+from src.application.documents.resolve_html_document_input import (
+    parse_tool_payload,
+    resolve_html_document_input,
 )
+from src.application.use_cases.render_html_document import RenderHtmlDocument
 from src.domain.shared.errors import DomainError
-from src.infrastructure.documents import PptxWriter
+from src.infrastructure.documents.html_pptx_converter import HtmlPptxConverter
+from src.infrastructure.documents.html_template_repository import (
+    FilesystemHtmlTemplateRepository,
+)
+from src.infrastructure.ownership.store import record_ownership
+from src.models.html_document_input import HtmlDocumentInput
 from src.models.pptx_document import PptxDocumentInput, PptxSlideInput
 
-
-def _to_slide(raw: PptxSlideInput) -> object | None:
-    """Constrói um value object de slide a partir de um `PptxSlideInput`.
-
-    Retorna `None` quando os campos obrigatórios para o tipo estão ausentes —
-    o conversor da tool descarta esses slides silenciosamente (contrato
-    tolerante) em vez de levantar erro.
-    """
-    kind = raw.type
-    if kind == "title":
-        if not raw.title:
-            return None
-        return TitleSlide(title=raw.title, subtitle=raw.subtitle)
-    if kind == "bullets":
-        if not raw.title or not raw.bullets:
-            return None
-        return BulletSlide(title=raw.title, bullets=tuple(raw.bullets))
-    if kind == "image":
-        if not raw.path:
-            return None
-        return ImageSlide(
-            image=ImageRef(path=raw.path, width_inches=raw.width_inches),
-            title=raw.title,
-        )
-    if kind == "table":
-        if not raw.rows:
-            return None
-        return TableSlide(
-            table=Table(
-                rows=tuple(tuple(row) for row in raw.rows),
-                header=bool(raw.header) if raw.header is not None else True,
-            ),
-            title=raw.title,
-        )
-    # tipo desconhecido: ignorado silenciosamente (contrato tolerante).
-    return None
+# backend/outputs/documents
+_DEFAULT_DOCUMENTS = Path(__file__).resolve().parents[2] / "outputs" / "documents"
 
 
-def _to_pptx_spec(payload: PptxDocumentInput) -> PptxSpec:
-    """Constrói o `PptxSpec` a partir do `PptxDocumentInput` (camada fina)."""
-    slides = tuple(s for s in (_to_slide(raw) for raw in payload.slides) if s is not None)
-    return PptxSpec(slides=slides)
+def _documents_base_dir() -> Path:
+    env = os.environ.get("DOCUMENTS_DIR")
+    if env:
+        return Path(env)
+    return _DEFAULT_DOCUMENTS
+
+
+def _document_url_prefix() -> str:
+    base_url = (
+        os.getenv("BASE_URL")
+        or os.getenv("FRONTEND_ORIGIN")
+        or "http://localhost:3000"
+    ).rstrip("/")
+    return f"{base_url}/api/files"
+
+
+def _build_pptx_render() -> RenderHtmlDocument:
+    return RenderHtmlDocument(
+        converters={"pptx": HtmlPptxConverter()},
+        output_base_dir=_documents_base_dir(),
+        url_prefix=_document_url_prefix(),
+    )
+
+
+def _escape(text: object) -> str:
+    return html_lib.escape("" if text is None else str(text), quote=True)
+
+
+def slides_to_html(slides: list[PptxSlideInput]) -> str:
+    """Converte slides legados em HTML com `section.slide`."""
+    if not slides:
+        raise DomainError("slides é obrigatório e não pode ficar vazio.")
+
+    parts: list[str] = ['<!DOCTYPE html><html><body>']
+    emitted = 0
+    for raw in slides:
+        kind = (raw.type or "").strip().lower()
+        if kind == "title":
+            if not raw.title:
+                continue
+            parts.append('<section class="slide">')
+            parts.append(f"<h1>{_escape(raw.title)}</h1>")
+            if raw.subtitle:
+                parts.append(f"<p>{_escape(raw.subtitle)}</p>")
+            parts.append("</section>")
+            emitted += 1
+        elif kind == "bullets":
+            if not raw.title or not raw.bullets:
+                continue
+            parts.append('<section class="slide">')
+            parts.append(f"<h2>{_escape(raw.title)}</h2>")
+            parts.append("<ul>")
+            for item in raw.bullets:
+                parts.append(f"<li>{_escape(item)}</li>")
+            parts.append("</ul></section>")
+            emitted += 1
+        elif kind == "table":
+            if not raw.rows:
+                continue
+            parts.append('<section class="slide">')
+            title = raw.title or "Tabela"
+            parts.append(f"<h2>{_escape(title)}</h2>")
+            parts.append("<table>")
+            for row in raw.rows:
+                parts.append("<tr>")
+                for cell in row:
+                    parts.append(f"<td>{_escape(cell)}</td>")
+                parts.append("</tr>")
+            parts.append("</table></section>")
+            emitted += 1
+        elif kind == "image":
+            # Sem raster no HTML→PPTX v1: slide só com título se houver.
+            if not raw.title:
+                continue
+            parts.append('<section class="slide">')
+            parts.append(f"<h2>{_escape(raw.title)}</h2>")
+            parts.append("</section>")
+            emitted += 1
+        # tipo desconhecido: ignorado (contrato tolerante)
+
+    parts.append("</body></html>")
+    if emitted == 0:
+        raise DomainError("Nenhum slide válido para converter para PPTX.")
+    return "".join(parts)
 
 
 @tool
-async def create_pptx_presentation(payload: PptxDocumentInput) -> dict:
-    """Cria uma apresentação (.pptx) a partir de uma sequência de slides.
+async def create_pptx_presentation(
+    payload: Union[str, PptxDocumentInput, HtmlDocumentInput],
+) -> dict:
+    """Cria uma apresentação (.pptx) a partir de HTML/CSS, template ou slides.
 
-    Gera o `.pptx` usando apenas a biblioteca Python `python-pptx` (sem
-    `soffice`, `pandoc` ou Node) e devolve um dicionário com o mesmo contrato de
-    `create_image_from_prompt`:
-    - path: caminho local no filesystem (uso interno — NÃO mostrar ao usuário).
-    - url: URL servida para download — SEMPRE usar em markdown para exibir o link.
-    - metadata: metadados da apresentação gerada (kind, contagem de slides).
+    Pipeline canônico: HTML com `section.slide` / `div.slide` →
+    `HtmlPptxConverter` (python-pptx). Aceita `HtmlDocumentInput`
+    (`html` | `template`+`data` | `title`+`blocks`) ou o legado
+    `PptxDocumentInput` (slides). Devolve `{path, url, metadata}` com
+    `metadata.kind=\"pptx\"` — use `url` no markdown.
 
-    Tipos de slide suportados:
-    - 'title': capa com título (e subtítulo opcional).
-    - 'bullets': slide de conteúdo com título e lista de bullets.
-    - 'image': slide com imagem embutida (e título opcional).
-    - 'table': slide com tabela simples (e título opcional).
-
-    Slides com `type` desconhecido ou com campos obrigatórios faltando são
-    descartados (contrato tolerante). Em caso de entrada inválida global
-    (ex.: nenhum slide válido), retorna um dicionário com `error` e nenhum
-    arquivo parcial é deixado em disco.
-
-    Example return:
-    {"path": "/app/backend/outputs/documents/pptx/20260708120000123456.pptx",
-     "url": "/api/files/pptx/20260708120000123456.pptx",
-     "metadata": {"kind": "pptx", "slide_count": 3}}
+    HTML sem slides utilizáveis → `{error}` sem arquivo parcial. Falha de
+    ownership é fail-closed.
     """
     try:
-        spec = _to_pptx_spec(payload)
-    except DomainError as exc:
+        if isinstance(payload, PptxDocumentInput):
+            resolved_html = slides_to_html(payload.slides)
+            title = None
+            css = None
+        else:
+            parsed = parse_tool_payload(payload)
+            templates = FilesystemHtmlTemplateRepository()
+            resolved = resolve_html_document_input(
+                parsed,
+                render_template=templates.render,
+            )
+            resolved_html = resolved.html
+            css = resolved.css
+            title = resolved.title
+    except (DomainError, ValidationError) as exc:
         return {"error": f"Entrada inválida: {exc}"}
 
-    use_case = build_create_document(writer=PptxWriter())
-    result = await use_case.execute(spec)
+    use_case = _build_pptx_render()
+    try:
+        result = await use_case.execute(
+            html=resolved_html,
+            css=css,
+            kind="pptx",
+            title=title,
+        )
+    except DomainError as exc:
+        return {"error": f"Entrada inválida: {exc}"}
+    except Exception as exc:  # noqa: BLE001 — falha do converter
+        return {"error": f"Falha ao gerar PPTX: {exc}"}
+
+    try:
+        await record_ownership(kind="pptx", filename=Path(result.path).name)
+    except Exception as exc:  # noqa: BLE001 — fail-closed
+        return {"error": f"Falha ao registrar ownership: {exc}"}
 
     return {"path": result.path, "url": result.url, "metadata": result.metadata}

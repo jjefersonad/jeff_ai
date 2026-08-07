@@ -210,3 +210,41 @@ async def test_ensure_schema_idempotent_and_round_trips_delivery_waiting_human()
     assert fetched.delivery_user_key == "whatsapp:5511999999999"
     assert fetched.status == TaskStatus.WAITING_HUMAN
     assert fetched.effective_delivery_user_key == "whatsapp:5511999999999"
+
+
+async def test_save_then_get_round_trips_notify_failed_fields() -> None:
+    """persist-1 unit-1: notify_status=failed + notify_error preservados no round-trip."""
+    from src.infrastructure.persistence.scheduled_task_repository import (
+        PostgresScheduledTaskRepository,
+    )
+
+    repo = PostgresScheduledTaskRepository(_uri())
+    task = _new_task()
+    task.start()
+    task.succeed()
+    task.mark_notify_failed("boom")
+
+    await repo.save(task)
+    fetched = await repo.get(task.id)
+
+    assert fetched is not None
+    assert fetched.notify_status == "failed"
+    assert fetched.notify_error == "boom"
+    assert fetched.status == TaskStatus.SUCCEEDED
+
+
+async def test_save_then_get_preserves_null_notify_defaults() -> None:
+    """persist-1 unit-2: tarefa sem notify volta com notify_* None."""
+    from src.infrastructure.persistence.scheduled_task_repository import (
+        PostgresScheduledTaskRepository,
+    )
+
+    repo = PostgresScheduledTaskRepository(_uri())
+    task = _new_task()
+
+    await repo.save(task)
+    fetched = await repo.get(task.id)
+
+    assert fetched is not None
+    assert fetched.notify_status is None
+    assert fetched.notify_error is None

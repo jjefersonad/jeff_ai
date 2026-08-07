@@ -187,48 +187,36 @@ def test_sheet_accepts_non_empty_rows():
     assert sheet.rows == (("Mês", "Receita"), ("Jan", 12000))
 
 
-# --- Tool create_xlsx_spreadsheet (adapter fino) --------------------------
+# --- Tool create_xlsx_spreadsheet (HTML pipeline) --------------------------
 
 
-def test_to_xlsx_spec_basic():
-    payload = XlsxDocumentInput(
-        sheets=[
+def test_sheets_to_html_basic():
+    html = xlsx_tool.sheets_to_html(
+        [
             XlsxSheetInput(name="A", rows=[["x", 1, 1.5, None]]),
-            XlsxSheetInput(
-                name="B",
-                rows=[["k"]],
-                header=True,
-                column_widths=[10.0],
-                number_formats=[],
-            ),
-        ],
+            XlsxSheetInput(name="B", rows=[["k"]], header=True),
+        ]
     )
-    spec = xlsx_tool._to_xlsx_spec(payload)
-    assert len(spec.sheets) == 2
-    assert spec.sheets[0].name == "A"
-    assert spec.sheets[1].header is True
-    assert spec.sheets[1].column_widths == (10.0,)
+    assert 'data-sheet-name="A"' in html
+    assert 'data-sheet-name="B"' in html
+    assert "<td>x</td>" in html
+    assert "<td>k</td>" in html
 
 
-def test_to_sheet_preserves_formula_strings():
-    payload = XlsxSheetInput(
-        name="F",
-        rows=[["=A1+B1", 10]],
+def test_sheets_to_html_preserves_formula_strings():
+    html = xlsx_tool.sheets_to_html(
+        [XlsxSheetInput(name="F", rows=[["=A1+B1", 10]])]
     )
-    sheet = xlsx_tool._to_sheet(payload)
-    assert sheet.rows[0][0] == "=A1+B1"
-    assert sheet.rows[0][1] == 10
+    assert "=A1+B1" in html
 
 
 async def test_tool_returns_path_url_metadata(monkeypatch, tmp_path):
-    """A tool delega ao caso de uso e devolve o contrato esperado."""
-    monkeypatch.setattr(
-        dep,
-        "build_create_document",
-        lambda writer=None: dep.CreateDocument(
-            writer=writer or XlsxWriter(output_dir=tmp_path),
-        ),
-    )
+    """A tool usa o pipeline HTML e devolve o contrato esperado."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(xlsx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(xlsx_tool, "_document_url_prefix", lambda: "/api/files")
+    monkeypatch.setattr(xlsx_tool, "record_ownership", AsyncMock())
 
     result = await xlsx_tool.create_xlsx_spreadsheet.coroutine(
         XlsxDocumentInput(
@@ -243,47 +231,44 @@ async def test_tool_returns_path_url_metadata(monkeypatch, tmp_path):
     )
 
     assert set(result) == {"path", "url", "metadata"}
-    assert result["url"].startswith("/api/files/xlsx/")
+    assert "/api/files/xlsx/" in result["url"]
     assert result["url"].endswith(".xlsx")
-    assert result["metadata"]["sheets"] == ["S1"]
+    assert result["metadata"]["kind"] == "xlsx"
     assert Path(result["path"]).is_file()
 
 
 async def test_tool_returns_error_on_invalid_input(monkeypatch, tmp_path):
     """REQ-005: entrada inválida vira `error` descritivo, sem arquivo parcial."""
-    monkeypatch.setattr(
-        dep,
-        "build_create_document",
-        lambda writer=None: dep.CreateDocument(
-            writer=writer or XlsxWriter(output_dir=tmp_path),
-        ),
-    )
+    from unittest.mock import AsyncMock
 
-    # Nenhuma aba: o domínio recusa antes de qualquer I/O.
+    monkeypatch.setattr(xlsx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(xlsx_tool, "_document_url_prefix", lambda: "/api/files")
+    monkeypatch.setattr(xlsx_tool, "record_ownership", AsyncMock())
+
     result = await xlsx_tool.create_xlsx_spreadsheet.coroutine(
         XlsxDocumentInput(sheets=[]),
     )
 
     assert "error" in result
-    assert "aba" in result["error"].lower()
+    assert "sheets" in result["error"].lower()
     assert list(tmp_path.iterdir()) == []
 
 
-async def test_tool_passes_xlsx_writer_via_composition(monkeypatch, tmp_path):
-    """A tool injeta XlsxWriter concreto no wiring de composition."""
-    captured: dict = {}
+async def test_tool_uses_html_xlsx_converter(monkeypatch, tmp_path):
+    """A tool aponta o pipeline para HtmlXlsxConverter (não XlsxWriter direto)."""
+    from unittest.mock import AsyncMock
 
-    def fake_builder(writer=None):
-        captured["writer"] = writer
-        return dep.CreateDocument(writer=writer or XlsxWriter(output_dir=tmp_path))
+    from src.infrastructure.documents.html_xlsx_converter import HtmlXlsxConverter
 
-    # Patching no módulo `dep` (composition) e em `xlsx_tool` antes da chamada.
-    monkeypatch.setattr(dep, "build_create_document", fake_builder)
-    monkeypatch.setattr(xlsx_tool, "build_create_document", fake_builder)
+    monkeypatch.setattr(xlsx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(xlsx_tool, "_document_url_prefix", lambda: "/api/files")
+    monkeypatch.setattr(xlsx_tool, "record_ownership", AsyncMock())
 
-    await xlsx_tool.create_xlsx_spreadsheet.coroutine(
+    render = xlsx_tool._build_xlsx_render()
+    assert isinstance(render._converters["xlsx"], HtmlXlsxConverter)
+
+    result = await xlsx_tool.create_xlsx_spreadsheet.coroutine(
         XlsxDocumentInput(sheets=[XlsxSheetInput(name="S", rows=[["x"]])]),
     )
-
-    # O writer injetado pela tool é uma instância de XlsxWriter.
-    assert isinstance(captured["writer"], XlsxWriter)
+    assert "error" not in result
+    assert Path(result["path"]).is_file()

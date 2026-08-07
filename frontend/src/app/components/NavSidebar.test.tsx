@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 
 import { NavSidebar } from "./NavSidebar";
+import { getVisibleNavEntries, NAV_ENTRIES } from "./navEntries";
 
 const mockUseAuth = vi.fn();
 
@@ -100,6 +101,17 @@ describe("NavSidebar — Usuários entry gated by admin role (user-management-fr
     const link = screen.getByRole("link", { name: /usuários/i });
     expect(link).toBeInTheDocument();
     expect(link).toHaveAttribute("href", "/admin/users");
+  });
+});
+
+describe("NavSidebar — CRM entry (add-simple-crm-module-task-frontend-1 unit-1 / REQ-ADD-001)", () => {
+  it("WHEN ENTRIES is inspected THEN CRM href=/crm exists without requireRole admin", () => {
+    const crm = NAV_ENTRIES.find((entry) => entry.href === "/crm");
+    expect(crm).toBeDefined();
+    expect(crm?.requireRole).toBeUndefined();
+    expect(getVisibleNavEntries("user").some((e) => e.href === "/crm")).toBe(
+      true
+    );
   });
 });
 

@@ -14,6 +14,7 @@ from src.application.use_cases.generate_requirements_document import (
 from src.application.use_cases.get_next_feature_number import GetNextFeatureNumber
 from src.application.use_cases.list_scheduled_tasks import ListScheduledTasks
 from src.application.use_cases.plan_and_create_image import PlanAndCreateImage
+from src.application.use_cases.render_html_document import RenderHtmlDocument
 
 __all__ = [
     "CancelScheduledTask",
@@ -24,4 +25,5 @@ __all__ = [
     "GetNextFeatureNumber",
     "ListScheduledTasks",
     "PlanAndCreateImage",
+    "RenderHtmlDocument",
 ]

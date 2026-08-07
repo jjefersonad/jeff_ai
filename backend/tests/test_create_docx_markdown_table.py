@@ -2,22 +2,23 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import AsyncMock
 
-import src.composition.dependencies as dep
 import src.tools.create_docx_document_tool as docx_tool
 from docx import Document as DocxReader
-from src.infrastructure.documents.docx_writer import DocxWriter
 from src.models.docx_document import DocxBlockInput, DocxDocumentInput
 
 _MD_TABLE = "| A | B |\n|---|---|\n| 1 | 2 |"
 
 
+def _point_at(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(docx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(docx_tool, "_document_url_prefix", lambda: "/api/files")
+    monkeypatch.setattr(docx_tool, "record_ownership", AsyncMock())
+
+
 async def test_tool_rejects_markdown_table_paragraph(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        docx_tool,
-        "build_create_document",
-        lambda: dep.CreateDocument(writer=DocxWriter(output_dir=tmp_path)),
-    )
+    _point_at(tmp_path, monkeypatch)
 
     result = await docx_tool.create_docx_document.coroutine(
         DocxDocumentInput(
@@ -31,11 +32,7 @@ async def test_tool_rejects_markdown_table_paragraph(monkeypatch, tmp_path):
 
 
 async def test_tool_accepts_prose_and_native_table(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        docx_tool,
-        "build_create_document",
-        lambda: dep.CreateDocument(writer=DocxWriter(output_dir=tmp_path)),
-    )
+    _point_at(tmp_path, monkeypatch)
 
     result = await docx_tool.create_docx_document.coroutine(
         DocxDocumentInput(
@@ -58,11 +55,7 @@ async def test_tool_accepts_prose_and_native_table(monkeypatch, tmp_path):
 
 
 async def test_tool_generated_docx_has_native_table_cells(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        docx_tool,
-        "build_create_document",
-        lambda: dep.CreateDocument(writer=DocxWriter(output_dir=tmp_path)),
-    )
+    _point_at(tmp_path, monkeypatch)
 
     rows = [["Mês", "Receita"], ["Jan", "12000"]]
     result = await docx_tool.create_docx_document.coroutine(
@@ -82,17 +75,12 @@ async def test_tool_generated_docx_has_native_table_cells(monkeypatch, tmp_path)
     assert table.cell(0, 1).text == "Receita"
     assert table.cell(1, 0).text == "Jan"
     assert table.cell(1, 1).text == "12000"
-    # Não deve haver pipes de markdown no corpo como parágrafo de tabela.
     body_text = "\n".join(p.text for p in doc.paragraphs)
     assert "| Mês | Receita |" not in body_text
 
 
 async def test_tool_error_mentions_type_table_and_rows(monkeypatch, tmp_path):
-    monkeypatch.setattr(
-        docx_tool,
-        "build_create_document",
-        lambda: dep.CreateDocument(writer=DocxWriter(output_dir=tmp_path)),
-    )
+    _point_at(tmp_path, monkeypatch)
 
     result = await docx_tool.create_docx_document.coroutine(
         DocxDocumentInput(

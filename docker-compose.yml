@@ -26,6 +26,10 @@ services:
       # sendo só a origin do frontend (CORS).
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
       BASE_URL: ${BASE_URL:-}
+      # Origem pública do API para URLs absolutas de imagens geradas
+      # (`public_api_origin` / return-public-image-url). Mesmo valor que o
+      # frontend usa; precisa chegar ao processo Python, não só ao Next.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8001}
       # Evolution API (change whatsapp-evolution-channel) — a substituição
       # ${...} do compose só lê o .env da raiz; estes valores precisam chegar
       # ao processo backend via este bloco environment: (além do env_file).
@@ -213,6 +217,11 @@ services:
       # `variable is not set, defaulting to a blank string`.
       # (registrado durante o verify/2026-07-23)
       TZ: ${JEFF_AI_TZ:-UTC}
+      # URLs absolutas de imagens (`public_api_origin`) — mesmo path de geração
+      # do backend quando o gateway invoca tools.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8001}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
+      BASE_URL: ${BASE_URL:-}
     depends_on:
       jeff_ia_postgres:
         condition: service_healthy

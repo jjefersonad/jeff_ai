@@ -21,6 +21,7 @@ def _patch_lifespan_deps(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(webapp, "ensure_whatsapp_link_codes_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_whatsapp_threads_schema", lambda conninfo: None)
     monkeypatch.setattr(webapp, "ensure_scheduled_tasks_schema", lambda conninfo: None)
+    monkeypatch.setattr(webapp, "ensure_crm_schema", lambda conninfo: None)
 
     async def _fake_init_pool(conninfo: str) -> None:
         return None

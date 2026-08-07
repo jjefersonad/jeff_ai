@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Proposta — {{ project_title | default("Projeto") }}</title>
+</head>
+<body class="proposal">
+  <header class="proposal-cover">
+    <p class="eyebrow">Proposta comercial</p>
+    <h1>{{ project_title | default("Projeto") }}</h1>
+    <p class="client">Para: <strong>{{ client_name | default("Cliente") }}</strong></p>
+  </header>
+
+  <section class="proposal-section">
+    <h2>Resumo</h2>
+    <p>{{ summary | default("Descreva o escopo e o valor entregue.") }}</p>
+  </section>
+
+  <section class="proposal-section">
+    <h2>Investimento</h2>
+    <p class="investment">{{ investment | default("A combinar") }}</p>
+  </section>
+
+  {% if scope_items %}
+  <section class="proposal-section">
+    <h2>Escopo</h2>
+    <ul>
+      {% for item in scope_items %}
+      <li>{{ item }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  <footer class="proposal-footer">
+    <p>Documento gerado pelo Jeff AI</p>
+  </footer>
+</body>
+</html>

@@ -44,6 +44,9 @@ from src.infrastructure.ownership.schema import ensure_schema as ensure_ownershi
 from src.infrastructure.persistence.scheduled_task_repository import (
     PostgresScheduledTaskRepository,
 )
+from src.infrastructure.persistence.crm_schema import (
+    ensure_crm_schema,
+)
 from src.infrastructure.persistence.scheduled_tasks_schema import (
     ensure_schema as ensure_scheduled_tasks_schema,
 )
@@ -64,6 +67,7 @@ from src.infrastructure.usage.schema import ensure_schema as ensure_usage_schema
 from src.infrastructure.web.admin_users_router import router as admin_users_router
 from src.infrastructure.web.attachments_router import router as attachments_router
 from src.infrastructure.web.auth_router import router as auth_router
+from src.infrastructure.web.crm_router import router as crm_router
 from src.infrastructure.web.documents_router import router as documents_router
 from src.infrastructure.web.images_router import router as images_router
 from src.infrastructure.web.integrations_router import router as integrations_router
@@ -128,6 +132,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     ensure_whatsapp_link_codes_schema(conninfo)
     ensure_whatsapp_threads_schema(conninfo)
     ensure_scheduled_tasks_schema(conninfo)
+    # CRM simples (add-simple-crm-module): depende de `users` (FK). Sem o
+    # bootstrap no lifespan, `/api/crm/*` quebraria no primeiro INSERT.
+    ensure_crm_schema(conninfo)
     # Schema UUID legado do LangGraph API pode faltar colunas aditivas
     # (`task_path`). Fail-fast no boot — CLI/agendamento no mesmo processo
     # herdam a pré-condição sem DDL no hot path do runner.
@@ -208,3 +215,6 @@ app.include_router(admin_users_router)
 # `scheduling_tools.py` (tool do agente, que chama o use case direto e nunca
 # passou por este router).
 app.include_router(scheduling_router)
+
+# CRM simples (`/api/crm/contacts|companies|…` — change add-simple-crm-module).
+app.include_router(crm_router)

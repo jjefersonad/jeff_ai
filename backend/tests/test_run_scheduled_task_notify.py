@@ -3,10 +3,14 @@
 
 Cobre REQ-009 / REQ-011 (scheduled-tasks): save-then-notify, skip quando
 `output` ausente, e falha de notify best-effort (task permanece succeeded).
+
+Também cobre `fix-scheduled-whatsapp-delivery` run-1: persistência de
+`notify_status` / `notify_error` no segundo save.
 """
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -19,7 +23,13 @@ from src.application.ports.agent_runner import (
 )
 from src.application.ports.scheduled_task_repository import ScheduledTaskRepositoryPort
 from src.application.use_cases.run_scheduled_task import RunScheduledTask
-from src.domain.scheduling import Schedule, ScheduledTask, TaskStatus, ToolScope
+from src.domain.scheduling import (
+    NOTIFY_SKIP_OUTPUT_MISSING,
+    Schedule,
+    ScheduledTask,
+    TaskStatus,
+    ToolScope,
+)
 from src.infrastructure.channels.scheduled_channel import ScheduledChannel
 
 
@@ -30,17 +40,25 @@ class _FakeRepository(ScheduledTaskRepositoryPort):
 
     async def save(self, task: ScheduledTask) -> None:
         if self._call_log is not None:
-            self._call_log.append(f"save:{task.status.value}")
-        self._store[task.id] = task
+            self._call_log.append(
+                f"save:{task.status.value}:{task.notify_status}"
+            )
+        # Snapshot — evita que mutações in-place pós-save “finjam” persistência.
+        self._store[task.id] = replace(task)
 
     async def get(self, task_id: str) -> ScheduledTask | None:
-        return self._store.get(task_id)
+        stored = self._store.get(task_id)
+        return replace(stored) if stored is not None else None
 
     async def list_all(self) -> list[ScheduledTask]:
-        return list(self._store.values())
+        return [replace(t) for t in self._store.values()]
 
     async def list_by_owner(self, owner_user_key: str) -> list[ScheduledTask]:
-        return [t for t in self._store.values() if t.owner_user_key == owner_user_key]
+        return [
+            replace(t)
+            for t in self._store.values()
+            if t.owner_user_key == owner_user_key
+        ]
 
     async def delete(self, task_id: str) -> None:
         self._store.pop(task_id, None)
@@ -120,7 +138,11 @@ async def test_save_then_notify_on_success_with_output() -> None:
 
     await use_case.execute(task_id="t-1")
 
-    assert call_log == ["save:succeeded", "notify"]
+    assert call_log == [
+        "save:succeeded:None",
+        "notify",
+        "save:succeeded:delivered",
+    ]
     notifier.execute.assert_awaited_once()
     kwargs = notifier.execute.await_args.kwargs
     assert isinstance(kwargs["channel"], ScheduledChannel)
@@ -132,6 +154,8 @@ async def test_save_then_notify_on_success_with_output() -> None:
     stored = await repo.get("t-1")
     assert stored is not None
     assert stored.status == TaskStatus.SUCCEEDED
+    assert stored.notify_status == "delivered"
+    assert stored.notify_error is None
 
 
 @pytest.mark.asyncio
@@ -160,6 +184,11 @@ async def test_skips_notify_when_output_missing(
 
     assert "notify" not in call_log
     notifier.execute.assert_not_awaited()
+    assert call_log == ["save:succeeded:None", "save:succeeded:skipped"]
+    stored = await repo.get("t-1")
+    assert stored is not None
+    assert stored.notify_status == "skipped"
+    assert stored.notify_error == NOTIFY_SKIP_OUTPUT_MISSING
     assert any(
         "scheduled_notify_skipped" in r.message and "output_missing" in r.message
         for r in caplog.records
@@ -194,10 +223,17 @@ async def test_notify_failure_keeps_task_succeeded(
     with caplog.at_level(logging.ERROR):
         await use_case.execute(task_id="t-1")
 
-    assert call_log == ["save:succeeded", "notify"]
+    assert call_log == [
+        "save:succeeded:None",
+        "notify",
+        "save:succeeded:failed",
+    ]
     stored = await repo.get("t-1")
     assert stored is not None
     assert stored.status == TaskStatus.SUCCEEDED
+    assert stored.notify_status == "failed"
+    assert stored.notify_error is not None
+    assert "canal original não disponível" in stored.notify_error
     assert any(
         "scheduled_notify_failed" in r.message for r in caplog.records if r.levelno == logging.ERROR
     )
@@ -224,7 +260,7 @@ async def test_error_status_does_not_notify() -> None:
 
     await use_case.execute(task_id="t-1")
 
-    assert call_log == ["save:failed"]
+    assert call_log == ["save:failed:None"]
     notifier.execute.assert_not_awaited()
 
 
@@ -259,3 +295,101 @@ async def test_notify_uses_effective_delivery_user_key() -> None:
     kwargs = notifier.execute.await_args.kwargs
     assert kwargs["user_key"] == "whatsapp:9"
     assert kwargs["text"] == "ok no zap"
+    stored = await repo.get("t-1")
+    assert stored is not None
+    assert stored.notify_status == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_notify_delivered_persisted_after_second_save() -> None:
+    """fix-scheduled-whatsapp-delivery run-1 unit-1: delivered no 2º save."""
+    call_log: list[str] = []
+    repo = _FakeRepository(call_log=call_log)
+    await repo.save(_make_task(delivery_user_key="whatsapp:5511"))
+    call_log.clear()
+
+    outcome = AgentRunOutcome(text="ping", attachments=())
+    runner = _RecordingRunner(
+        result=AgentRunResult(thread_id="th-1", status="ok", output=outcome)
+    )
+    use_case = RunScheduledTask(
+        repository=repo,
+        agent_runner=runner,
+        handle_chat_message=_make_notifier(call_log=call_log),
+        notify_channel=ScheduledChannel(),
+    )
+
+    await use_case.execute(task_id="t-1")
+
+    assert call_log[0] == "save:succeeded:None"
+    assert "notify" in call_log
+    assert call_log[-1] == "save:succeeded:delivered"
+    stored = await repo.get("t-1")
+    assert stored is not None
+    assert stored.notify_status == "delivered"
+    assert stored.notify_error is None
+
+
+@pytest.mark.asyncio
+async def test_notify_skipped_output_missing_persisted() -> None:
+    """fix-scheduled-whatsapp-delivery run-1 unit-2: skipped output_missing."""
+    call_log: list[str] = []
+    repo = _FakeRepository(call_log=call_log)
+    await repo.save(_make_task())
+    call_log.clear()
+
+    use_case = RunScheduledTask(
+        repository=repo,
+        agent_runner=_RecordingRunner(
+            result=AgentRunResult(thread_id="th-1", status="ok", output=None)
+        ),
+        handle_chat_message=_make_notifier(call_log=call_log),
+        notify_channel=ScheduledChannel(),
+    )
+
+    await use_case.execute(task_id="t-1")
+
+    assert call_log == ["save:succeeded:None", "save:succeeded:skipped"]
+    stored = await repo.get("t-1")
+    assert stored is not None
+    assert stored.status == TaskStatus.SUCCEEDED
+    assert stored.notify_status == "skipped"
+    assert stored.notify_error == "output_missing"
+
+
+@pytest.mark.asyncio
+async def test_notify_failed_when_whatsapp_adapter_missing() -> None:
+    """fix-scheduled-whatsapp-delivery run-1 unit-3: WhatsApp deliver falha → failed."""
+    call_log: list[str] = []
+    repo = _FakeRepository(call_log=call_log)
+    await repo.save(
+        _make_task(owner_user_key="web:1", delivery_user_key="whatsapp:5511")
+    )
+    call_log.clear()
+
+    outcome = AgentRunOutcome(text="hola", attachments=())
+    err = RuntimeError(
+        "canal resolvido whatsapp não está registrado neste processo"
+    )
+    use_case = RunScheduledTask(
+        repository=repo,
+        agent_runner=_RecordingRunner(
+            result=AgentRunResult(thread_id="th-1", status="ok", output=outcome)
+        ),
+        handle_chat_message=_make_notifier(call_log=call_log, raises=err),
+        notify_channel=ScheduledChannel(),
+    )
+
+    await use_case.execute(task_id="t-1")
+
+    assert call_log == [
+        "save:succeeded:None",
+        "notify",
+        "save:succeeded:failed",
+    ]
+    stored = await repo.get("t-1")
+    assert stored is not None
+    assert stored.status == TaskStatus.SUCCEEDED
+    assert stored.notify_status == "failed"
+    assert stored.notify_error is not None
+    assert "whatsapp" in stored.notify_error

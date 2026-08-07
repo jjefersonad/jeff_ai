@@ -86,6 +86,7 @@ from src.tools.code_editing_tools import (
 )
 from src.tools.create_docx_document_tool import create_docx_document
 from src.tools.create_pdf_document_tool import create_pdf_document
+from src.tools.preview_html_document_tool import preview_html_document
 from src.tools.create_pptx_presentation_tool import create_pptx_presentation
 from src.tools.create_xlsx_spreadsheet_tool import create_xlsx_spreadsheet
 from src.tools.deep_agent_tools import get_date_time_current
@@ -109,6 +110,14 @@ from src.tools.memory_tools import (
     search_memory,
 )
 from src.tools.read_document_tool import read_document
+from src.tools.crm_tools import (
+    crm_add_note,
+    crm_create_deal,
+    crm_list_deals,
+    crm_move_deal,
+    crm_search_contacts,
+    crm_upsert_contact,
+)
 from src.tools.scheduling_tools import (
     cancel_scheduled_task,
     create_scheduled_task,
@@ -217,9 +226,11 @@ usuário.
    formato dia, use a data no topo do prompt — não custa tool call.
 5. **Imagens**: SEMPRE delegue para `image_design_subagent` (planeja e
    gera sem gate de aprovação). Nunca gere imagens diretamente.
-6. **Documentos**: use as tools nativas (`create_docx_document`,
+6. **Documentos**: para propostas/documentos estilizados, prefira
+   `preview_html_document` (HTML em `/api/files/html/…`) e itere antes do
+   arquivo final. Tools finais: `create_docx_document`,
    `create_xlsx_spreadsheet`, `create_pptx_presentation`,
-   `create_pdf_document`) — cada uma devolve `{{path, url, metadata}}`.
+   `create_pdf_document` — cada uma devolve `{{path, url, metadata}}`.
     Use SEMPRE `url` no markdown. SEMPRE popule `blocks` (docx/pdf) e as
     linhas de cada aba (xlsx) com o conteúdo real pedido pelo usuário —
     nunca chame `create_docx_document`/`create_pdf_document` com `blocks`
@@ -280,25 +291,48 @@ usuário.
   (query → resultados). Use `web_fetch` para **ler o conteúdo de uma URL**
   já conhecida (link colado pelo usuário ou URL de um resultado de busca) —
   não substitui a busca por query.
-- **Geração de documentos**: `create_docx_document`, `create_xlsx_spreadsheet`,
-  `create_pptx_presentation`, `create_pdf_document` (Tier 2 — execução
-  direta, sem gate).
+- **Geração de documentos**: `preview_html_document`, `create_docx_document`,
+  `create_xlsx_spreadsheet`, `create_pptx_presentation`, `create_pdf_document`
+  (Tier 2 — execução direta, sem gate).
 - **Agendamento de tarefas**: `create_scheduled_task` agenda QUALQUER ação
-  sua para rodar no futuro (uma vez em data ISO, ou recorrente via cron) —
-  inclusive **enviar uma mensagem/lembrete ao usuário no canal atual**
-  (WhatsApp, Telegram ou web): o `prompt` da tarefa agendada é uma
-  instrução para você mesmo executar depois, então para "me avise em X
-  minutos" ou "mande uma mensagem agendada" o `prompt` deve instruir você
-  a chamar `send_message` com o texto pedido. Isso é **diferente** de
-  qualquer MCP externo de redes sociais (ex.: `zernio`), que só publica em
-  contas de plataforma configuradas (Twitter/Instagram/etc.) — não serve
-  para mensagens diretas em WhatsApp/Telegram, que são sempre feitas via
-  `create_scheduled_task` + `send_message` (nunca via MCP externo).
+  sua para rodar no futuro (uma vez em data ISO, ou recorrente via cron).
+  Após a execução, o sistema **notifica o destino** com o texto final da
+  resposta do agente — **não** dependa de `send_message` dentro do
+  `prompt` agendado. O job roda com o `user_key` do **owner da sessão**
+  (na web isso é `web:...`); `send_message` aí entrega no canal web
+  (no-op no CLI) e **não** chega no WhatsApp/Telegram.
+  - Pedido de lembrete/mensagem no **mesmo canal da sessão**: omita
+    `delivery_channel`; o `prompt` deve produzir o texto a entregar
+    (ex.: "Responda só com: Lembrete — reunião às 15h").
+  - Pedido **cross-channel** (ex.: na web, "mande no WhatsApp"): passe
+    `delivery_channel="whatsapp"` ou `"telegram"` (exige vínculo ativo).
+    O `prompt` continua sendo a instrução cujo **texto final** será
+    notificado nesse canal — sem `send_message` no prompt.
+  - Isso é **diferente** de MCP externo de redes sociais (ex.: `zernio`),
+    que só publica em contas de plataforma — mensagens diretas em
+    WhatsApp/Telegram usam só `create_scheduled_task` +
+    `delivery_channel` (nunca MCP externo).
   `list_scheduled_tasks` lista as tarefas do usuário atual;
   `cancel_scheduled_task` cancela uma tarefa existente. Todas Tier 2
   (execução direta, frontend notifica). A tarefa roda na MESMA thread da
   conversa atual e pertence a QUEM está conversando — `owner_user_key` é
   resolvido do `configurable`, nunca do argumento da tool.
+- **CRM Jeff AI** (módulo nativo em `/crm`, Postgres do usuário autenticado):
+  use **somente** as tools cujo nome começa com `crm_` —
+  `crm_search_contacts`, `crm_upsert_contact`, `crm_add_note`,
+  `crm_list_deals`, `crm_create_deal`, `crm_move_deal`.
+  - NÃO use tools MCP de terceiros (`contacts_*`, `lead_gen_*`,
+    `sequences_*`, `mcp__…`) para o CRM Jeff AI — essas são APIs de
+    outra plataforma e **não** gravama em `/api/crm` nem na UI `/crm`.
+  - NÃO procure módulo CRM no repositório com `list_project_files`/
+    `grep_project`. Ownership vem da sessão; ignore `user_id` inventado.
+  - Contatos: `crm_search_contacts` / `crm_upsert_contact` (exige email
+    e/ou phone).
+  - Nota/follow-up (`source=agent`): `crm_add_note` com exatamente um
+    alvo (`contact_id` | `company_id` | `deal_id`).
+  - Funil: `crm_list_deals`, `crm_create_deal` (default `lead`),
+    `crm_move_deal` (`lead` → `qualified` → `proposal` → `won`/`lost`).
+  - Leituras Tier 1; escritas Tier 2. Skill: `crm`.
 - **Imagens**: delegue para `image_design_subagent` (sempre).
 - **Leitura do projeto**: `read_project_file`, `list_project_files`
   (somente leitura).
@@ -347,6 +381,7 @@ _UNIFIED_TOOLS: list = [
     create_xlsx_spreadsheet,
     create_pptx_presentation,
     create_pdf_document,
+    preview_html_document,
     # --- Entrega de mensagens (canal-agnóstica) ---------------------------- #
     send_message,
     # --- Telegram mídia (Tier 2; texto unificado em send_message) ---------- #
@@ -364,6 +399,14 @@ _UNIFIED_TOOLS: list = [
     create_scheduled_task,
     list_scheduled_tasks,
     cancel_scheduled_task,
+    # --- CRM (Tier 1 read / Tier 2 write; skill `crm`) -------------------- #
+    # Contatos, notas e deals do usuário da sessão. Sem subagent/mode.
+    crm_search_contacts,
+    crm_upsert_contact,
+    crm_add_note,
+    crm_list_deals,
+    crm_create_deal,
+    crm_move_deal,
     # --- Self-extension (listagens, leitura, tools geradas) --------------- #
     list_project_files,
     read_project_file,

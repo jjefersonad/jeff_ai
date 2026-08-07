@@ -20,10 +20,14 @@ import pytest
 
 from unittest.mock import AsyncMock, MagicMock
 
-from src.application.ports.agent_runner import AgentRunnerPort, AgentRunResult
+from src.application.ports.agent_runner import (
+    AgentRunnerPort,
+    AgentRunOutcome,
+    AgentRunResult,
+)
 from src.application.ports.scheduled_task_repository import ScheduledTaskRepositoryPort
 from src.application.use_cases.run_scheduled_task import RunScheduledTask
-from src.domain.scheduling import Schedule, ScheduledTask, ToolScope
+from src.domain.scheduling import Schedule, ScheduledTask, TaskStatus, ToolScope
 from src.infrastructure.channels.registry import ChannelRegistry
 from src.infrastructure.channels.scheduled_channel import ScheduledChannel
 from src.infrastructure.cli import jeff_cli
@@ -40,9 +44,15 @@ def _make_run_scheduled_task(
     *,
     repository: ScheduledTaskRepositoryPort,
     agent_runner: AgentRunnerPort,
+    notify_raises: Exception | None = None,
 ) -> RunScheduledTask:
     notifier = MagicMock()
-    notifier.execute = AsyncMock()
+
+    async def _execute(**_kwargs: object) -> None:
+        if notify_raises is not None:
+            raise notify_raises
+
+    notifier.execute = AsyncMock(side_effect=_execute)
     return RunScheduledTask(
         repository=repository,
         agent_runner=agent_runner,
@@ -72,9 +82,16 @@ class _FakeRepository(ScheduledTaskRepositoryPort):
 
 
 class _FakeRunner(AgentRunnerPort):
-    def __init__(self, *, status: str, error: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        status: str,
+        error: str | None = None,
+        output: AgentRunOutcome | None = None,
+    ) -> None:
         self._status = status
         self._error = error
+        self._output = output
 
     async def run(
         self,
@@ -85,7 +102,12 @@ class _FakeRunner(AgentRunnerPort):
         tool_scope: ToolScope,
         user_key: str | None = None,
     ) -> AgentRunResult:
-        return AgentRunResult(thread_id=thread_id, status=self._status, error=self._error)
+        return AgentRunResult(
+            thread_id=thread_id,
+            status=self._status,
+            error=self._error,
+            output=self._output,
+        )
 
     async def resume(
         self,
@@ -198,7 +220,35 @@ async def test_run_returns_0_when_task_succeeds():
 
 
 @pytest.mark.asyncio
+async def test_run_returns_0_when_succeeded_even_if_notify_failed():
+    """cli-1 unit-1 / REQ-003: SUCCEEDED + notify_status=failed → exit 0."""
+    repo = _FakeRepository()
+    await repo.save(_make_task(owner_user_key="web:1", delivery_user_key="whatsapp:9"))
+    use_case = _make_run_scheduled_task(
+        repository=repo,
+        agent_runner=_FakeRunner(
+            status="ok",
+            output=AgentRunOutcome(text="ping", attachments=()),
+        ),
+        notify_raises=RuntimeError(
+            "canal resolvido whatsapp não está registrado neste processo"
+        ),
+    )
+
+    exit_code = await jeff_cli._run(
+        job_id="job-1", components=(repo, use_case)
+    )
+
+    assert exit_code == 0
+    stored = await repo.get("job-1")
+    assert stored is not None
+    assert stored.status == TaskStatus.SUCCEEDED
+    assert stored.notify_status == "failed"
+
+
+@pytest.mark.asyncio
 async def test_run_returns_nonzero_when_task_fails():
+    """cli-1 unit-2 / REQ-003: FAILED → exit != 0."""
     repo = _FakeRepository()
     await repo.save(_make_task())
     use_case = _make_run_scheduled_task(
@@ -210,6 +260,9 @@ async def test_run_returns_nonzero_when_task_fails():
     )
 
     assert exit_code != 0
+    stored = await repo.get("job-1")
+    assert stored is not None
+    assert stored.status == TaskStatus.FAILED
 
 
 @pytest.mark.asyncio
@@ -245,6 +298,4 @@ async def test_run_returns_0_when_cron_rearms_to_scheduled():
     assert exit_code == 0
     stored = await repo.get("job-1")
     assert stored is not None
-    from src.domain.scheduling import TaskStatus
-
     assert stored.status == TaskStatus.SCHEDULED
