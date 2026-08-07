@@ -1,6 +1,6 @@
 # Stack de produção standalone: `docker compose -f docker-compose.prod.yml up -d`
-# sobe apenas frontend + backend. Telegram e demais canais/infra ficam fora
-# deste arquivo — use `docker-compose.all.yml` ou um processo/stack externo.
+# sobe frontend + backend + telegram_gateway. Infra (Postgres/Redis/Ollama/
+# Evolution) fica externa — use `docker-compose.all.yml` para o stack completo.
 #
 # Diferenças deliberadas em relação a docker-compose.yml (dev local):
 # - Sem jeff_ia_postgres/jeff_ia_redis/jeff_ia_pgadmin: Postgres/Redis do
@@ -14,7 +14,7 @@
 #   _WEBHOOK_TOKEN abaixo, que só apontam pra ela). Já foi um serviço
 #   autocontido aqui (evolution_postgres/evolution_redis/evolution_api);
 #   removido deste arquivo — não confundir com relatos antigos.
-# - telegram_gateway NÃO entra neste arquivo (prod = app only).
+# - telegram_gateway entra aqui (mesma imagem do backend; polling do bot).
 services:
   backend:
     build:
@@ -23,6 +23,9 @@ services:
     container_name: jeff_ia_backend
     ports:
       - "8005:8000"
+    # Sem OPENROUTER_API_KEY o grafo `unified` falha no boot (ChatOpenRouter).
+    # No Portainer: declare a key no Environment do stack (não use env_file —
+    # o path .env não existe no host do compose gerenciado pelo Portainer).
     environment:
       POSTGRES_URI: ${POSTGRES_URI:?defina POSTGRES_URI em .env}
       REDIS_URI: ${REDIS_URI:?defina REDIS_URI em .env}
@@ -31,6 +34,22 @@ services:
       LANGSMITH_PROJECT: jeff_ai_project
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-32768}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-mxbai-embed-large}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?defina OPENROUTER_API_KEY em .env}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
+      OPENROUTER_APP_URL: ${OPENROUTER_APP_URL:-http://localhost:3000}
+      OPENROUTER_APP_TITLE: ${OPENROUTER_APP_TITLE:-Jeff AI}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      GOOGLE_MODEL: ${GOOGLE_MODEL:-gemini-2.5-flash}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:-}
+      SESSION_TTL: ${SESSION_TTL:-3600}
+      INTEGRATION_CREDENTIALS_KEY: ${INTEGRATION_CREDENTIALS_KEY:-}
+      # Cookie compartilhado entre jeff.* e jeff-api.* (middleware Next lê no front).
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      COOKIE_SAMESITE: ${COOKIE_SAMESITE:-lax}
       JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
       # Ver comentário equivalente em docker-compose.yml — sem estas duas, o
       # processo nunca via FRONTEND_ORIGIN/BASE_URL como env var própria
@@ -53,12 +72,15 @@ services:
       # Espelha auth.path do langgraph.json — ver docker-compose.yml (LANGGRAPH_AUTH).
       LANGGRAPH_AUTH: '{"path": "./src/infrastructure/web/auth.py:auth"}'
       CORS_ALLOW_ORIGINS: ${FRONTEND_ORIGIN:-http://localhost:3002}
+    # Em produção o código já vai na imagem (Dockerfile.backend COPY).
+    # NÃO bind-montar ./backend/src nem ./backend/langgraph.json no Portainer:
+    # se o path não existir no host, o Docker cria um DIRETÓRIO no lugar do
+    # arquivo e o deploy quebra com "not a directory" / "mount ... file".
+    # Só volumes nomeados para dados mutáveis em runtime.
     volumes:
-      - ./backend/outputs:/deps/backend/outputs
-      - ./backend/langgraph.json:/deps/backend/langgraph.json
-      - ./backend/skills:/deps/backend/skills
-      - ./backend/src:/deps/backend/src
-      - ./backend/src/tools/generated:/deps/backend/src/tools/generated
+      - backend_outputs:/deps/backend/outputs
+      - backend_skills:/deps/backend/skills
+      - backend_generated:/deps/backend/src/tools/generated
     networks:
       - jeff_ia-network
     extra_hosts:
@@ -84,7 +106,51 @@ services:
     networks:
       - jeff_ia-network
 
+  # Polling do bot Telegram (mesma imagem do backend). Sem TELEGRAM_* o
+  # bootstrap falha rápido. Compartilha `backend_outputs` com o backend para
+  # as tools send_telegram_photo/_document resolverem paths gerados.
+  telegram_gateway:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.backend
+    container_name: jeff_ia_telegram_gateway
+    restart: unless-stopped
+    environment:
+      POSTGRES_URI: ${POSTGRES_URI:?defina POSTGRES_URI em .env}
+      REDIS_URI: ${REDIS_URI:?defina REDIS_URI em .env}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?defina TELEGRAM_BOT_TOKEN em .env}
+      TELEGRAM_AUTHORIZED_CHAT_ID: ${TELEGRAM_AUTHORIZED_CHAT_ID:?defina TELEGRAM_AUTHORIZED_CHAT_ID em .env}
+      TELEGRAM_LEGACY_OWNER_USER_ID: ${TELEGRAM_LEGACY_OWNER_USER_ID:-}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
+      BASE_URL: ${BASE_URL:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?defina OPENROUTER_API_KEY em .env}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      INTEGRATION_CREDENTIALS_KEY: ${INTEGRATION_CREDENTIALS_KEY:-}
+      JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
+    depends_on:
+      - backend
+    volumes:
+      - backend_outputs:/deps/backend/outputs
+    # Substitui o ENTRYPOINT da imagem langgraph-api (uvicorn) — ver nota
+    # completa em docker-compose.yml.
+    entrypoint: ["/bin/sh", "/deps/backend/telegram_gateway_entrypoint.sh"]
+    # A imagem base traz healthcheck HTTP :8000 (langgraph-api). O gateway
+    # não sobe uvicorn — só polling do Telegram — então o probe marca
+    # unhealthy à toa. Desliga o healthcheck herdado.
+    healthcheck:
+      disable: true
+    networks:
+      - jeff_ia-network
 
 networks:
   jeff_ia-network:
     driver: bridge
+
+volumes:
+  backend_outputs:
+  backend_skills:
+  backend_generated:
