@@ -53,12 +53,15 @@ services:
       # Espelha auth.path do langgraph.json — ver docker-compose.yml (LANGGRAPH_AUTH).
       LANGGRAPH_AUTH: '{"path": "./src/infrastructure/web/auth.py:auth"}'
       CORS_ALLOW_ORIGINS: ${FRONTEND_ORIGIN:-http://localhost:3002}
+    # Em produção o código já vai na imagem (Dockerfile.backend COPY).
+    # NÃO bind-montar ./backend/src nem ./backend/langgraph.json no Portainer:
+    # se o path não existir no host, o Docker cria um DIRETÓRIO no lugar do
+    # arquivo e o deploy quebra com "not a directory" / "mount ... file".
+    # Só volumes nomeados para dados mutáveis em runtime.
     volumes:
-      - ./backend/outputs:/deps/backend/outputs
-      - ./backend/langgraph.json:/deps/backend/langgraph.json
-      - ./backend/skills:/deps/backend/skills
-      - ./backend/src:/deps/backend/src
-      - ./backend/src/tools/generated:/deps/backend/src/tools/generated
+      - backend_outputs:/deps/backend/outputs
+      - backend_skills:/deps/backend/skills
+      - backend_generated:/deps/backend/src/tools/generated
     networks:
       - jeff_ia-network
     extra_hosts:
@@ -88,3 +91,8 @@ services:
 networks:
   jeff_ia-network:
     driver: bridge
+
+volumes:
+  backend_outputs:
+  backend_skills:
+  backend_generated:
