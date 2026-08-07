@@ -117,9 +117,10 @@ def build_create_document(writer: DocumentWriterPort | None = None) -> CreateDoc
 
     Sem argumentos, usa o writer nativo de DOCX (python-docx) — preserva o
     contrato legado da tool `create_docx_document`. Tools de outros formatos
-    (xlsx/pptx) passam seu próprio writer concreto (XlsxWriter/PptxWriter) por
-    injeção. O destino/URL do writer vivem na infraestrutura; este wiring é o
-    único ponto que escolhe o adapter concreto. A aplicação permanece agnóstica.
+    (xlsx/pptx/pdf) passam seu próprio writer concreto (XlsxWriter/PptxWriter/
+    PdfWriter) por injeção. O destino/URL do writer vivem na infraestrutura;
+    este wiring é o único ponto que escolhe o adapter concreto. A aplicação
+    permanece agnóstica.
 
     A `url` retornada precisa ser absoluta para que o agente nunca precise
     inventar um domínio ao apresentá-la (ver `BASE_URL` em `.env.example`).

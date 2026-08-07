@@ -30,7 +30,6 @@ chunks anteriores em vez de acumular duplicatas no índice.
 from __future__ import annotations
 
 import hashlib
-from html.parser import HTMLParser
 from pathlib import Path
 
 import httpx
@@ -40,6 +39,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.config import get_store
 from langgraph.store.base import BaseStore, PutOp
 from pypdf import PdfReader
+
+from src.tools.html_text import html_to_text
 
 _THIS = Path(__file__).resolve()
 BACKEND_DIR = _THIS.parents[2]
@@ -77,38 +78,8 @@ _splitter = RecursiveCharacterTextSplitter(
 # --------------------------------------------------------------------------- #
 # Extração de texto por fonte
 # --------------------------------------------------------------------------- #
-class _TextExtractingHTMLParser(HTMLParser):
-    """Extrai o texto visível de um HTML, descartando script/style/etc."""
-
-    _SKIP_TAGS = {"script", "style", "noscript", "template"}
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._skip_depth = 0
-        self._parts: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list) -> None:
-        if tag in self._SKIP_TAGS:
-            self._skip_depth += 1
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in self._SKIP_TAGS and self._skip_depth > 0:
-            self._skip_depth -= 1
-
-    def handle_data(self, data: str) -> None:
-        if self._skip_depth == 0:
-            text = data.strip()
-            if text:
-                self._parts.append(text)
-
-    def get_text(self) -> str:
-        return "\n".join(self._parts)
-
-
-def _html_to_text(html: str) -> str:
-    parser = _TextExtractingHTMLParser()
-    parser.feed(html)
-    return parser.get_text()
+# Alias para testes/legado que ainda importam `_html_to_text` deste módulo.
+_html_to_text = html_to_text
 
 
 def _within_allowed_roots(path: Path) -> bool:
@@ -203,7 +174,7 @@ async def ingest_document(
                 resp.raise_for_status()
         except httpx.HTTPError as e:
             return f"ERRO ao baixar '{url}': {e}"
-        text = _html_to_text(resp.text)
+        text = html_to_text(resp.text)
         source_key = url
     elif file_path:
         path = (BACKEND_DIR / file_path).resolve()

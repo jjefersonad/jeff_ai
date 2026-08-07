@@ -1,7 +1,7 @@
 """FastAPI customizado montado pelo backend LangGraph via `http.app`.
 
 Consolida as rotas de mídia e documentos Office (imagens geradas, imagens de
-referência e downloads de docx/xlsx/pptx) no mesmo processo/porta que serve o
+referência e downloads de docx/xlsx/pptx/pdf) no mesmo processo/porta que serve o
 grafo `unified`, substituindo o container `image-server` separado para essas
 rotas.
 
@@ -168,7 +168,7 @@ app.include_router(auth_router)
 # Rotas de imagens geradas + upload/serve de referências.
 app.include_router(images_router)
 
-# Rotas de download de documentos Office (docx/xlsx/pptx).
+# Rotas de download de documentos (docx/xlsx/pptx/pdf).
 app.include_router(documents_router)
 
 # Rota de upload de anexos de chat (imagem/pdf/docx/xlsx/csv/txt).

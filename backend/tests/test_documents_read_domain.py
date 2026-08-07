@@ -17,6 +17,7 @@ from src.domain.documents import (
     HeadingBlock,
     PageContent,
     ParagraphBlock,
+    PdfSpec,
     PptxSpec,
     ReadBudget,
     ReadLimits,
@@ -176,7 +177,7 @@ class TestDocumentContent:
     def test_nao_reusa_nem_estende_document_spec(self) -> None:
         # Decisão de design: um round-trip ler→escrever perderia formatação em
         # silêncio, o que é pior que a ausência dele.
-        for spec_type in (DocxSpec, XlsxSpec, PptxSpec):
+        for spec_type in (DocxSpec, XlsxSpec, PptxSpec, PdfSpec):
             assert not issubclass(DocumentContent, spec_type)
             assert not issubclass(spec_type, DocumentContent)
 

@@ -37,6 +37,7 @@ def _read(path: Path) -> str:
         ("docx", "create_docx_document", "python-docx"),
         ("xlsx", "create_xlsx_spreadsheet", "openpyxl"),
         ("pptx", "create_pptx_presentation", "python-pptx"),
+        ("pdf", "create_pdf_document", "fpdf2"),
     ],
 )
 def test_skill_points_to_native_tool(skill: str, tool_name: str, lib: str):
@@ -48,7 +49,7 @@ def test_skill_points_to_native_tool(skill: str, tool_name: str, lib: str):
     assert lib in content, f"{skill}/SKILL.md não menciona a lib {lib!r}"
 
 
-@pytest.mark.parametrize("skill", ["docx", "xlsx", "pptx"])
+@pytest.mark.parametrize("skill", ["docx", "xlsx", "pptx", "pdf"])
 def test_skill_does_not_recommend_external_binaries_as_main_path(skill: str):
     """A SKILL.md não recomenda pandoc/soffice/docx-js/pptxgenjs/markitdown."""
     raw = _read(SKILLS_DIR / skill / "SKILL.md")
@@ -77,7 +78,7 @@ def test_skill_does_not_recommend_external_binaries_as_main_path(skill: str):
 # --- Limitações documentadas -----------------------------------------------
 
 
-@pytest.mark.parametrize("skill", ["docx", "xlsx", "pptx"])
+@pytest.mark.parametrize("skill", ["docx", "xlsx", "pptx", "pdf"])
 def test_skill_documents_creation_only_limitation(skill: str):
     """A SKILL.md declara explicitamente que o escopo é só criação."""
     content = _read(SKILLS_DIR / skill / "SKILL.md").lower()
@@ -119,16 +120,17 @@ def test_top_level_scripts_have_legacy_notice(skill: str):
 
 
 def test_claude_md_documents_office_tools():
-    """`CLAUDE.md` cita as 3 tools nativas e a rota `/api/files`."""
+    """`CLAUDE.md` cita as tools nativas de documento e a rota `/api/files`."""
     content = _read(CLAUDE_MD)
     assert "create_docx_document" in content
     assert "create_xlsx_spreadsheet" in content
     assert "create_pptx_presentation" in content
+    assert "create_pdf_document" in content
     assert "/api/files" in content, "CLAUDE.md não menciona a rota /api/files."
 
 
 def test_claude_md_documents_native_libs():
-    """`CLAUDE.md` cita as bibliotecas nativas (python-docx, openpyxl, python-pptx)."""
+    """`CLAUDE.md` cita as bibliotecas nativas (python-docx, openpyxl, python-pptx, fpdf2)."""
     content = _read(CLAUDE_MD)
-    for lib in ("python-docx", "openpyxl", "python-pptx"):
+    for lib in ("python-docx", "openpyxl", "python-pptx", "fpdf2"):
         assert lib in content, f"CLAUDE.md não menciona a lib {lib!r}."

@@ -85,6 +85,7 @@ from src.tools.code_editing_tools import (
     patch_file,
 )
 from src.tools.create_docx_document_tool import create_docx_document
+from src.tools.create_pdf_document_tool import create_pdf_document
 from src.tools.create_pptx_presentation_tool import create_pptx_presentation
 from src.tools.create_xlsx_spreadsheet_tool import create_xlsx_spreadsheet
 from src.tools.deep_agent_tools import get_date_time_current
@@ -137,6 +138,7 @@ from src.tools.self_extension import (
     save_generated_tool,
 )
 from src.tools.tavily_tool import internet_search
+from src.tools.web_fetch_tool import web_fetch
 from src.tools.technical_spec_tools import merge_generated_files
 from src.tools.delivery_tools import send_message
 from src.tools.telegram_tools import (
@@ -215,15 +217,15 @@ usuário.
    formato dia, use a data no topo do prompt — não custa tool call.
 5. **Imagens**: SEMPRE delegue para `image_design_subagent` (planeja e
    gera sem gate de aprovação). Nunca gere imagens diretamente.
-6. **Documentos Office**: use as tools nativas (`create_docx_document`,
-   `create_xlsx_spreadsheet`, `create_pptx_presentation`) — cada uma
-    devolve `{{path, url, metadata}}`. Use SEMPRE `url` no markdown.
-    SEMPRE popule `blocks` (docx) e as linhas de cada aba (xlsx) com o
-    conteúdo real pedido pelo usuário — nunca chame `create_docx_document`
-    com `blocks` vazio/omitido nem `create_xlsx_spreadsheet` com uma aba sem
-    linhas; ambos os casos são rejeitados com `error`. Uma string simples
-    não é mais um atalho válido para `create_docx_document` — a tool exige
-    `DocxDocumentInput` estruturado.
+6. **Documentos**: use as tools nativas (`create_docx_document`,
+   `create_xlsx_spreadsheet`, `create_pptx_presentation`,
+   `create_pdf_document`) — cada uma devolve `{{path, url, metadata}}`.
+    Use SEMPRE `url` no markdown. SEMPRE popule `blocks` (docx/pdf) e as
+    linhas de cada aba (xlsx) com o conteúdo real pedido pelo usuário —
+    nunca chame `create_docx_document`/`create_pdf_document` com `blocks`
+    vazio/omitido nem `create_xlsx_spreadsheet` com uma aba sem linhas;
+    esses casos são rejeitados com `error`. Uma string simples não é
+    atalho válido — as tools exigem input estruturado.
 7. **Auto-extensão**: skills em `/skills/<nome>/SKILL.md` (carregam ao
    vivo). Tools Python via `save_generated_tool` (precisa aprovação
    humana + restart).
@@ -274,9 +276,13 @@ usuário.
   `ingest_document` para indexar um corpus de texto (chunking automático);
   `search_documents` para recuperar trechos relevantes depois. Use isto, e
   NÃO `save_memory`, sempre que o conteúdo for maior que um fato pontual.
-- **Pesquisa externa**: `internet_search`, `search_arxiv`.
+- **Pesquisa externa**: `internet_search` e `search_arxiv` para **pesquisar**
+  (query → resultados). Use `web_fetch` para **ler o conteúdo de uma URL**
+  já conhecida (link colado pelo usuário ou URL de um resultado de busca) —
+  não substitui a busca por query.
 - **Geração de documentos**: `create_docx_document`, `create_xlsx_spreadsheet`,
-  `create_pptx_presentation` (Tier 2 — execução direta, sem gate).
+  `create_pptx_presentation`, `create_pdf_document` (Tier 2 — execução
+  direta, sem gate).
 - **Agendamento de tarefas**: `create_scheduled_task` agenda QUALQUER ação
   sua para rodar no futuro (uma vez em data ISO, ou recorrente via cron) —
   inclusive **enviar uma mensagem/lembrete ao usuário no canal atual**
@@ -329,16 +335,18 @@ _UNIFIED_TOOLS: list = [
     ingest_document,
     search_documents,
     get_date_time_current,
-    # --- Pesquisa externa ------------------------------------------------- #
+    # --- Pesquisa externa / leitura de URL -------------------------------- #
     internet_search,
     search_arxiv,
+    web_fetch,
     # --- Imagens (referência) --------------------------------------------- #
     fetch_reference_image,
     check_reference_image,
-    # --- Documentos Office (Tier 2) --------------------------------------- #
+    # --- Documentos Office/PDF (Tier 2) ----------------------------------- #
     create_docx_document,
     create_xlsx_spreadsheet,
     create_pptx_presentation,
+    create_pdf_document,
     # --- Entrega de mensagens (canal-agnóstica) ---------------------------- #
     send_message,
     # --- Telegram mídia (Tier 2; texto unificado em send_message) ---------- #

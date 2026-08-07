@@ -128,10 +128,11 @@ async def send_telegram_document(
     """Envia um documento para um chat do Telegram a partir de um path local.
 
     Aceita diretamente o `path` retornado por `create_docx_document`,
-    `create_xlsx_spreadsheet` e `create_pptx_presentation` (REQ-003,
-    telegram-tools-spec). O `path` é validado contra a allowlist de raiz
-    `backend/outputs/` antes de qualquer I/O — paths rejeitados não geram
-    chamada à Bot API (REQ-004). Quando `chat_id` não é informado, usa
+    `create_xlsx_spreadsheet`, `create_pptx_presentation` e
+    `create_pdf_document` (REQ-003, telegram-tools-spec). O `path` é
+    validado contra a allowlist de raiz `backend/outputs/` antes de
+    qualquer I/O — paths rejeitados não geram chamada à Bot API
+    (REQ-004). Quando `chat_id` não é informado, usa
     `TELEGRAM_AUTHORIZED_CHAT_ID` como destino padrão (REQ-002).
     """
     try:
