@@ -20,7 +20,15 @@ from starlette.requests import Request
 from src.infrastructure.auth.sessions import SESSION_COOKIE_NAME, get_session
 from src.infrastructure.auth.users import User, get_user_by_id
 
-_DEFAULT_PUBLIC_PATHS = ("/public/",)
+_DEFAULT_PUBLIC_PATHS = (
+    "/public/",
+    # Webhook da Evolution API (canal WhatsApp) — chamador servidor-a-servidor
+    # sem cookie de sessão de navegador. A própria rota exige um token
+    # embutido na URL (`EVOLUTION_WEBHOOK_TOKEN`, ver
+    # `whatsapp_webhook_router.py`), que é o mecanismo de autenticação real
+    # aqui — `require_auth` (cookie de sessão) não se aplica.
+    "/api/webhooks/whatsapp/",
+)
 
 
 class SessionAuthError(Exception):

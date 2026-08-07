@@ -22,15 +22,19 @@ from src.domain.shared.errors import DomainError
 class TaskStatus(str, Enum):
     """Máquina de estado da tarefa.
 
-    Transições válidas (ver REQ-002 do spec `task-scheduling`):
+    Transições válidas (ver REQ-002 do spec `task-scheduling` +
+    `scheduled-human-intervention`):
       SCHEDULED → RUNNING → SUCCEEDED
                           ↘ FAILED
+                          ↘ WAITING_HUMAN  (HITL; resume completa depois)
+      SUCCEEDED|FAILED → SCHEDULED  (somente via rearm_for_cron)
     """
 
     SCHEDULED = "scheduled"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    WAITING_HUMAN = "waiting_human"
 
 
 class ToolScope(str, Enum):
@@ -179,13 +183,19 @@ class ScheduledTask:
     schedule: Schedule
     tool_scope: ToolScope = ToolScope.RESTRICTED
     skills: tuple[str, ...] = ()
-    created_by: str | None = None
+    owner_user_key: str | None = None
+    delivery_user_key: str | None = None
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     status: TaskStatus = TaskStatus.SCHEDULED
     started_at: datetime | None = None
     finished_at: datetime | None = None
     error: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    @property
+    def effective_delivery_user_key(self) -> str | None:
+        """Destino de notify/HITL: `delivery_user_key` ou fallback `owner_user_key`."""
+        return self.delivery_user_key if self.delivery_user_key is not None else self.owner_user_key
 
     # ------------------------------------------------------------------
     # Validação de construção
@@ -251,6 +261,36 @@ class ScheduledTask:
         self.status = TaskStatus.FAILED
         self.finished_at = datetime.now(UTC)
         self.error = str(error)
+
+    def waiting_human(self) -> None:
+        """Transiciona RUNNING → WAITING_HUMAN (HITL; não é falha)."""
+        if self.status is not TaskStatus.RUNNING:
+            raise DomainError(
+                f"ScheduledTask.waiting_human() exige status=RUNNING; status atual: "
+                f"{self.status.value!r}"
+            )
+        self.status = TaskStatus.WAITING_HUMAN
+        self.error = None
+
+    def rearm_for_cron(self) -> None:
+        """SUCCEEDED|FAILED → SCHEDULED para o próximo tick cron.
+
+        Só válido quando `schedule.kind == "cron"`. Tarefas `once` e
+        estados não-terminais levantam `DomainError`.
+        """
+        if self.schedule.kind != "cron":
+            raise DomainError(
+                "ScheduledTask.rearm_for_cron() exige schedule.kind='cron'; "
+                f"recebido: {self.schedule.kind!r}"
+            )
+        if self.status not in (TaskStatus.SUCCEEDED, TaskStatus.FAILED):
+            raise DomainError(
+                "ScheduledTask.rearm_for_cron() exige status=SUCCEEDED|FAILED; "
+                f"status atual: {self.status.value!r}"
+            )
+        self.status = TaskStatus.SCHEDULED
+        self.finished_at = None
+        self.error = None
 
     @property
     def is_terminal(self) -> bool:

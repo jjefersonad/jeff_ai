@@ -1,0 +1,231 @@
+# Stack autocontida completa: app + Postgres/Redis + Ollama + Evolution +
+# telegram_gateway. Portas alinhadas a docker-compose.yml (8001/3002/6381).
+# Fonte de env: apenas ./.env.
+#
+# Uso: docker compose -f docker-compose.all.yml up -d
+# pgAdmin: docker compose -f docker-compose.all.yml --profile admin up -d
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.backend
+    container_name: jeff_ia_backend
+    ports:
+      - "8001:8000"
+    env_file:
+      - .env
+    environment:
+      POSTGRES_URI: ${POSTGRES_URI:-postgresql://${POSTGRES_USER:-jeff_ia}:${POSTGRES_PASSWORD:-jeff_ia}@jeff_ia_postgres:5432/${POSTGRES_DB:-jeff_ia}}
+      REDIS_URI: ${REDIS_URI:-redis://:${REDIS_PASSWORD}@jeff_ia_redis:6379/0}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY}
+      LANGCHAIN_TRACING_V2: true
+      LANGSMITH_PROJECT: jeff_ai_project
+      # Default interno: Ollama da mesma rede Compose (override via ./.env).
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://jeff_ia_ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
+      JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
+      BASE_URL: ${BASE_URL:-}
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution_api:8080}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY em .env}
+      EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-jeff-ai-central}
+      EVOLUTION_WEBHOOK_TOKEN: ${EVOLUTION_WEBHOOK_TOKEN:?defina EVOLUTION_WEBHOOK_TOKEN em .env}
+      SKILLS_ALLOWLIST: ${SKILLS_ALLOWLIST:-usenotra/skills}
+      LANGGRAPH_STORE: '{"type": "postgres", "url": "$${env:POSTGRES_URI}", "index": {"embed": "./src/models/ollama_embeddings.py:embed_texts", "dims": 1024, "fields": ["content"]}}'
+      LANGGRAPH_CHECKPOINTER: '{"type": "postgres", "url": "$${env:POSTGRES_URI}"}'
+      LANGGRAPH_HTTP: '{"app": "./src/infrastructure/web/webapp.py:app", "cors": {"allow_origins": ["${FRONTEND_ORIGIN:-http://localhost:3002}"], "allow_credentials": true, "allow_methods": ["*"], "allow_headers": ["*"]}}'
+      LANGGRAPH_AUTH: '{"path": "./src/infrastructure/web/auth.py:auth"}'
+      CORS_ALLOW_ORIGINS: ${FRONTEND_ORIGIN:-http://localhost:3002}
+    depends_on:
+      jeff_ia_postgres:
+        condition: service_healthy
+      jeff_ia_redis:
+        condition: service_started
+      ollama:
+        condition: service_started
+      evolution_api:
+        condition: service_started
+    volumes:
+      - ./backend/outputs:/deps/backend/outputs
+      - ./backend/langgraph.json:/deps/backend/langgraph.json
+      - ./backend/skills:/deps/backend/skills
+      - ./backend/src:/deps/backend/src
+      - ./backend/src/tools/generated:/deps/backend/src/tools/generated
+    networks:
+      - jeff_ia-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile.frontend
+      target: dev
+    container_name: jeff_ia_frontend
+    ports:
+      - "3002:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8001}
+      BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:8000}
+    depends_on:
+      - backend
+    networks:
+      - jeff_ia-network
+
+  jeff_ia_postgres:
+    image: pgvector/pgvector:pg15
+    container_name: jeff_ia_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-jeff_ia}
+      POSTGRES_USER: ${POSTGRES_USER:-jeff_ia}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jeff_ia}
+    ports:
+      - "5436:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jeff_ia} -d ${POSTGRES_DB:-jeff_ia}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jeff_ia-network
+    command: >
+      postgres
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+
+  jeff_ia_redis:
+    image: redis:7-alpine
+    container_name: jeff_ia_redis
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - jeff_ia-network
+
+  jeff_ia_pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: jeff_ia_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@admin.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin123}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    depends_on:
+      jeff_ia_postgres:
+        condition: service_healthy
+    networks:
+      - jeff_ia-network
+    profiles:
+      - admin
+
+  telegram_gateway:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.backend
+    container_name: jeff_ia_telegram_gateway
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_URI: ${POSTGRES_URI:-postgresql://${POSTGRES_USER:-jeff_ia}:${POSTGRES_PASSWORD:-jeff_ia}@jeff_ia_postgres:5432/${POSTGRES_DB:-jeff_ia}}
+      REDIS_URI: ${REDIS_URI:-redis://:${REDIS_PASSWORD}@jeff_ia_redis:6379/0}
+    depends_on:
+      jeff_ia_postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend/outputs:/deps/backend/outputs
+      - ./backend/src:/deps/backend/src
+    entrypoint: ["/bin/sh", "/deps/backend/telegram_gateway_entrypoint.sh"]
+    networks:
+      - jeff_ia-network
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: jeff_ia_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+    networks:
+      - jeff_ia-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  evolution_postgres:
+    image: postgres:15-alpine
+    container_name: jeff_ia_evolution_postgres
+    environment:
+      POSTGRES_DB: evolution
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: ${EVOLUTION_POSTGRES_PASSWORD:?defina EVOLUTION_POSTGRES_PASSWORD em .env}
+    volumes:
+      - evolution_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evolution -d evolution"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - jeff_ia-network
+
+  evolution_redis:
+    image: redis:7-alpine
+    container_name: jeff_ia_evolution_redis
+    command: redis-server --requirepass ${EVOLUTION_REDIS_PASSWORD:?defina EVOLUTION_REDIS_PASSWORD em .env}
+    volumes:
+      - evolution_redis_data:/data
+    networks:
+      - jeff_ia-network
+
+  evolution_api:
+    image: evoapicloud/evolution-api:v2.1.1
+    container_name: jeff_ia_evolution_api
+    restart: unless-stopped
+    ports:
+      - "8085:8080"
+    environment:
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY em .env}
+      DATABASE_ENABLED: "true"
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://evolution:${EVOLUTION_POSTGRES_PASSWORD}@evolution_postgres:5432/evolution
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://:${EVOLUTION_REDIS_PASSWORD}@evolution_redis:6379/0
+      SERVER_URL: ${EVOLUTION_SERVER_URL:-http://localhost:8085}
+    depends_on:
+      evolution_postgres:
+        condition: service_healthy
+      evolution_redis:
+        condition: service_started
+    volumes:
+      - evolution_instances:/evolution/instances
+    networks:
+      - jeff_ia-network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  ollama_data:
+    driver: local
+  evolution_postgres_data:
+    driver: local
+  evolution_redis_data:
+    driver: local
+  evolution_instances:
+    driver: local
+
+networks:
+  jeff_ia-network:
+    driver: bridge

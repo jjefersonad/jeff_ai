@@ -3,14 +3,21 @@
 /**
  * Primary navigation sidebar for the authenticated layout.
  *
- * Renders **Chat**, **Images**, **MCP Servers**, **Integrações**, and (for
- * `role=admin` only) **Consumo** — linking to `/`, `/images`, `/mcp-servers`,
- * `/integrations`, and `/usage`.
+ * Renders **Chat**, **Images**, **MCP Servers**, **Integrações**,
+ * **Agendamentos**, and (for `role=admin` only) **Consumo** and
+ * **Usuários** — linking to `/`, `/images`, `/mcp-servers`, `/integrations`,
+ * `/scheduling`, `/usage`, and `/admin/users`.
  * **Chat** exists because the top-bar "JEFF AI" link back to `/` isn't an
  * obvious return path once a user has navigated into a full sidebar
  * destination. The active entry (matching the current pathname) is
- * highlighted with `aria-current="page"`. Admin-only **Consumo** is filtered
- * via `getVisibleNavEntries(user?.role)` (token-usage-reporting REQ-006).
+ * highlighted with `aria-current="page"`. Admin-only **Consumo** is
+ * filtered via `getVisibleNavEntries(user?.role)` (token-usage-reporting
+ * REQ-006). Admin-only **Usuários** is filtered through the same gate
+ * (user-management-ui REQ-005, frontend-5) — the entry is registered with
+ * `requireRole: "admin"` so non-admin users never see the link, matching
+ * the design decision that hiding it client-side is enough since
+ * `useAuth().user.role` is the same role the backend's `require_admin`
+ * enforces.
  *
  * Responsive behaviour (per design decision D4):
  *   - ≥ 768px viewport → the sidebar renders as an inline panel that pushes
@@ -29,10 +36,12 @@ import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import {
   BarChart3,
+  CalendarClock,
   ImageIcon,
   MessageCircle,
   MessagesSquare,
   Plug,
+  Users,
   XIcon,
 } from "lucide-react";
 
@@ -88,11 +97,31 @@ const ENTRIES: readonly NavEntry[] = [
     requireRole: "admin",
   },
   {
+    // user-management-ui REQ-005 (frontend-5): only the admin role sees
+    // the "Usuários" link in the sidebar. The page itself (also added
+    // by user-management-frontend-1) does the same `useAuth().role`
+    // redirect as a defence-in-depth, but hiding the link here keeps
+    // the nav free of items that would always 403 for non-admins.
+    label: "Usuários",
+    href: "/admin/users",
+    description: "Gerenciar usuários (admin)",
+    icon: Users,
+    match: (p) => p === "/admin/users" || p.startsWith("/admin/users/"),
+    requireRole: "admin",
+  },
+  {
     label: "Integrações",
     href: "/integrations",
     description: "Link your account to other channels (WhatsApp)",
     icon: MessageCircle,
     match: (p) => p === "/integrations" || p.startsWith("/integrations/"),
+  },
+  {
+    label: "Agendamentos",
+    href: "/scheduling",
+    description: "Manage scheduled tasks",
+    icon: CalendarClock,
+    match: (p) => p === "/scheduling" || p.startsWith("/scheduling/"),
   },
 ];
 
@@ -154,11 +183,17 @@ function useEscToClose(enabled: boolean, onClose: () => void) {
 export function NavSidebar() {
   const pathname = usePathname();
   const { open, setOpen, hydrated } = useNavSidebar();
-  const { user } = useAuth();
-  const entries = useMemo(
-    () => getVisibleNavEntries(user?.role),
-    [user?.role]
-  );
+  const { user, isRehydrating } = useAuth();
+  // While `/api/me` is in flight and we have no role yet, keep every entry
+  // visible — filtering on `null` would hide admin items (Consumo/Usuários)
+  // and make them "disappear" during navigation/remount. Pages still enforce
+  // `require_admin` server-side.
+  const entries = useMemo(() => {
+    if (isRehydrating && !user) {
+      return [...ENTRIES];
+    }
+    return getVisibleNavEntries(user?.role);
+  }, [user, isRehydrating]);
   const isMobile = useIsMobile();
   const close = () => setOpen(false);
 

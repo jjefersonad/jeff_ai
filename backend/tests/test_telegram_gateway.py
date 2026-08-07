@@ -145,8 +145,8 @@ def test_main_does_not_start_polling_when_bootstrap_fails(
     """
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_AUTHORIZED_CHAT_ID", raising=False)
-    # main() chama load_dotenv() — sem isso, backend/.env reporia as vars.
-    monkeypatch.setattr(telegram_gateway, "load_dotenv", lambda: None)
+    # main() chama load_env() — sem isso, ./.env reporia as vars.
+    monkeypatch.setattr(telegram_gateway, "load_env", lambda: None)
 
     recording_app = _RecordingPollingApp()
     monkeypatch.setattr(

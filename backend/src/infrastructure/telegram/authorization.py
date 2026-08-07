@@ -1,102 +1,55 @@
 """Filtro de allowlist de `chat_id` + propagação de `thread_id` para o `telegram_gateway`.
 
-Responsabilidades destas tasks (`integracao-telegram-task-channel-2`,
-`-task-channel-3`, `-task-channel-4` e `-task-channel-5`):
+Responsabilidades:
 
 - Expor `is_authorized_chat(chat_id, authorized_chat_id) -> bool`: predicado
   puro que compara o `chat_id` recebido com o `TELEGRAM_AUTHORIZED_CHAT_ID`
   configurado (REQ-002 do `telegram-channel-spec`).
-- Expor `CHANNEL_INSTRUCTION`: a string injetada como prefixo do `prompt`
-  para instruir o agente a entregar a resposta via tool
-  `send_telegram_message` (REQ-003).
+- Expor `build_channel_prompt(user_text)` que devolve `user_text` sem
+  pre-prefix (REQ-013) — a instrução de entrega vive no `_SYSTEM_PROMPT`.
 - Expor `make_message_handler(authorized_chat_id, agent_runner, bot)` que
   devolve um callable compatível com `Application.add_handler(MessageHandler,
   ...)` do `python-telegram-bot`. O callable:
     1. Extrai o `chat_id` do `Update`.
     2. Se o chat NÃO for autorizado, descarta o update (sem chamar
-       `get_or_create_thread_id` nem invocar o agente — REQ-002).
-    3. Se o chat for autorizado, resolve o `thread_id` via
-       `get_or_create_thread_id(chat_id)` exatamente uma vez e o propaga
-       como `thread_id` da chamada a `agent_runner.run(...)` (REQ-001).
-    4. Constrói o `prompt` final prefixando o texto do usuário com a
-       `CHANNEL_INSTRUCTION` (REQ-003) e invoca o runner.
-    5. Captura o `AgentRunResult` e usa APENAS `status`/`error` — nunca
-       lê campos de texto, que o DTO real nem carrega (REQ-003).
-    6. Quando `agent_runner.run()` levanta exceção OU o
-       `AgentRunResult.status` indica falha/timeout (REQ-005), envia uma
-       mensagem de erro legível ao `chat_id` de origem via
-       `bot_client.call_bot_api(bot.send_message(...))` — esta é a única
-       situação em que o canal envia texto por conta própria; o sucesso
-       fica a cargo do agente chamando `send_telegram_message`.
-
-  A captura de exceções é em camadas: a falha do runner é absorvida
-  antes do envio; a falha do envio também é absorvida (defesa em
-  profundidade) para que NENHUMA exceção escape do handler — o loop de
-  polling do `python-telegram-bot` tem que continuar vivo mesmo quando
-  tudo dá errado.
+       `get_or_create_thread_id` nem o caso de uso — REQ-002).
+    3. Se o chat estiver aguardando texto de edição de aprovação, intercepta
+       via `approval.consume_edit_text_reply` (REQ-004 telegram-tool-approval).
+    4. Se autorizado, resolve `thread_id` via `get_or_create_thread_id(chat_id)`
+       e chama `HandleChatMessage.execute(channel=TelegramChannel(bot=...),
+       user_key=telegram_user_key(chat_id), thread_id=..., text=user_text)`
+       — REQ-012 (`unify-message-delivery-pipeline`). O agent_runner NÃO é
+       invocado diretamente daqui; falha, interrupt e entrega normal ficam
+       a cargo do caso de uso + `TelegramChannel.deliver`.
 """
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Awaitable, Callable, Protocol
 
-from src.domain.scheduling import ToolScope
-from src.infrastructure.telegram import approval, bot_client
+from src.application.use_cases.handle_chat_message import HandleChatMessage
+from src.infrastructure.channels.telegram_channel import TelegramChannel
+from src.infrastructure.ownership.store import resolve_telegram_user_id
+from src.infrastructure.telegram import approval
 from src.infrastructure.telegram.thread_repository import get_or_create_thread_id
 from src.infrastructure.usage.user_key import telegram_user_key
-
-logger = logging.getLogger(__name__)
-
-# Texto enviado ao usuário quando o agente falha ou o runner levanta
-# exceção. Legível, sem vazar `thread_id` interno nem stack trace.
-# REQ-005: "mensagem de erro legível ao chat de origem".
-_CHANNEL_ERROR_MESSAGE = (
-    "Ocorreu uma falha ao processar sua mensagem. "
-    "Tente novamente em alguns instantes."
-)
-
-# Instrução de canal injetada como prefixo do `prompt` (REQ-003).
-# Cita as tools de entrega pelo nome. No Telegram o DTO do runner NÃO
-# devolve texto ao canal — se o agente não chamar uma tool de envio, o
-# usuário não recebe nada (mesmo com a imagem já gerada em outputs/).
-CHANNEL_INSTRUCTION = (
-    "[Canal Telegram] Esta é uma conversa do usuário via Telegram. "
-    "A entrega ao usuário SÓ acontece via tools de envio — nunca em "
-    "texto livre no reasoning, nunca via markdown com `/api/images/...` "
-    "(isso não renderiza no Telegram).\n"
-    "- Texto: chame `send_telegram_message` com o texto da resposta.\n"
-    "- Imagem gerada (`create_image_from_prompt` / "
-    "`image_design_subagent`): depois do sucesso, chame "
-    "`send_telegram_photo` com o campo `path` retornado pela tool "
-    "(filesystem local). NÃO use o campo `url`. Pode enviar um caption "
-    "curto.\n"
-    "- Documento Office: chame `send_telegram_document` com o `path` "
-    "retornado.\n\n"
-)
 
 
 class _AgentRunnerPort(Protocol):
     """Tipo estrutural mínimo: usado para anotação e composição.
 
-    `run(...)` é definido em `agendamento-jeff-cli-task-application-1`
-    (`AgentRunnerPort.run(thread_id, prompt, skills, tool_scope)`) como
-    `async def`. O retorno é `AgentRunResult(thread_id, status, error)` —
-    DTO sem campo de texto de resposta (ver `src/application/ports/
-    agent_runner.py`). Esta task consome o retorno apenas para detectar
-    falha (`status`/`error`); nunca para obter texto.
+    Injetado em `HandleChatMessage` e em `approval.consume_edit_text_reply`.
+    O handler desta camada não chama `run(...)` diretamente (REQ-012).
     """
 
     async def run(self, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class _BotLike(Protocol):
-    """Tipo estrutural mínimo: bot do `python-telegram-bot` com `send_message`.
+    """Tipo estrutural mínimo: bot do `python-telegram-bot`.
 
-    O canal usa apenas `send_message(chat_id, text)` para notificar o
-    usuário em caso de falha (REQ-005). Não é `telegram.Bot` em si —
-    duck typing — para que o teste possa injetar um fake sem precisar
-    de token real.
+    Injetado no `TelegramChannel` construído pelo handler. Duck typing
+    para que o teste possa injetar um fake sem precisar de token real.
     """
 
     async def send_message(
@@ -117,16 +70,39 @@ def is_authorized_chat(chat_id: str, authorized_chat_id: str) -> bool:
     return chat_id == authorized_chat_id
 
 
-def build_channel_prompt(user_text: str) -> str:
-    """Prefixa o texto do usuário com a instrução de canal (REQ-003).
+async def resolve_authorization(
+    chat_id: str, authorized_chat_id: str
+) -> tuple[bool, str | None]:
+    """REQ-002 (delta `telegram-channel`, change `user-integration-credentials`).
 
-    Mantida como função pura para que possa ser testada isoladamente e
-    para deixar a montagem do prompt óbvia na leitura do `handler`. A
-    instrução vem primeiro (lida pelo agente antes do pedido) e o texto
-    original do usuário é preservado em seguida, separado por uma linha
-    em branco para legibilidade no log do agente.
+    Autoriza `chat_id` por dois caminhos: (1) legado — igual ao
+    `TELEGRAM_AUTHORIZED_CHAT_ID` configurado, mantido como fallback durante
+    a janela de migração (design Migration Plan passo 3); (2) vínculo real —
+    resolvido via `resolve_telegram_user_id` (`ownership/store.py`, mesmo
+    resolvedor canônico usado por `resolve_user_id()` fora do contexto de um
+    run). O caminho legado é checado primeiro (comparação de string, sem
+    tocar o Postgres) — só cai para o vínculo real quando `chat_id` não bate
+    com o allowlist. Devolve `(autorizado, user_id)`; `user_id` só vem
+    preenchido no caminho de vínculo real (o legado não tem `user_id` a
+    devolver, mesmo comportamento "zero servidores" de hoje).
     """
-    return f"{CHANNEL_INSTRUCTION}{user_text}"
+    if not chat_id:
+        return False, None
+    if chat_id == authorized_chat_id:
+        return True, None
+    user_id = await resolve_telegram_user_id(chat_id)
+    if user_id is not None:
+        return True, user_id
+    return False, None
+
+
+def build_channel_prompt(user_text: str) -> str:
+    """Devolve `user_text` sem pre-prefix (REQ-013).
+
+    A instrução de entrega moveu-se para a seção "Entrega de mensagens"
+    do `_SYSTEM_PROMPT` do agente — o prompt do usuário fica só o texto.
+    """
+    return user_text
 
 
 def make_message_handler(
@@ -139,67 +115,28 @@ def make_message_handler(
 
     Pipeline do callable, em ordem:
     1. allowlist de `chat_id` (REQ-002);
-    2. resolução do `thread_id` (REQ-001);
-    3. montagem do `prompt` com instrução de canal (REQ-003);
-    4. invocação de `agent_runner.run(thread_id, prompt, skills, tool_scope)`;
-    5. leitura **apenas** de `status`/`error` do `AgentRunResult` (REQ-003);
-    6. em caso de falha (`status != "ok"`) ou exceção durante a
-       invocação, envio de uma mensagem de erro legível ao `chat_id` de
-       origem via `bot_client.call_bot_api(bot.send_message(...))` —
-       REQ-005. A entrega normal (sucesso) é responsabilidade do
-       agente chamando `send_telegram_message`.
+    2. intercept de texto de edição de aprovação (REQ-004 tool-approval);
+    3. resolução do `thread_id` (REQ-001);
+    4. `HandleChatMessage.execute(...)` com `TelegramChannel` (REQ-012).
 
     O callable devolvido recebe `(update, context)` no formato do
-    `python-telegram-bot` e devolve uma coroutine — `application.run_polling()`
-    do `python-telegram-bot` v20+ suporta handlers `async def` nativamente.
-
-    Garantia de fronteira: NENHUMA exceção (nem do runner, nem do
-    `bot.send_message`) se propaga para fora do handler. O loop de
-    polling do `python-telegram-bot` recebe sempre uma coroutine que
-    resolve normalmente — caso contrário uma única falha derruba o
-    processo inteiro.
+    `python-telegram-bot` e devolve uma coroutine. Exceções do agente são
+    engolidas pelo caso de uso — o loop de polling continua vivo.
     """
-
-    async def _notify_failure(chat_id: str) -> None:
-        """Envia a mensagem de erro ao chat (REQ-005) absorvendo qualquer falha.
-
-        Defesa em profundidade: mesmo se `bot.send_message` levantar
-        (ex.: rede caiu também no momento do erro), o handler NÃO
-        propaga. A falha é logada para diagnóstico e o loop de polling
-        segue adiante.
-        """
-        try:
-            result = await bot_client.call_bot_api(
-                lambda: bot.send_message(chat_id=chat_id, text=_CHANNEL_ERROR_MESSAGE)
-            )
-        except Exception:  # noqa: BLE001 — fronteira do handler
-            logger.exception(
-                "Falha ao notificar chat_id=%s sobre erro do runner; "
-                "loop de polling continua.",
-                chat_id,
-            )
-            return
-        if not result.get("success", False):
-            logger.error(
-                "Notificação de erro ao chat_id=%s falhou: %s",
-                chat_id,
-                result.get("error", "<sem detalhe>"),
-            )
 
     async def handler(update: Any, context: Any) -> None:
         chat_id = str(update.effective_chat.id) if update.effective_chat else ""
-        if not is_authorized_chat(chat_id, authorized_chat_id):
+        authorized, _linked_user_id = await resolve_authorization(
+            chat_id, authorized_chat_id
+        )
+        if not authorized:
             return
 
         # REQ-004 do `telegram-tool-approval-spec`: se o chat está
-        # aguardando texto de edição (usuário tocou em "Editar" no
-        # teclado de aprovação), a PRÓXIMA mensagem de texto do
-        # `chat_id` (não-slash) é interceptada ANTES do `agent_runner.run`
-        # normal e transformada em um resume REJECT+message (design
-        # Decision #4). O intercept roda aqui, no topo, antes da
-        # resolução do `thread_id` e do `prompt` — para garantir que
-        # o texto do usuário não vire um turno novo do agente.
-        user_text = getattr(update.message, "text", "")
+        # aguardando texto de edição (usuário tocou em "Editar"), a
+        # PRÓXIMA mensagem de texto do `chat_id` (não-slash) é
+        # interceptada ANTES do fluxo normal.
+        user_text = getattr(update.message, "text", "") or ""
         intercepted = await approval.consume_edit_text_reply(
             authorized_chat_id=authorized_chat_id,
             agent_runner=agent_runner,
@@ -210,88 +147,14 @@ def make_message_handler(
         if intercepted:
             return
 
-        # REQ-001: resolve o `thread_id` exatamente uma vez e o propaga para
-        # a chamada ao `AgentRunnerPort`.
         thread_id = get_or_create_thread_id(chat_id)
-        # track-user-token-usage REQ-002: identidade estável do canal
-        # Telegram — `telegram:<chat_id>` no configurable do run.
         user_key = telegram_user_key(chat_id)
-        # REQ-003: o prompt enviado ao agente inclui a instrução de canal
-        # (cite `send_telegram_message` para forçar a entrega via tool) +
-        # o texto original do usuário.
-        prompt = build_channel_prompt(user_text)
-        try:
-            result = await agent_runner.run(
-                thread_id=thread_id,
-                prompt=prompt,
-                skills=(),
-                tool_scope=ToolScope.RESTRICTED,
-                user_key=user_key,
-            )
-        except Exception:  # noqa: BLE001 — fronteira do handler (REQ-005)
-            # `agent_runner.run()` propagou (caso atípico — o adapter
-            # real engole, mas o port é um contrato, não uma promessa).
-            # Logamos a falha com o `thread_id` para diagnóstico
-            # operacional; para o usuário mandamos uma mensagem genérica
-            # (não vaza `thread_id` nem stack trace). `logger.exception`
-            # captura o traceback ativo automaticamente.
-            logger.exception(
-                "AgentRunnerPort.run() levantou exceção para thread_id=%s; "
-                "notificando chat_id=%s.",
-                thread_id,
-                chat_id,
-            )
-            await _notify_failure(chat_id)
-            return
-
-        # REQ-003: usa APENAS `status`/`error` do `AgentRunResult` — o DTO
-        # real (`thread_id`, `status`, `error`) não carrega texto de
-        # resposta. A entrega da resposta em sucesso é responsabilidade
-        # da tool `send_telegram_message`, chamada pelo próprio agente em
-        # tool-call.
-        status = getattr(result, "status", None)
-        # REQ-002 do `telegram-tool-approval-spec`: status "interrupted"
-        # é o caso do gate `interrupt_on` do LangGraph pausando o
-        # grafo aguardando decisão humana (ex.: `create_image_from_prompt`
-        # em `image_design_subagent`). Diferente de "error" — não é
-        # falha, é o agente pedindo input. Ramo DEVE vir ANTES do
-        # `if status != "ok"` abaixo (que trata "error"/"timeout" como
-        # falha genérica).
-        if status == "interrupted":
-            interrupt = getattr(result, "interrupt", None)
-            if interrupt is None:
-                # Defesa em profundidade: se o adapter mandou "interrupted"
-                # sem `interrupt`, trata como falha — não há como renderizar
-                # aprovação.
-                logger.error(
-                    "AgentRunnerPort.run() retornou status='interrupted' sem "
-                    "campo `interrupt` (thread_id=%s); notificando chat_id=%s.",
-                    thread_id,
-                    chat_id,
-                )
-                await _notify_failure(chat_id)
-                return
-            await approval.send_approval_keyboard(
-                bot=bot,
-                chat_id=chat_id,
-                thread_id=thread_id,
-                interrupt=interrupt,
-            )
-            return
-        if status != "ok":
-            # REQ-005: status != "ok" (inclui "error", "timeout" e
-            # qualquer string livre usada pelo adapter) → notifica o
-            # chat. O `error` do DTO é logado mas NÃO incluído no texto
-            # enviado ao usuário (mensagens internas do agent runtime
-            # podem vazar paths, URLs internas, etc.).
-            logger.error(
-                "AgentRunnerPort.run() retornou status=%r para thread_id=%s "
-                "(error=%r); notificando chat_id=%s.",
-                status,
-                thread_id,
-                getattr(result, "error", None),
-                chat_id,
-            )
-            await _notify_failure(chat_id)
+        use_case = HandleChatMessage(agent_runner=agent_runner)
+        await use_case.execute(
+            channel=TelegramChannel(bot=bot),
+            user_key=user_key,
+            thread_id=thread_id,
+            text=user_text,
+        )
 
     return handler

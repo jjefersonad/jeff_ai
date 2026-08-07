@@ -9,6 +9,7 @@ mesmo padrão de `test_list_and_cancel_scheduled_tasks.py`/`test_usage_router.py
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,8 +22,22 @@ from src.domain.scheduling import Schedule, ScheduledTask, TaskStatus
 from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.users import User
 
-_ADMIN = User(id="admin-1", username="alice", password_hash="h", role="admin", is_active=True)
-_USER_A = User(id="user-a", username="bob", password_hash="h", role="user", is_active=True)
+_ADMIN = User(
+    id="admin-1",
+    username="alice",
+    password_hash="h",
+    role="admin",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
+_USER_A = User(
+    id="user-a",
+    username="bob",
+    password_hash="h",
+    role="user",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
 
 
 class _FakeRepository(ScheduledTaskRepositoryPort):

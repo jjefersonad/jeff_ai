@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import re
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -21,6 +22,23 @@ from src.application.ports.agent_runner import AgentRunnerPort, AgentRunResult
 from src.application.ports.scheduled_task_repository import ScheduledTaskRepositoryPort
 from src.application.use_cases.run_scheduled_task import RunScheduledTask
 from src.domain.scheduling import Schedule, ScheduledTask, TaskStatus, ToolScope
+from src.infrastructure.channels.scheduled_channel import ScheduledChannel
+
+
+def _make_use_case(
+    *,
+    repository: ScheduledTaskRepositoryPort,
+    agent_runner: AgentRunnerPort,
+) -> RunScheduledTask:
+    """Monta `RunScheduledTask` com notifier no-op (testes pré-scheduled-1)."""
+    notifier = MagicMock()
+    notifier.execute = AsyncMock()
+    return RunScheduledTask(
+        repository=repository,
+        agent_runner=agent_runner,
+        handle_chat_message=notifier,
+        notify_channel=ScheduledChannel(),
+    )
 
 # ---------------------------------------------------------------------------
 # Fakes locais
@@ -137,7 +155,7 @@ async def test_execute_marks_task_succeeded_on_ok_result():
     task = _make_task()
     await repo.save(task)
     runner = _RecordingRunner(result=AgentRunResult(thread_id="th-1", status="ok"))
-    use_case = RunScheduledTask(repository=repo, agent_runner=runner)
+    use_case = _make_use_case(repository=repo, agent_runner=runner)
 
     await use_case.execute(task_id="t-1")
 
@@ -154,7 +172,7 @@ async def test_execute_marks_task_failed_on_agent_error_result():
     runner = _RecordingRunner(
         result=AgentRunResult(thread_id="th-1", status="error", error="boom")
     )
-    use_case = RunScheduledTask(repository=repo, agent_runner=runner)
+    use_case = _make_use_case(repository=repo, agent_runner=runner)
 
     await use_case.execute(task_id="t-1")
 
@@ -169,7 +187,7 @@ async def test_execute_marks_task_failed_when_runner_raises():
     task = _make_task()
     await repo.save(task)
     runner = _RecordingRunner(raises=RuntimeError("agente explodiu"))
-    use_case = RunScheduledTask(repository=repo, agent_runner=runner)
+    use_case = _make_use_case(repository=repo, agent_runner=runner)
 
     await use_case.execute(task_id="t-1")
 
@@ -189,7 +207,7 @@ async def test_execute_propagates_tool_scope_and_owner_as_user_key():
     task = _make_task(tool_scope=ToolScope.FULL, owner_user_key="telegram:12345")
     await repo.save(task)
     runner = _RecordingRunner(result=AgentRunResult(thread_id="th-1", status="ok"))
-    use_case = RunScheduledTask(repository=repo, agent_runner=runner)
+    use_case = _make_use_case(repository=repo, agent_runner=runner)
 
     await use_case.execute(task_id="t-1")
 
@@ -212,7 +230,7 @@ async def test_execute_fails_task_when_agent_exceeds_timeout():
     task = _make_task(timeout_seconds=1)
     await repo.save(task)
     runner = _HangingRunner()
-    use_case = RunScheduledTask(repository=repo, agent_runner=runner)
+    use_case = _make_use_case(repository=repo, agent_runner=runner)
 
     await use_case.execute(task_id="t-1")
 
@@ -231,7 +249,7 @@ async def test_execute_fails_task_when_agent_exceeds_timeout():
 async def test_execute_is_noop_when_task_does_not_exist():
     repo = _FakeRepository()
     runner = _RecordingRunner(result=AgentRunResult(thread_id="th-1", status="ok"))
-    use_case = RunScheduledTask(repository=repo, agent_runner=runner)
+    use_case = _make_use_case(repository=repo, agent_runner=runner)
 
     await use_case.execute(task_id="does-not-exist")
 
@@ -246,9 +264,18 @@ async def test_execute_is_noop_when_task_does_not_exist():
 def test_constructor_stores_dependencies_by_injection():
     repo = _FakeRepository()
     runner = _RecordingRunner(result=AgentRunResult(thread_id="th-1", status="ok"))
-    use_case = RunScheduledTask(repository=repo, agent_runner=runner)
+    notifier = MagicMock()
+    channel = ScheduledChannel()
+    use_case = RunScheduledTask(
+        repository=repo,
+        agent_runner=runner,
+        handle_chat_message=notifier,
+        notify_channel=channel,
+    )
     assert use_case._repository is repo
     assert use_case._agent_runner is runner
+    assert use_case._handle_chat_message is notifier
+    assert use_case._notify_channel is channel
 
 
 def test_module_does_not_import_framework():

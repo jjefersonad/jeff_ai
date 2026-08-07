@@ -13,7 +13,7 @@ Persistência é um fake injetado via override de dependency, mesmo padrão de
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,7 +27,14 @@ from src.domain.integrations import TelegramLinkCode
 from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.users import User
 
-_USER_A = User(id="user-a", username="bob", password_hash="h", role="user", is_active=True)
+_USER_A = User(
+    id="user-a",
+    username="bob",
+    password_hash="h",
+    role="user",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
 
 
 class _FakeTelegramLinkCodeRepository(TelegramLinkCodeRepositoryPort):

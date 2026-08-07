@@ -37,35 +37,50 @@ yarn install
 yarn dev
 ```
 
-### Docker (full stack)
+### Docker
+
+Official Compose files (only these three):
+
+| File | Role |
+|---|---|
+| `docker-compose.yml` | Daily dev |
+| `docker-compose.prod.yml` | Production: `frontend` + `backend` only |
+| `docker-compose.all.yml` | Full stack (Ollama + Evolution + telegram_gateway) |
 
 ```bash
-docker compose up -d                                # Postgres + pgvector + other services
+cp .env.example .env                                # single env file at repo root
+docker compose up -d                                # daily dev
 docker compose --profile admin up -d                # + pgAdmin
-docker-compose -f docker-compose.ollama.yml up -d    # with local Ollama
-docker-compose logs -f
+docker compose -f docker-compose.prod.yml up -d     # prod app only
+docker compose -f docker-compose.all.yml up -d      # full self-contained stack
+docker compose logs -f
 ```
 
-### Ports
+### Ports (dev / `all` host maps)
 
 | Service | Port |
 |---|---|
-| Frontend | 3000 |
-| Backend | 8000 |
-| Media/file server | 8080 |
+| Frontend | 3002 |
+| Backend | 8001 |
 | pgAdmin | 5050 |
+| Evolution API | 8085 |
+| Ollama (`all`) | 11434 |
 
 ## How to configure it
 
-Environment variables in `backend/.env`:
+All environment variables live in `./.env` (catalog: `./.env.example`).
+`backend/.env.example` and `frontend/.env.example` are stubs — migrate any old
+`backend/.env` keys into the root file. **`BASE_URL`** is the public backend URL
+(replaces `DOCUMENT_BASE_URL`).
 
 **Required**
 
 | Variable | Description | Default |
 |---|---|---|
 | `POSTGRES_URI` | PostgreSQL connection string | — |
-| `OLLAMA_BASE_URL` | Ollama server endpoint | `http://10.0.0.214:11434` |
+| `OLLAMA_BASE_URL` | Ollama server endpoint | — |
 | `OLLAMA_MODEL` | Ollama model name | `minimax-m2.7:cloud` |
+| `BASE_URL` | Public backend origin (docs/media/Evolution) | falls back to `FRONTEND_ORIGIN` |
 | `ADMIN_USERNAME` | Username for the first admin user, created once on startup if the `users` table is empty | `admin` |
 | `ADMIN_PASSWORD_HASH` | Bcrypt hash for that admin's password (never the plain password) | — |
 

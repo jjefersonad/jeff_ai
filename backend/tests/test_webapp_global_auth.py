@@ -16,6 +16,8 @@ override, apenas monkeypatcha `get_session`/`get_user_by_id` em
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -26,7 +28,14 @@ from src.infrastructure.auth.sessions import Session
 from src.infrastructure.auth.users import User
 
 _ADMIN_SESSION = Session(token="tok-admin", user_id="user-1", expires_at=None)  # type: ignore[arg-type]
-_ADMIN_USER = User(id="user-1", username="alice", password_hash="h", role="admin", is_active=True)
+_ADMIN_USER = User(
+    id="user-1",
+    username="alice",
+    password_hash="h",
+    role="admin",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+)
 
 
 @pytest.fixture
@@ -101,7 +110,14 @@ def test_public_login_route_does_not_require_session(
     global (um 401 teria a mesma forma vindo de qualquer um dos dois pontos,
     então só o caminho feliz distingue os dois).
     """
-    active_user = User(id="user-9", username="alice", password_hash="h", role="user", is_active=True)
+    active_user = User(
+        id="user-9",
+        username="alice",
+        password_hash="h",
+        role="user",
+        is_active=True,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
 
     async def _fake_get_user_by_username(username: str) -> User | None:
         return active_user

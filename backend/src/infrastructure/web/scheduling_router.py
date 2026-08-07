@@ -13,7 +13,7 @@ import os
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from src.application.ports.scheduled_task_repository import ScheduledTaskRepositoryPort
@@ -214,13 +214,18 @@ async def update_scheduled_task_endpoint(
     return _to_response(task)
 
 
-@router.delete("/api/scheduled-tasks/{task_id}", status_code=204)
+@router.delete(
+    "/api/scheduled-tasks/{task_id}",
+    status_code=204,
+    response_class=Response,
+    response_model=None,
+)
 async def cancel_scheduled_task_endpoint(
     task_id: str,
     user: User | None = Depends(require_auth),
     repo: ScheduledTaskRepositoryPort = Depends(_scheduled_task_repository),
     scheduler: TaskSchedulerPort = Depends(_task_scheduler_dependency),
-) -> None:
+) -> Response:
     """REQ-004: exclusão via `CancelScheduledTask`; REQ-005: autorização da sessão."""
     if user is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
@@ -234,3 +239,4 @@ async def cancel_scheduled_task_endpoint(
         )
     except ScheduledTaskAuthorizationError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return Response(status_code=204)

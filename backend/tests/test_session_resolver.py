@@ -11,6 +11,8 @@ no módulo, sem tocar em Postgres real.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from starlette.requests import Request
 
@@ -23,7 +25,14 @@ from src.infrastructure.auth.sessions import Session
 from src.infrastructure.auth.users import User
 
 _VALID_SESSION = Session(token="tok", user_id="user-1", expires_at=None)  # type: ignore[arg-type]
-_ADMIN_USER = User(id="user-1", username="alice", password_hash="h", role="admin", is_active=True)
+_ADMIN_USER = User(
+    id="user-1",
+    username="alice",
+    password_hash="h",
+    role="admin",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
 
 
 def _request(path: str, cookie: str | None = None) -> Request:

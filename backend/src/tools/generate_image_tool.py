@@ -8,11 +8,14 @@ from __future__ import annotations
 
 from typing import Union
 
+from pathlib import Path
+
 from langchain_core.tools import tool
 
 from src.composition.dependencies import build_plan_and_create_image
 from src.domain.imaging import DesignStyle, ImageDesign, ImageReference
 from src.domain.shared.errors import DomainError
+from src.infrastructure.ownership.store import record_ownership
 from src.models.image_design import ImageDesignInput
 
 
@@ -82,5 +85,8 @@ async def create_image_from_prompt(
 
     use_case = build_plan_and_create_image()
     result = await use_case.execute(design)
+
+    # media-ownership-authorization: fail-closed — não devolver URL sem dono.
+    await record_ownership(kind="image", filename=Path(result.path).name)
 
     return {"path": result.path, "url": result.url, "metadata": result.metadata}

@@ -74,15 +74,25 @@ yarn format
 ```
 
 ### Database & Docker
+
+Official Compose layout (exactly three files):
+
+| File | Role |
+|------|------|
+| `docker-compose.yml` | Daily dev (app + Postgres/Redis + telegram_gateway; pgAdmin via `--profile admin`) |
+| `docker-compose.prod.yml` | Production app only (`frontend` + `backend`; infra/channels external) |
+| `docker-compose.all.yml` | Full self-contained stack (app + DBs + Ollama + Evolution + telegram_gateway) |
+
 ```bash
-docker compose up -d                            # Postgres + pgvector
+docker compose up -d                            # daily dev
 docker compose --profile admin up -d            # + pgAdmin (:5050)
-docker-compose -f docker-compose.ollama.yml up -d   # with local Ollama
-docker-compose logs -f
-docker-compose down
+docker compose -f docker-compose.prod.yml up -d # prod: frontend + backend only
+docker compose -f docker-compose.all.yml up -d  # full stack (Ollama + Evolution + gateway)
+docker compose logs -f
+docker compose down
 ```
 
-**Ports:** frontend 3000 · backend 8000 · media/file server 8080 · pgAdmin 5050
+**Ports (dev/`all` host maps):** frontend 3002 · backend 8001 · pgAdmin 5050 · Evolution API 8085 · Ollama 11434
 
 ---
 
@@ -150,17 +160,56 @@ The `unified-dev-agent` change was archived as complete while parts of it were n
 
 ## Environment Variables
 
-Required in `backend/.env`:
-- `POSTGRES_URI` — PostgreSQL connection string
-- `OLLAMA_BASE_URL` — Ollama server endpoint (default `http://10.0.0.214:11434`)
-- `OLLAMA_MODEL` — model name (default `minimax-m2.7:cloud`)
+**One file:** `./.env` at the repository root is the only active source of truth for operators
+and for Compose. Copy the catalog with `cp .env.example .env`. Bare-metal
+(`python main.py`, `make dev`, `pytest`) loads the same file via
+`src/composition/env.py:load_env()` (root only — no dual-load of `backend/.env`).
+Compose services use `env_file: .env` and `${VAR}` interpolation from the root.
 
-Optional: `TAVILY_API_KEY` (web search) · `GOOGLE_API_KEY` (Gemini) · `LANGSMITH_API_KEY` (tracing)
-- `JEFF_AI_TZ` (opcional) — IANA timezone name (e.g., `America/Sao_Paulo`). Default: `UTC`. Usado pelo `current-date-context` para preencher o system prompt com a data local.
-- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_AUTHORIZED_CHAT_ID` (integracao-telegram) — token do bot Telegram e o único `chat_id` autorizado (allowlist single-user). Exigidas pelo processo `telegram_gateway.py`; sem elas o gateway não sobe.
-- `EVOLUTION_API_URL` / `EVOLUTION_API_KEY` / `EVOLUTION_INSTANCE_NAME` (whatsapp-evolution-channel, em implementação) — URL da Evolution API (`http://evolution_api:8080` dentro da rede Docker, ou a porta host `8085` fora dela), chave `AUTHENTICATION_API_KEY` configurada no container `evolution_api`, e o nome da instância única (número central do WhatsApp). **Vivem no `.env` da raiz do projeto** (mesmo tratamento de `REDIS_PASSWORD` — a substituição `${...}` do `docker-compose.yml` não lê `backend/.env`), propagadas ao container `backend` via `environment:`. Hoje (`task-infra-1`) só configuram o container `evolution_api`; o código do backend que as consome (webhook e tool de envio) ainda não existe — ver `task-channel-1`/`task-tools-1` do change.
-- `EVOLUTION_POSTGRES_PASSWORD` / `EVOLUTION_REDIS_PASSWORD` (whatsapp-evolution-channel) — credenciais do Postgres/Redis dedicados da Evolution API (`docker-compose.yml`, serviços `evolution_postgres`/`evolution_redis`). Também no `.env` da raiz, gerados localmente, não versionados — mesmo padrão de `REDIS_PASSWORD`.
-- `INTEGRATION_CREDENTIALS_KEY` (user-integration-credentials) — chave simétrica Fernet para cifra em repouso de `user_integrations.config` (Telegram, WhatsApp Business, SMTP). Gerar com `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`.
+`backend/.env.example` and `frontend/.env.example` are **stubs** that point at the root
+template. If you still have a local `backend/.env`, migrate its keys into `./.env` and stop
+using the per-project files.
+
+**`BASE_URL`** is the public base URL of the **backend** (absolute URLs for documents/media and
+server-to-server callers such as Evolution). It is **not** an alias for `DOCUMENT_BASE_URL`
+(removed — **BREAKING**). Fallback when unset: `FRONTEND_ORIGIN`, then `http://localhost:3000`.
+Keep these distinct from `NEXT_PUBLIC_API_URL` (browser-facing API origin) and
+`FRONTEND_ORIGIN` (CORS / cookies).
+
+Root `./.env` — infra/shared: `POSTGRES_URI`, `REDIS_PASSWORD` (dev) or `REDIS_URI` (prod),
+`LANGSMITH_API_KEY`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `FRONTEND_ORIGIN`, `BASE_URL`.
+Production (`docker-compose.prod.yml`): `POSTGRES_URI`/`REDIS_URI` must point at externally
+managed instances (no local Postgres/Redis containers), plus `NEXT_PUBLIC_API_URL`. Secrets and
+Python tuning also live in the root file: `GOOGLE_API_KEY`, `TAVILY_API_KEY`,
+`OPENROUTER_API_KEY`, `ADMIN_USERNAME`/`ADMIN_PASSWORD_HASH`, `TELEGRAM_BOT_TOKEN`/
+`TELEGRAM_AUTHORIZED_CHAT_ID`, `INTEGRATION_CREDENTIALS_KEY`, `OLLAMA_NUM_CTX`, `SESSION_TTL`,
+`SHELL_COMMAND_TIMEOUT`, etc. Optional: `JEFF_AI_TZ`, `SKILLS_ALLOWLIST`,
+`EVOLUTION_API_URL`/`EVOLUTION_API_KEY`/`EVOLUTION_INSTANCE_NAME`/`EVOLUTION_WEBHOOK_TOKEN`
+(WhatsApp — without these four the channel does not authenticate). Dev-local /
+`docker-compose.all.yml`: `POSTGRES_DB`/`POSTGRES_USER`/`POSTGRES_PASSWORD` (defaults
+`jeff_ia`/`jeff_ia`/`jeff_ia`), `PGADMIN_DEFAULT_*`, and when using the Evolution bundle
+`EVOLUTION_POSTGRES_PASSWORD`/`EVOLUTION_REDIS_PASSWORD`/`EVOLUTION_SERVER_URL`.
+`EVOLUTION_WEBHOOK_TOKEN` is embedded in the webhook URL
+(`/api/webhooks/whatsapp/<token>`) — the route's real auth, since that path is in
+`PUBLIC_PATHS`.
+
+See `./.env.example` for the full commented catalog.
+
+### Production deploy
+
+`docker-compose.prod.yml` is standalone and declares **only** `frontend` + `backend`. Fill in
+`./.env` from `./.env.example`, then:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+This builds the frontend with `target: prod` (`next build && next start` — see
+`frontend/Dockerfile.frontend`). Postgres/Redis/Ollama/Evolution/Telegram are **not** in this
+file — point `POSTGRES_URI`/`REDIS_URI`/`OLLAMA_BASE_URL`/`EVOLUTION_*` at managed instances.
+Compose fails fast if `POSTGRES_URI` or `REDIS_URI` is unset. For a self-contained stack
+including `telegram_gateway` and Evolution, use `docker-compose.all.yml` instead.
+Backend uses `env_file: .env` (root).
 
 ---
 

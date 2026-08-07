@@ -105,13 +105,16 @@ Cada grafo obtém uma `backend_factory(rt)` que monta um `CompositeBackend` (de
 > (`make_backend_factory` + `FsRoute`); os três grafos a consomem. Ver Seção 6.
 
 ### 2.3 Variáveis de ambiente
-Carregadas via `load_dotenv()` a partir de `backend/.env`.
+Carregadas via `src/composition/env.py:load_env()` a partir de `./.env` (raiz).
+Catálogo completo: `./.env.example`. Compose oficiais: `docker-compose.yml`,
+`docker-compose.prod.yml`, `docker-compose.all.yml`.
 
 | Variável | Obrigatória | Uso |
 |----------|-------------|-----|
 | `POSTGRES_URI` | ✅ | Checkpointer + Store (`langgraph.json`) |
 | `OLLAMA_BASE_URL` | ✅ | Endpoint do servidor Ollama |
 | `OLLAMA_MODEL` | ✅ | Nome do modelo Ollama |
+| `BASE_URL` | ⬜ | URL pública do backend (docs/mídia/Evolution) |
 | `TAVILY_API_KEY` | ⬜ | Busca web (tool Tavily) |
 | `GOOGLE_API_KEY` | ⬜ | Modelo/imagem Gemini |
 | `LANGSMITH_API_KEY` | ⬜ | Tracing / debug |

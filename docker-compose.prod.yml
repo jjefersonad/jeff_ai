@@ -1,3 +1,20 @@
+# Stack de produção standalone: `docker compose -f docker-compose.prod.yml up -d`
+# sobe apenas frontend + backend. Telegram e demais canais/infra ficam fora
+# deste arquivo — use `docker-compose.all.yml` ou um processo/stack externo.
+#
+# Diferenças deliberadas em relação a docker-compose.yml (dev local):
+# - Sem jeff_ia_postgres/jeff_ia_redis/jeff_ia_pgadmin: Postgres/Redis do
+#   Jeff AI são GERENCIADOS externamente em produção — POSTGRES_URI e
+#   REDIS_URI (ver ../.env.example) apontam pra essas instâncias, sem default
+#   interno (falha alto e claro se ausentes).
+# - frontend builda com `target: prod` (next build && next start), não
+#   `next dev` — ver frontend/Dockerfile.frontend.
+# - Evolution API (WhatsApp) NÃO é gerenciada por este compose — roda como
+#   serviço externo próprio (ver EVOLUTION_API_URL/_API_KEY/_INSTANCE_NAME/
+#   _WEBHOOK_TOKEN abaixo, que só apontam pra ela). Já foi um serviço
+#   autocontido aqui (evolution_postgres/evolution_redis/evolution_api);
+#   removido deste arquivo — não confundir com relatos antigos.
+# - telegram_gateway NÃO entra neste arquivo (prod = app only).
 services:
   backend:
     build:
@@ -7,48 +24,42 @@ services:
     ports:
       - "8005:8000"
     env_file:
-      - backend/.env
+      - .env
     environment:
-      POSTGRES_URI: ${POSTGRES_URI:-postgresql://jeff_ia:jeff_ia@jeff_ia_postgres:5432/jeff_ia}
-      REDIS_URI: ${REDIS_URI:-redis://:${REDIS_PASSWORD}@jeff_ia_redis:6379/0}
+      POSTGRES_URI: ${POSTGRES_URI:?defina POSTGRES_URI em .env}
+      REDIS_URI: ${REDIS_URI:?defina REDIS_URI em .env}
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY}
       LANGCHAIN_TRACING_V2: true
       LANGSMITH_PROJECT: jeff_ai_project
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://localhost:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-minimax-m2.7:cloud}
       JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
-      # Repos de terceiros liberados para install_external_skill (além dos defaults
-      # oficiais). Lista separada por vírgula. Liberado por decisão humana (REQ-007).
+      # Ver comentário equivalente em docker-compose.yml — sem estas duas, o
+      # processo nunca via FRONTEND_ORIGIN/BASE_URL como env var própria
+      # (só eram usadas para interpolar CORS_ALLOW_ORIGINS/LANGGRAPH_HTTP
+      # neste arquivo), e `WhatsAppChannel`/`build_create_document` caíam no
+      # fallback hardcoded `http://localhost:3000`, inalcançável por chamadores
+      # externos (Evolution API).
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
+      BASE_URL: ${BASE_URL:-}
+      EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution_api:8080}
+      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:?defina EVOLUTION_API_KEY em .env}
+      EVOLUTION_INSTANCE_NAME: ${EVOLUTION_INSTANCE_NAME:-jeff-ai-central}
+      EVOLUTION_WEBHOOK_TOKEN: ${EVOLUTION_WEBHOOK_TOKEN:?defina EVOLUTION_WEBHOOK_TOKEN em .env}
       SKILLS_ALLOWLIST: ${SKILLS_ALLOWLIST:-usenotra/skills}
       LANGGRAPH_STORE: '{"type": "postgres", "url": "$${env:POSTGRES_URI}", "index": {"embed": "./src/models/ollama_embeddings.py:embed_texts", "dims": 1024, "fields": ["content"]}}'
       LANGGRAPH_CHECKPOINTER: '{"type": "postgres", "url": "$${env:POSTGRES_URI}"}'
-      # Espelha a seção "http" do langgraph.json: a imagem langchain/langgraph-api
-      # não lê langgraph.json em runtime, só as env vars LANGGRAPH_*. Sem esta var,
-      # HTTP_CONFIG fica None e o app customizado (webapp.py: /public/login,
-      # /public/logout, rotas de imagens/documentos) nunca é montado (achado
-      # empírico 2026-07-16, change autenticacao-jwt-rotas-protegidas).
+      # Espelha a seção "http" do langgraph.json — ver docker-compose.yml para
+      # a nota completa sobre por que essa var é obrigatória.
       LANGGRAPH_HTTP: '{"app": "./src/infrastructure/web/webapp.py:app", "cors": {"allow_origins": ["${FRONTEND_ORIGIN:-http://localhost:3002}"], "allow_credentials": true, "allow_methods": ["*"], "allow_headers": ["*"]}}'
-      # LANGSERVE_CORS_ALLOW_ORIGINS/LANGSERVE_CORS_ALLOW_CREDENTIALS não são lidas
-      # por `langgraph_api` (nenhum env var com esse prefixo existe para cors no
-      # pacote instalado, achado empírico 2026-07-16) — eram config morta desde
-      # sempre, e o servidor caía no default allow_origins="*" com
-      # allow_credentials=True hardcoded. A variável real é `CORS_ALLOW_ORIGINS`
-      # (sem prefixo, lista separada por vírgula); `allow_credentials=True` já é
-      # hardcoded no fallback do servidor quando CORS_CONFIG não está setado.
+      # Espelha auth.path do langgraph.json — ver docker-compose.yml (LANGGRAPH_AUTH).
+      LANGGRAPH_AUTH: '{"path": "./src/infrastructure/web/auth.py:auth"}'
       CORS_ALLOW_ORIGINS: ${FRONTEND_ORIGIN:-http://localhost:3002}
-    depends_on:
-      jeff_ia_postgres:
-        condition: service_healthy
-      jeff_ia_redis:
-        condition: service_started
     volumes:
       - ./backend/outputs:/deps/backend/outputs
       - ./backend/langgraph.json:/deps/backend/langgraph.json
-      # Persiste skills criadas/instaladas pelo assistant em runtime.
       - ./backend/skills:/deps/backend/skills
-      # [DEV/teste] monta o código-fonte do host para testar mudanças sem rebuild da imagem.
       - ./backend/src:/deps/backend/src
-      # Persiste tools Python geradas (staging) + approved.json para revisão humana no host.
       - ./backend/src/tools/generated:/deps/backend/src/tools/generated
     networks:
       - jeff_ia-network
@@ -59,21 +70,22 @@ services:
     build:
       context: frontend
       dockerfile: Dockerfile.frontend
+      target: prod
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?defina NEXT_PUBLIC_API_URL em .env}
     container_name: jeff_ia_frontend
     ports:
       - "3002:3000"
     environment:
-      LANGSERVE_URL: ${LANGSERVE_URL:-http://localhost:8005}
-      # Origem fixa do backend consumida pelo browser — ver docker-compose.yml
-      # para a nota completa. Em produção/deploy remoto, sobrescrever com uma
-      # origem alcançável pelo navegador do usuário final (não um hostname
-      # interno do docker-compose).
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8005}
+      # Também setada em runtime (além do build arg acima) para os `rewrites()`
+      # server-side de next.config.ts que leem process.env a cada request.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?defina NEXT_PUBLIC_API_URL em .env}
+      BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://backend:8000}
     depends_on:
       - backend
-      - image-server
     networks:
       - jeff_ia-network
+
 
 networks:
   jeff_ia-network:

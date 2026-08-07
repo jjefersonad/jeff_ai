@@ -39,7 +39,7 @@ class CreateScheduledTask:
         schedule: Schedule,
         tool_scope: ToolScope = ToolScope.RESTRICTED,
         skills: tuple[str, ...] = (),
-        created_by: str | None = None,
+        owner_user_key: str | None = None,
         timeout_seconds: int | None = None,
     ) -> ScheduledTask:
         """Monta a entidade, persiste e agenda o gatilho (REQ-003).
@@ -51,7 +51,8 @@ class CreateScheduledTask:
             schedule: Quando a tarefa deve rodar (once/cron).
             tool_scope: Escopo de tools (RESTRICTED default, FULL se pedir).
             skills: Skills extras a injetar (vazio = sem skills extras).
-            created_by: Texto livre para auditoria (sem FK nesta change).
+            owner_user_key: Identidade do dono (`web:<uuid>` / `telegram:<chat_id>`),
+                sem FK — mesma convenção usada pela listagem/cancelamento/edição.
             timeout_seconds: Se None, usa o default da entidade (300s).
 
         Returns:
@@ -70,7 +71,7 @@ class CreateScheduledTask:
             "schedule": schedule,
             "tool_scope": tool_scope,
             "skills": skills,
-            "created_by": created_by,
+            "owner_user_key": owner_user_key,
         }
         if timeout_seconds is not None:
             kwargs["timeout_seconds"] = timeout_seconds

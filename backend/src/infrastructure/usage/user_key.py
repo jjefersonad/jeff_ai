@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
+from src.domain.channels import ChannelKind
+
 UNKNOWN_USER_KEY = "unknown"
+
+_PREFIX_TO_KIND = {
+    "web": ChannelKind.WEB,
+    "telegram": ChannelKind.TELEGRAM,
+    "whatsapp": ChannelKind.WHATSAPP,
+}
 
 
 def web_user_key(user_id: str) -> str:
@@ -37,3 +45,16 @@ def resolve_user_key(
     if owner:
         return web_user_key(owner)
     return UNKNOWN_USER_KEY
+
+
+def from_user_key(user_key: str | None) -> ChannelKind | None:
+    """Deduz o `ChannelKind` a partir do prefixo de `user_key` (`"<canal>:<id>"`).
+
+    Nunca levanta: `None`, string vazia, o sentinel `"unknown"` ou qualquer
+    prefixo não reconhecido resolvem para `None` (ver spec
+    `user-integration-credentials` REQ-001).
+    """
+    if not user_key:
+        return None
+    prefix, _, _ = user_key.partition(":")
+    return _PREFIX_TO_KIND.get(prefix)

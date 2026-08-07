@@ -1,15 +1,17 @@
-import os
 import datetime
-from dotenv import load_dotenv
+import os
+
 from google import genai
-from google.genai import types
 from PIL import Image
+
+from src.composition.env import load_env
+
 
 def create_hash_timestamp():
     now = datetime.datetime.now()
     return now.strftime("%Y%m%d%H%M%S")
 
-load_dotenv()
+load_env()
 
 api_key = os.getenv("GOOGLE_API_KEY")
 client = genai.Client(api_key=api_key)

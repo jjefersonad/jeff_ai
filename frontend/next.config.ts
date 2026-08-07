@@ -1,17 +1,15 @@
 import type { NextConfig } from "next";
 
 // Server-side-only (no `NEXT_PUBLIC_` prefix — never inlined into the
-// browser bundle) base URLs for the rewrite proxy targets below. These
+// browser bundle) base URL for the rewrite proxy targets below. These
 // rewrites run inside the Next.js server process, not the browser, so in
-// Docker Compose they must use the internal service hostname + the
-// container's actual listening port (`backend:8000`, `image-server:8080` —
-// NOT the host-mapped ports 8001/8083). In any other deployment (bare
-// metal, Kubernetes, a managed platform) the backend/image-server addresses
-// will differ, so both are overridable via env var instead of hardcoded.
+// Docker Compose it must use the internal service hostname + the
+// container's actual listening port (`backend:8000` — NOT the host-mapped
+// port 8001). In any other deployment (bare metal, Kubernetes, a managed
+// platform) the backend address will differ, so it's overridable via env
+// var instead of hardcoded.
 const BACKEND_INTERNAL_URL =
   process.env.BACKEND_INTERNAL_URL ?? "http://backend:8000";
-const IMAGE_SERVER_INTERNAL_URL =
-  process.env.IMAGE_SERVER_INTERNAL_URL ?? "http://image-server:8080";
 
 const nextConfig: NextConfig = {
   async rewrites() {
@@ -34,11 +32,23 @@ const nextConfig: NextConfig = {
         source: "/api/references/:path*",
         destination: `${BACKEND_INTERNAL_URL}/api/references/:path*`,
       },
-      // `/api/mcp/*` continua no container `image-server` (processo
-      // isolado do grafo do agente — REQ-001 do `mcp-client`).
+      // `/api/mcp/*` (change `retire-image-server`): antes servido pelo
+      // container `image-server`, isolado do grafo do agente por processo;
+      // hoje montado em `webapp.py`, no mesmo processo do `backend`.
+      // `require_auth` (global no app) faz a mesma garantia agora.
       {
         source: "/api/mcp/:path*",
-        destination: `${IMAGE_SERVER_INTERNAL_URL}/api/mcp/:path*`,
+        destination: `${BACKEND_INTERNAL_URL}/api/mcp/:path*`,
+      },
+      // `/api/admin/*` (change `user-management`): API administrativa de
+      // usuários (`GET/POST /admin/users`, `PATCH /admin/users/{id}`).
+      // O `admin_users_router` no backend tem prefixo `/admin` (sem `/api/`),
+      // ao contrário do `mcp_admin_router` que tem `/api/mcp`. Mantemos
+      // `/api/admin/*` no rewrite para o frontend ter um único namespace
+      // (`/api/...`) — ver `frontend/src/app/lib/adminUsers.ts`.
+      {
+        source: "/api/admin/:path*",
+        destination: `${BACKEND_INTERNAL_URL}/admin/:path*`,
       },
     ];
   },

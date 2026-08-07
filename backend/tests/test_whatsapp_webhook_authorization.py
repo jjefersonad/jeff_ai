@@ -97,11 +97,15 @@ def _sample_messages_upsert_payload(*, text: str, phone_number: str) -> dict[str
     }
 
 
+_TOKEN = "test-webhook-token-abc123"
+
+
 @pytest.fixture(autouse=True)
 def _evolution_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
     monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
     monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
+    monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", _TOKEN)
 
 
 @pytest.fixture
@@ -165,7 +169,7 @@ async def test_linked_phone_number_proceeds_past_authorization_gate(
     """whatsapp-evolution-channel-task-channel-3-unit-1."""
     payload = _sample_messages_upsert_payload(text="oi, tudo bem?", phone_number="5511111111111")
 
-    resp = client.post("/api/webhooks/whatsapp", json=payload)
+    resp = client.post(f"/api/webhooks/whatsapp/{_TOKEN}", json=payload)
 
     assert resp.status_code == 200, resp.text
     assert resolution_calls["resolve"] == ["5511111111111"]
@@ -178,8 +182,70 @@ async def test_unlinked_phone_number_is_ignored_without_persisting_mapping(
     """whatsapp-evolution-channel-task-channel-3-unit-2."""
     payload = _sample_messages_upsert_payload(text="oi, tudo bem?", phone_number="5522222222222")
 
-    resp = client.post("/api/webhooks/whatsapp", json=payload)
+    resp = client.post(f"/api/webhooks/whatsapp/{_TOKEN}", json=payload)
 
     assert resp.status_code == 200, resp.text
     assert resolution_calls["resolve"] == ["5522222222222"]
     assert resolution_calls["thread"] == []
+
+
+# ===========================================================================
+# Autenticação por token (achado durante teste manual: a rota não validava
+# nada além do require_auth global, que rejeita qualquer chamada sem cookie
+# de sessão — inviável para um webhook servidor-a-servidor. Fix: token
+# compartilhado embutido na própria URL, comparado em tempo constante.
+# ===========================================================================
+
+
+def test_webhook_rejects_wrong_token_without_processing(
+    client: TestClient, resolution_calls: dict[str, list[str]]
+) -> None:
+    payload = _sample_messages_upsert_payload(text="oi", phone_number="5511111111111")
+
+    resp = client.post("/api/webhooks/whatsapp/token-errado", json=payload)
+
+    assert resp.status_code == 404
+    assert resolution_calls["resolve"] == []
+
+
+def test_webhook_without_any_token_segment_is_not_found(client: TestClient) -> None:
+    """A rota antiga sem token (`/api/webhooks/whatsapp`) não existe mais."""
+    payload = _sample_messages_upsert_payload(text="oi", phone_number="5511111111111")
+
+    resp = client.post("/api/webhooks/whatsapp", json=payload)
+
+    assert resp.status_code == 404
+
+
+def test_webhook_path_is_exempt_from_global_session_auth(
+    monkeypatch: pytest.MonkeyPatch, resolution_calls: dict[str, list[str]]
+) -> None:
+    """Mesmo SEM override de `require_auth` e SEM cookie de sessão, uma
+    chamada com o token correto não é bloqueada com 401 — a rota é
+    estruturalmente pública (PUBLIC_PATHS), o token É o mecanismo de auth."""
+    link_codes = _FakeWhatsAppLinkCodeRepository()
+    user_integrations = _FakeUserIntegrationRepository()
+    webapp.app.dependency_overrides[
+        whatsapp_webhook_router._whatsapp_link_code_repository
+    ] = lambda: link_codes
+    webapp.app.dependency_overrides[
+        whatsapp_webhook_router._user_integration_repository
+    ] = lambda: user_integrations
+    webapp.app.dependency_overrides[whatsapp_webhook_router._agent_runner] = (
+        lambda: _FakeAgentRunner()
+    )
+    try:
+        no_auth_client = TestClient(webapp.app)
+        payload = _sample_messages_upsert_payload(text="oi", phone_number="5511111111111")
+
+        resp = no_auth_client.post(f"/api/webhooks/whatsapp/{_TOKEN}", json=payload)
+
+        assert resp.status_code == 200, resp.text
+    finally:
+        webapp.app.dependency_overrides.pop(
+            whatsapp_webhook_router._whatsapp_link_code_repository, None
+        )
+        webapp.app.dependency_overrides.pop(
+            whatsapp_webhook_router._user_integration_repository, None
+        )
+        webapp.app.dependency_overrides.pop(whatsapp_webhook_router._agent_runner, None)

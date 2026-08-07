@@ -14,6 +14,13 @@ Cobre a task `whatsapp-evolution-channel-task-tools-1`:
 - `send_text(instance, phone_number, text)` monta e envia o `POST
   /message/sendText/{instance}` esperado pela Evolution API — verificado
   contra um transport HTTP mockado (`respx`), sem bater na rede real.
+
+Cobre a task `whatsapp-tool-approval-task-delivery-2a`:
+
+- `send_buttons(instance, phone_number, ...)` monta e envia o `POST
+  /message/sendButtons/{instance}` — payload (`type`/`id`/`text` por botão)
+  confirmado empiricamente contra a instância real pinada no spike
+  `whatsapp-tool-approval-task-spike-1` (2026-08-05).
 """
 from __future__ import annotations
 
@@ -118,12 +125,14 @@ def test_bootstrap_config_returns_config_when_env_complete(
     monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
     monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
     monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
+    monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", "fake-webhook-token")
 
     config = evolution_client.bootstrap_config()
 
     assert config.api_url == "http://evolution_api:8080"
     assert config.api_key == "fake-key"
     assert config.instance_name == "jeff-ai-central"
+    assert config.webhook_token == "fake-webhook-token"
 
 
 @respx.mock
@@ -134,6 +143,7 @@ async def test_send_text_posts_to_send_text_endpoint(
     monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
     monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
     monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
+    monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", "fake-webhook-token")
 
     route = respx.post(
         "http://evolution_api:8080/message/sendText/jeff-ai-central"
@@ -147,3 +157,154 @@ async def test_send_text_posts_to_send_text_endpoint(
     assert body["number"] == "5511999998888"
     assert body["text"] == "oi, tudo bem?"
     assert request.headers["apikey"] == "fake-key"
+
+
+@respx.mock
+async def test_send_presence_posts_to_send_presence_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """typing-indicator-chat-channels-task-whatsapp-adapter-1-unit-1 (client)."""
+    monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
+    monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
+    monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
+    monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", "fake-webhook-token")
+
+    route = respx.post(
+        "http://evolution_api:8080/chat/sendPresence/jeff-ai-central"
+    ).mock(return_value=httpx.Response(201, json={}))
+
+    await evolution_client.send_presence(
+        "jeff-ai-central",
+        "5511999999999",
+        presence="composing",
+        delay_ms=5000,
+    )
+
+    assert route.called
+    request = route.calls[0].request
+    body = json.loads(request.content)
+    assert body["number"] == "5511999999999"
+    assert body["options"]["presence"] == "composing"
+    assert body["options"]["delay"] == 5000
+    assert body["options"]["number"] == "5511999999999"
+    assert request.headers["apikey"] == "fake-key"
+
+
+@respx.mock
+async def test_send_buttons_posts_to_send_buttons_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """whatsapp-tool-approval-task-delivery-2a: `send_buttons` monta o POST
+    esperado pela Evolution API — payload `type`/`id`/`text` por botão,
+    confirmado contra a instância real pinada no spike (task-spike-1)."""
+    monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
+    monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
+    monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
+    monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", "fake-webhook-token")
+
+    route = respx.post(
+        "http://evolution_api:8080/message/sendButtons/jeff-ai-central"
+    ).mock(return_value=httpx.Response(201, json={"messageType": "conversation"}))
+
+    await evolution_client.send_buttons(
+        "jeff-ai-central",
+        "5511999998888",
+        title="Aprovação pendente",
+        description="edit_file em app.py",
+        buttons=[
+            {"type": "reply", "id": "approve", "text": "Aprovar"},
+            {"type": "reply", "id": "reject", "text": "Rejeitar"},
+            {"type": "reply", "id": "adjust", "text": "Ajustar"},
+        ],
+    )
+
+    assert route.called
+    request = route.calls[0].request
+    body = json.loads(request.content)
+    assert body["number"] == "5511999998888"
+    assert body["title"] == "Aprovação pendente"
+    assert body["description"] == "edit_file em app.py"
+    assert body["buttons"] == [
+        {"type": "reply", "id": "approve", "text": "Aprovar"},
+        {"type": "reply", "id": "reject", "text": "Rejeitar"},
+        {"type": "reply", "id": "adjust", "text": "Ajustar"},
+    ]
+    assert request.headers["apikey"] == "fake-key"
+
+
+@respx.mock
+async def test_send_media_image_posts_to_send_media_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fix-whatsapp-document-delivery-task-adapters-1-unit-1: `send_media` monta
+    o POST esperado pela Evolution API — endpoint unificado `/message/sendMedia`,
+    confirmado ao vivo contra a instância real pinada (v2.1.1): `/sendImage` e
+    `/sendDocument` não existem (404); `media` é sempre URL, nunca base64."""
+    monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
+    monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
+    monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
+    monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", "fake-webhook-token")
+
+    route = respx.post("http://evolution_api:8080/message/sendMedia/jeff-ai-central").mock(
+        return_value=httpx.Response(200, json={"key": {"id": "msg-1"}})
+    )
+
+    await evolution_client.send_media(
+        "jeff-ai-central",
+        "5511999998888",
+        "https://example.com/public/media-delivery/tok123",
+        mediatype="image",
+        caption="olha só",
+    )
+
+    assert route.called
+    request = route.calls[0].request
+    body = json.loads(request.content)
+    assert body["number"] == "5511999998888"
+    assert body["mediatype"] == "image"
+    assert body["media"] == "https://example.com/public/media-delivery/tok123"
+    assert body["caption"] == "olha só"
+    assert "fileName" not in body
+    assert request.headers["apikey"] == "fake-key"
+
+
+@respx.mock
+async def test_send_media_document_includes_filename_and_propagates_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fix-whatsapp-document-delivery-task-adapters-1-unit-2: `mediatype="document"`
+    inclui `fileName`; erro HTTP não-2xx propaga (mesmo contrato de `send_text`)."""
+    monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
+    monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
+    monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
+    monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", "fake-webhook-token")
+
+    route = respx.post("http://evolution_api:8080/message/sendMedia/jeff-ai-central").mock(
+        return_value=httpx.Response(200, json={"key": {"id": "msg-1"}})
+    )
+
+    await evolution_client.send_media(
+        "jeff-ai-central",
+        "5511999998888",
+        "https://example.com/public/media-delivery/tok456",
+        mediatype="document",
+        filename="relatorio.docx",
+        caption="Segue o relatório",
+    )
+
+    request = route.calls[0].request
+    body = json.loads(request.content)
+    assert body["mediatype"] == "document"
+    assert body["fileName"] == "relatorio.docx"
+    assert body["media"] == "https://example.com/public/media-delivery/tok456"
+
+    route.reset()
+    route.mock(return_value=httpx.Response(422, json={"error": "unsupported"}))
+    with pytest.raises(httpx.HTTPStatusError):
+        await evolution_client.send_media(
+            "jeff-ai-central",
+            "5511999998888",
+            "https://example.com/public/media-delivery/tok456",
+            mediatype="document",
+            filename="foo.docx",
+        )

@@ -12,27 +12,43 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Plus, Trash2 } from "lucide-react";
-import type { McpServerSummary } from "@/app/lib/mcp";
-
-interface EnvVarRow {
-  key: string;
-  varName: string;
-}
+import type {
+  McpServerSummary,
+  ServerWritePayload,
+} from "@/app/lib/mcp";
+import { KeyValueRows } from "./KeyValueRows";
 
 interface McpServerDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** undefined = creating a new server; defined = editing this one. */
   editing?: McpServerSummary;
-  onSubmit: (payload: {
-    name: string;
-    command: string;
-    args: string[];
-    env: Record<string, string>;
-  }) => Promise<void>;
+  /**
+   * Receives the form payload (with the form-supplied `name`). The
+   * transport is determined by the dialog's transport selector and the
+   * variant is narrowed accordingly; see `ServerWritePayload`.
+   */
+  onSubmit: (payload: { name: string } & ServerWritePayload) => Promise<void>;
 }
 
+/**
+ * Transport-aware editor for MCP servers (REQ-004 of
+ * `user-scoped-mcp-config-storage`, proposal Impact).
+ *
+ * Two `mcp_admin_api.py`-matching variants on a discriminated union:
+ * - `stdio` (process local)
+ * - `http`  (URL remota — Zernio usa este)
+ *
+ * Variantes `stdio` exigem `command` + (opcionalmente) `args` e `env`;
+ * variantes `http` exigem `url` + (opcionalmente) `headers`. As
+ * variáveis sensíveis (resolvidas em runtime a partir do `backend/.env`)
+ * nunca cruzam o navegador — o usuário digita aqui só o NOME da env var
+ * (REQ-007), nunca o valor.
+ *
+ * Os pares chave→envVar ficam dentro de `KeyValueRows`, que dispara
+ * `onChange` em cada adição/remoção/edição; o estado pai (`envMap`/
+ * `headersMap`) é então montado no `ServerWritePayload` no submit.
+ */
 export function McpServerDialog({
   open,
   onOpenChange,
@@ -40,53 +56,69 @@ export function McpServerDialog({
   onSubmit,
 }: McpServerDialogProps) {
   const [name, setName] = useState("");
+  const [transport, setTransport] =
+    useState<ServerWritePayload["transport"]>("stdio");
   const [command, setCommand] = useState("");
   const [argsText, setArgsText] = useState("");
-  const [envRows, setEnvRows] = useState<EnvVarRow[]>([]);
+  const [url, setUrl] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // env / headers ficam dentro do `KeyValueRows`; capturamos o último
+  // valor emitido por `onChange` para usar no submit.
+  const [envMap, setEnvMap] = useState<Record<string, string>>({});
+  const [headersMap, setHeadersMap] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!open) return;
     setName(editing?.name ?? "");
+    setTransport(editing?.transport ?? "stdio");
     setCommand(editing?.command ?? "");
     setArgsText((editing?.args ?? []).join(" "));
-    setEnvRows(
-      Object.entries(editing?.env ?? {}).map(([key, varName]) => ({
-        key,
-        varName,
-      }))
-    );
+    setEnvMap(editing?.env ?? {});
+    setUrl(editing?.url ?? "");
+    // Headers secrets are never echoed by the API (`***` / var names only);
+    // start empty so the user re-enters values on edit.
+    setHeadersMap({});
     setError(null);
   }, [open, editing]);
 
-  const addEnvRow = () => setEnvRows((rows) => [...rows, { key: "", varName: "" }]);
-  const removeEnvRow = (index: number) =>
-    setEnvRows((rows) => rows.filter((_, i) => i !== index));
-  const updateEnvRow = (index: number, field: keyof EnvVarRow, value: string) =>
-    setEnvRows((rows) =>
-      rows.map((row, i) => (i === index ? { ...row, [field]: value } : row))
-    );
-
   const handleSubmit = async () => {
-    if (!name.trim() || !command.trim()) {
-      setError("Nome e comando são obrigatórios.");
+    if (!name.trim()) {
+      setError("Nome é obrigatório.");
       return;
     }
-    const env: Record<string, string> = {};
-    for (const row of envRows) {
-      if (!row.key.trim()) continue;
-      env[row.key.trim()] = row.varName.trim();
+    if (transport === "stdio" && !command.trim()) {
+      setError("Comando é obrigatório para o transporte stdio.");
+      return;
     }
+    if (transport === "http" && !url.trim()) {
+      setError("URL é obrigatória para o transporte http.");
+      return;
+    }
+
+    let payload: { name: string } & ServerWritePayload;
+    if (transport === "stdio") {
+      payload = {
+        name: name.trim(),
+        transport: "stdio",
+        command: command.trim(),
+        args: argsText.trim() ? argsText.trim().split(/\s+/) : [],
+        env: envMap,
+      };
+    } else {
+      payload = {
+        name: name.trim(),
+        transport: "http",
+        url: url.trim(),
+        headers: headersMap,
+      };
+    }
+
     setSaving(true);
     setError(null);
     try {
-      await onSubmit({
-        name: name.trim(),
-        command: command.trim(),
-        args: argsText.trim() ? argsText.trim().split(/\s+/) : [],
-        env,
-      });
+      await onSubmit(payload);
       onOpenChange(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao salvar servidor.");
@@ -99,11 +131,16 @@ export function McpServerDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[560px]">
         <DialogHeader>
-          <DialogTitle>{editing ? "Editar servidor MCP" : "Adicionar servidor MCP"}</DialogTitle>
+          <DialogTitle>
+            {editing ? "Editar servidor MCP" : "Adicionar servidor MCP"}
+          </DialogTitle>
           <DialogDescription>
-            Só transporte <code>stdio</code> é suportado. Credenciais nunca são
-            digitadas aqui — informe o NOME da variável de ambiente definida em{" "}
-            <code>backend/.env</code>; o valor nunca passa pelo navegador.
+            Credenciais nunca são digitadas aqui — informe o NOME da variável
+            de ambiente definida em <code>backend/.env</code>; o valor nunca
+            passa pelo navegador (REQ-007). Suporte a transporte{" "}
+            <code>stdio</code> (processo local) e <code>http</code> (endpoint
+            remoto) — preencha só os campos do transporte escolhido
+            (Zernio, por exemplo, é <code>http</code>).
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-2">
@@ -117,64 +154,79 @@ export function McpServerDialog({
               disabled={!!editing}
             />
           </div>
+
           <div className="grid gap-2">
-            <Label htmlFor="mcp-command">Comando</Label>
-            <Input
-              id="mcp-command"
-              placeholder="npx"
-              value={command}
-              onChange={(e) => setCommand(e.target.value)}
-            />
+            <Label htmlFor="mcp-transport">Transporte</Label>
+            <select
+              id="mcp-transport"
+              value={transport}
+              onChange={(e) =>
+                setTransport(e.target.value as ServerWritePayload["transport"])
+              }
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            >
+              <option value="stdio">stdio (processo local)</option>
+              <option value="http">http (endpoint remoto)</option>
+            </select>
           </div>
-          <div className="grid gap-2">
-            <Label htmlFor="mcp-args">Argumentos (separados por espaço)</Label>
-            <Input
-              id="mcp-args"
-              placeholder="-y @modelcontextprotocol/server-example"
-              value={argsText}
-              onChange={(e) => setArgsText(e.target.value)}
-            />
-          </div>
-          <div className="grid gap-2">
-            <div className="flex items-center justify-between">
-              <Label>Variáveis de ambiente (referência, não valor)</Label>
-              <button
-                type="button"
-                onClick={addEnvRow}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                <Plus className="h-3 w-3" />
-                Adicionar
-              </button>
-            </div>
-            {envRows.length === 0 && (
-              <p className="text-xs text-muted-foreground">
-                Nenhuma. Adicione se o servidor exigir uma credencial.
-              </p>
-            )}
-            {envRows.map((row, index) => (
-              <div key={index} className="flex items-center gap-2">
+
+          {transport === "stdio" && (
+            <>
+              <div className="grid gap-2">
+                <Label htmlFor="mcp-command">Comando</Label>
                 <Input
-                  placeholder="chave (ex: API_KEY)"
-                  value={row.key}
-                  onChange={(e) => updateEnvRow(index, "key", e.target.value)}
+                  id="mcp-command"
+                  placeholder="npx"
+                  value={command}
+                  onChange={(e) => setCommand(e.target.value)}
                 />
-                <Input
-                  placeholder="nome da env var (ex: MEU_SERVIDOR_API_KEY)"
-                  value={row.varName}
-                  onChange={(e) => updateEnvRow(index, "varName", e.target.value)}
-                />
-                <button
-                  type="button"
-                  onClick={() => removeEnvRow(index)}
-                  className="shrink-0 text-muted-foreground hover:text-destructive"
-                  aria-label="Remover"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
               </div>
-            ))}
-          </div>
+              <div className="grid gap-2">
+                <Label htmlFor="mcp-args">
+                  Argumentos (separados por espaço)
+                </Label>
+                <Input
+                  id="mcp-args"
+                  placeholder="-y @modelcontextprotocol/server-example"
+                  value={argsText}
+                  onChange={(e) => setArgsText(e.target.value)}
+                />
+              </div>
+              <KeyValueRows
+                key={`env-${editing?.name ?? "new"}-${open}`}
+                label="Variáveis de ambiente (referência, não valor)"
+                emptyHint="Nenhuma. Adicione se o servidor exigir uma credencial."
+                keyPlaceholder="chave (ex: API_KEY)"
+                valuePlaceholder="nome da env var (ex: MEU_SERVIDOR_API_KEY)"
+                initial={envMap}
+                onChange={setEnvMap}
+              />
+            </>
+          )}
+
+          {transport === "http" && (
+            <>
+              <div className="grid gap-2">
+                <Label htmlFor="mcp-url">URL do endpoint</Label>
+                <Input
+                  id="mcp-url"
+                  placeholder="https://mcp.exemplo.com/mcp"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                />
+              </div>
+              <KeyValueRows
+                key={`headers-${editing?.name ?? "new"}-${open}`}
+                label="Headers (referência, não valor)"
+                emptyHint="Nenhum. Adicione se o endpoint exigir autenticação — exemplo: Authorization → ${ZERNIO_TOKEN}."
+                keyPlaceholder="nome do header (ex: Authorization)"
+                valuePlaceholder="nome da env var (ex: ZERNIO_TOKEN)"
+                initial={headersMap}
+                onChange={setHeadersMap}
+              />
+            </>
+          )}
+
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
         <DialogFooter>

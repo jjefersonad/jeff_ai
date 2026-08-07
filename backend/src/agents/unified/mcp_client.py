@@ -1,9 +1,8 @@
 """Cliente MCP básico: conecta a servidores (stdio ou http) declarados pelo usuário e lista as tools.
 
-Cobre a task `unified-agent-realignment-task-mcp-1` (REQ-001, REQ-004, REQ-006,
-REQ-007 do `mcp-client`). Escopo desta task: conectar e LISTAR. Injetar as
-tools no loop do agente via `wrap_model_call` (Decision D5) é a task `mcp-2`;
-a UI de configuração é a `mcp-3`.
+Cobre a task `unified-agent-realignment-task-mcp-1` (REQ-004, REQ-006, REQ-007
+do `mcp-client`). Escopo original: conectar e LISTAR — `build_connection`
+resolve UMA entrada num formato pronto para `MultiServerMCPClient`.
 
 ## Fronteira
 
@@ -11,79 +10,58 @@ Isto NÃO tem relação com o `.mcp.json` da raiz do repositório — aquele é 
 conexão do Claude Code (o assistente de desenvolvimento) ao servidor
 OpenSddRag, com um bearer token de verdade dentro. O Jeff AI (o produto)
 NUNCA lê esse arquivo. Servidores MCP configurados aqui são os que o
-**usuário final do Jeff AI** quiser plugar no agente, e vivem em
-`backend/mcp_servers.json` — um arquivo separado, propositalmente, para que
-os dois nunca se confundam.
+**usuário final do Jeff AI** quiser plugar no agente.
 
-## Formato de `mcp_servers.json`
+## De onde vem a configuração (REQ-009, revisado pela change `user-scoped-mcp-config-storage`)
+
+A partir da task `task-client-1`, `load_mcp_server_config(user_id)` lê os
+servidores daquele usuário em Postgres via `mcp_config_store.list_servers`
+(tabela `user_mcp_servers`, cifrada em repouso) — não mais de um arquivo
+`backend/mcp_servers.json` único e compartilhado (esse arquivo, e a variante
+particionada por `user_id` dentro dele deixada pela change `user-data-isolation`,
+nunca teve código commitado que a lesse; ver design da change). Cada entrada
+devolvida tem a mesma forma que `build_connection` sempre esperou:
 
 Servidor local (`stdio`, default quando `transport` é omitido):
 
-```json
-{
-  "mcpServers": {
-    "nome-do-servidor": {
-      "command": "npx",
-      "args": ["-y", "@algum/mcp-server"],
-      "env": {"API_KEY": "${ALGUM_API_KEY}"}
-    }
-  }
-}
+```python
+{"command": "npx", "args": ["-y", "@algum/mcp-server"], "env": {"API_KEY": "valor-real"}}
 ```
 
 Servidor remoto (`http`, streamable HTTP — REQ-010, change `mcp-remote-http-transport`):
 
-```json
-{
-  "mcpServers": {
-    "nome-do-servidor-remoto": {
-      "transport": "http",
-      "url": "https://exemplo.com/mcp",
-      "headers": {"Authorization": "${ALGUM_TOKEN}"}
-    }
-  }
-}
+```python
+{"transport": "http", "url": "https://exemplo.com/mcp", "headers": {"Authorization": "valor-real"}}
 ```
 
-`env` (stdio) e `headers` (http) aceitam `${VAR}` — substituído por
-`os.environ["VAR"]` em runtime (lido de `backend/.env` via `python-dotenv`,
-mesmo padrão do resto do código). NUNCA coloque o valor do segredo
-diretamente no JSON — REQ-007/REQ-010 exigem que credenciais não apareçam
-em texto plano fora de `.env`.
-
-## Q1 do design (RESPONDIDA pelo usuário, 2026-07-13)
-
-Config em arquivo (`mcp_servers.json`), não banco — mesma convenção do
-`.mcp.json` do Claude Code, sem UI na v1 (a UI vem em `mcp-3`). REQ-001
-("editável sem alterar código-fonte") é satisfeito por edição do arquivo;
-não exige um banco.
+Diferente da era do arquivo, `env`/`headers` já chegam com o valor REAL (o
+`mcp_config_store` cifra/decifra na fronteira com Postgres) — não mais uma
+referência `${VAR}`. `_resolve_env_value` (usada por `build_connection`)
+continua existindo e é um no-op para qualquer valor que não bata esse padrão
+exato, então nenhuma mudança foi necessária ali: um valor real simplesmente
+passa direto.
 
 ## Q2 do design (RESPONDIDA pelo usuário, 2026-07-13; revista pela change `mcp-remote-http-transport`)
 
 `stdio` e `http` (streamable HTTP remoto) são suportados. `http` exige `url`
-em vez de `command`, com `headers` opcionais resolvidos pela mesma regra
-`${VAR}` de `env` (REQ-010). Qualquer outro transporte (`sse`, `websocket`)
-continua recusado com mensagem clara no carregamento da config — REQ-006
-proíbe falha silenciosa.
+em vez de `command`, com `headers` opcionais. Qualquer outro transporte
+(`sse`, `websocket`) continua recusado com mensagem clara no carregamento da
+config — REQ-006 proíbe falha silenciosa.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
-from pathlib import Path
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.sessions import StdioConnection, StreamableHttpConnection
 
-_audit_log = logging.getLogger("jeff_ai.mcp_client")
+from src.agents.unified import mcp_config_store
+from src.application.ports.mcp_server_repository import McpServerRepositoryPort
 
-# backend/mcp_servers.json — ao lado de backend/langgraph.json. Deliberadamente
-# NÃO `.mcp.json`: evita qualquer confusão com o `.mcp.json` da raiz, que é do
-# Claude Code e contém credenciais reais do OpenSddRag (ver docstring do módulo).
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "mcp_servers.json"
+_audit_log = logging.getLogger("jeff_ai.mcp_client")
 
 _ENV_VAR_PATTERN = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 
@@ -127,7 +105,7 @@ def _resolve_env_value(raw: str) -> str:
     if var_name not in os.environ:
         raise McpConfigError(
             f"variável de ambiente '{var_name}' referenciada em "
-            "mcp_servers.json não está definida (esperada em backend/.env)."
+            "mcp_servers.json não está definida (esperada em ./.env)."
         )
     return os.environ[var_name]
 
@@ -138,7 +116,7 @@ def build_connection(name: str, entry: dict) -> StdioConnection | StreamableHttp
     Extraído de `load_mcp_server_config` para que a API administrativa
     (`mcp_admin_api.py`, task `mcp-3`) possa checar o status de UM servidor
     isoladamente — sem que um `env`/`headers` faltando em OUTRO servidor do
-    arquivo derrube a checagem deste. `load_mcp_server_config` usa isto
+    usuário derrube a checagem deste. `load_mcp_server_config` usa isto
     internamente para manter o comportamento antigo (falha explícita ao
     carregar todos).
 
@@ -154,7 +132,7 @@ def build_connection(name: str, entry: dict) -> StdioConnection | StreamableHttp
             f"servidor MCP '{name}': transporte '{transport}' não é "
             f"suportado nesta versão do Jeff AI (aceita "
             f"{', '.join(sorted(_SUPPORTED_TRANSPORTS))}). "
-            "Remova ou corrija a entrada em mcp_servers.json."
+            "Remova ou corrija esta configuração de servidor."
         )
 
     if transport == "http":
@@ -202,28 +180,26 @@ def _build_http_connection(name: str, entry: dict) -> StreamableHttpConnection:
     )
 
 
-def load_mcp_server_config(
-    path: Path | str = DEFAULT_CONFIG_PATH,
+async def load_mcp_server_config(
+    user_id: str, *, repository: McpServerRepositoryPort | None = None
 ) -> dict[str, StdioConnection | StreamableHttpConnection]:
-    """Lê `mcp_servers.json` e devolve conexões prontas para `MultiServerMCPClient`.
+    """Lê os servidores MCP de `user_id` (Postgres, via `mcp_config_store`).
 
-    Arquivo ausente → devolve `{}` (nenhum servidor configurado; não é erro —
-    é o estado default de um Jeff AI recém-instalado, REQ-001 "sem alterar
-    código-fonte" inclui "sem exigir o arquivo existir").
+    Devolve conexões prontas para `MultiServerMCPClient`. Usuário sem nenhum
+    servidor configurado → devolve `{}` (não é erro — é o
+    estado default de um Jeff AI recém-instalado ou de um usuário que ainda
+    não plugou nada). Nunca devolve linha de outro `user_id` (REQ-009).
 
     Servidor com `transport` fora de `stdio`/`http` → levanta `McpConfigError`
     com mensagem clara (REQ-006: recusa explícita, nunca falha silenciosa).
 
     Args:
-        path: Caminho do config. Default `backend/mcp_servers.json`.
+        user_id: Dono das linhas a carregar.
+        repository: Injeção de dependência para teste (ver
+            `mcp_config_store.list_servers`); produção usa o repositório
+            Postgres default.
     """
-    config_path = Path(path)
-    if not config_path.exists():
-        return {}
-
-    raw = json.loads(config_path.read_text(encoding="utf-8"))
-    servers = raw.get("mcpServers", {})
-
+    servers = await mcp_config_store.list_servers(user_id, repository=repository)
     return {name: build_connection(name, entry) for name, entry in servers.items()}
 
 
@@ -283,7 +259,6 @@ async def list_mcp_tools(
 
 
 __all__ = [
-    "DEFAULT_CONFIG_PATH",
     "McpConfigError",
     "McpServerConnectionError",
     "build_connection",

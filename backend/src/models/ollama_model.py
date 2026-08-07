@@ -1,9 +1,11 @@
 import os
-from dotenv import load_dotenv
+
 from langchain_ollama import ChatOllama
 
+from src.composition.env import load_env
+
 # Carrega variáveis do arquivo .env
-load_dotenv()
+load_env()
 
 # Model configuration
 #

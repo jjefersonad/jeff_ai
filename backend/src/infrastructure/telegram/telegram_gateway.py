@@ -26,7 +26,7 @@ import os
 from dataclasses import dataclass
 from typing import Protocol
 
-from dotenv import load_dotenv
+from src.composition.env import load_env
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ def bootstrap_config() -> TelegramConfig:
         env_list = ", ".join(missing)
         raise TelegramConfigError(
             f"Configuração do gateway Telegram incompleta — faltando: {env_list}. "
-            "Defina-as em backend/.env antes de iniciar o telegram_gateway."
+            "Defina-as em ./.env antes de iniciar o telegram_gateway."
         )
 
     return TelegramConfig(
@@ -126,7 +126,7 @@ def main() -> int:
     """Entry-point do processo `telegram_gateway`.
 
     Ordem deliberada:
-    1. `load_dotenv()` — carrega `backend/.env` para o ambiente.
+    1. `load_env()` — carrega apenas `./.env` (raiz do repositório).
     2. `bootstrap_config()` — falha rápido se faltarem env vars (NÃO chama
        `run_polling`).
     3. `ensure_telegram_threads_schema()` — DDL idempotente.
@@ -140,7 +140,7 @@ def main() -> int:
     bootstrap. Exceções não-tratadas durante o polling são logadas e
     propagadas (o supervisor externo cuida do restart).
     """
-    load_dotenv()
+    load_env()
 
     try:
         config = bootstrap_config()
@@ -151,7 +151,7 @@ def main() -> int:
     postgres_uri = os.environ.get("POSTGRES_URI")
     if not postgres_uri:
         logger.error(
-            "POSTGRES_URI não está configurado (esperada em backend/.env)."
+            "POSTGRES_URI não está configurado (esperada em ./.env)."
         )
         return 1
 

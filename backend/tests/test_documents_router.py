@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import importlib
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -66,7 +67,14 @@ def fake_documents_root(
     return root
 
 
-_FAKE_USER = User(id="test-user", username="tester", password_hash="x", role="admin", is_active=True)
+_FAKE_USER = User(
+    id="test-user",
+    username="tester",
+    password_hash="x",
+    role="admin",
+    is_active=True,
+    created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
 
 
 @pytest.fixture

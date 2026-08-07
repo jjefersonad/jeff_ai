@@ -7,20 +7,28 @@ vinculados simultaneamente — por isso, quando `phone_number` não é
 informado, o destino é resolvido a partir do vínculo WhatsApp
 (`user_integrations`) do `user_id` da sessão atual, via `resolve_user_id()`
 (mesmo resolvedor canônico usado por `ownership/store.py`).
+
+`send_whatsapp_message` é wrapper deprecated (cleanup-1): permanece
+importável para skills/scripts externos, mas não está em `_UNIFIED_TOOLS`.
+Delega a `ChannelRegistry` → `WhatsAppChannel.deliver`.
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
-import httpx
 from langchain_core.tools import tool
 
+from src.domain.channels import ChannelKind
+from src.infrastructure.channels.registry import ChannelRegistry
 from src.infrastructure.ownership.store import resolve_user_id
 from src.infrastructure.persistence.user_integrations_repository import (
     PostgresUserIntegrationRepository,
 )
-from src.infrastructure.whatsapp import evolution_client
+from src.infrastructure.usage.user_key import whatsapp_user_key
+
+logger = logging.getLogger(__name__)
 
 _WHATSAPP_INTEGRATION_TYPE = "whatsapp_business"
 
@@ -52,22 +60,31 @@ async def _resolve_linked_phone_number() -> str | None:
 async def send_whatsapp_message(text: str, phone_number: str | None = None) -> dict[str, Any]:
     """Envia uma mensagem de texto a um contato WhatsApp via Evolution API.
 
+    .. deprecated::
+        Use `send_message` (canal-agnóstica) ou o pipeline
+        `HandleChatMessage`. Este wrapper permanece por uma release para
+        skills/scripts que ainda importam a tool diretamente.
+
     Quando `phone_number` não é informado, resolve o destino a partir do
     vínculo WhatsApp da sessão atual em `user_integrations`. Sem destino
-    explícito e sem vínculo ativo, retorna erro sem chamar a Evolution API.
-    Falhas da Evolution API (janela de 24h expirada, rate limit, etc.) são
-    classificadas por `evolution_client.classify_send_error` em vez de
-    propagar a exceção (REQ-003, whatsapp-tools-spec).
+    explícito e sem vínculo ativo, retorna erro sem chamar o registry.
+    Delega a `WhatsAppChannel.deliver` via `ChannelRegistry`.
     """
+    logger.warning(
+        "send_whatsapp_message is deprecated; use send_message. "
+        "Will be removed after callers migrate to HandleChatMessage."
+    )
     target_phone_number = phone_number
     if target_phone_number is None:
         target_phone_number = await _resolve_linked_phone_number()
         if target_phone_number is None:
             return _NO_LINK_RESULT
 
-    config = evolution_client.bootstrap_config()
-    try:
-        await evolution_client.send_text(config.instance_name, target_phone_number, text)
-    except httpx.HTTPStatusError as exc:
-        return evolution_client.classify_send_error(exc)
+    channel = ChannelRegistry.get(ChannelKind.WHATSAPP)
+    await channel.deliver(
+        user_key=whatsapp_user_key(target_phone_number),
+        text=text,
+        attachments=(),
+        kind="normal",
+    )
     return {"success": True}

@@ -59,9 +59,13 @@ Pontos deliberados:
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
+import mimetypes
+import os
 from typing import Any
 
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.postgres.aio import AsyncPostgresStore
 from langgraph.types import Command
@@ -69,9 +73,11 @@ from langgraph.types import Command
 from src.agents.unified.agent import build_unified
 from src.application.ports.agent_runner import (
     AgentRunnerPort,
+    AgentRunOutcome,
     AgentRunResult,
     InterruptInfo,
 )
+from src.domain.channels import OutputAttachment
 from src.domain.scheduling import ToolScope
 from src.infrastructure.agent_runtime._langgraph_postgres_uuid_patch import (
     install_postgres_uuid_patch,
@@ -174,6 +180,106 @@ def _extract_interrupt(state: Any) -> InterruptInfo | None:  # noqa: ANN401
     )
 
 
+def _current_turn_messages(messages: list[Any]) -> list[Any]:
+    """Isola as mensagens do turno atual: tudo depois do último `HumanMessage`.
+
+    `state["messages"]` devolvido por `ainvoke` acumula o histórico
+    completo da thread (reducer `add_messages` do LangGraph) — sem este
+    corte, `ToolMessage`s de turnos anteriores vazariam para
+    `output.attachments` (REQ-002 agent-output-capture).
+    """
+    last_human_index = -1
+    for index, message in enumerate(messages):
+        if isinstance(message, HumanMessage):
+            last_human_index = index
+    return messages[last_human_index + 1 :]
+
+
+def _resolve_attachment(path: str, *, url: str | None) -> OutputAttachment:
+    """Resolve `mime`/`display_name` a partir da extensão de `path` (REQ-003).
+
+    Extensão desconhecida cai no fallback `application/octet-stream`;
+    `display_name` é sempre `os.path.basename(path)` — sem nome de
+    fallback hard-coded. `url`, quando a tool geradora devolveu um, é
+    repassado como está (usado por `WebChannel`; Telegram/WhatsApp
+    ignoram e usam `path` para upload).
+    """
+    mime, _ = mimetypes.guess_type(path)
+    return OutputAttachment(
+        path=path,
+        mime=mime or "application/octet-stream",
+        display_name=os.path.basename(path),
+        url=url,
+    )
+
+
+def _extract_attachments(messages: list[Any]) -> tuple[OutputAttachment, ...]:
+    """Extrai um `OutputAttachment` por `ToolMessage` geradora do turno atual (REQ-002).
+
+    Uma `ToolMessage` é "geradora" quando seu `content` faz parse como JSON
+    e o resultado é um dict com a chave `path` — o shape que
+    `create_docx_document`/`create_xlsx_spreadsheet`/`create_pptx_presentation`/
+    `create_image_from_prompt` (e futuras tools geradoras) sempre devolvem
+    (`{path, url, metadata}`, ver CLAUDE.md). Não há allowlist por nome de
+    tool — qualquer `ToolMessage` com esse shape vira anexo, na ordem em
+    que aparece, sem dedup por `path` (dedup é responsabilidade do caso de
+    uso consumidor, não desta extração).
+    """
+    attachments: list[OutputAttachment] = []
+    for message in _current_turn_messages(messages):
+        if not isinstance(message, ToolMessage) or not isinstance(message.content, str):
+            continue
+        try:
+            payload = json.loads(message.content)
+        except ValueError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        path = payload.get("path")
+        url = payload.get("url")
+        if isinstance(path, str):
+            attachments.append(_resolve_attachment(path, url=url if isinstance(url, str) else None))
+    return tuple(attachments)
+
+
+def _extract_output(state: Any, *, thread_id: str) -> AgentRunOutcome | None:  # noqa: ANN401
+    """Extrai o `AgentRunOutcome` textual de `state` (spec `agent-output-capture` REQ-001).
+
+    Pega o último item de `state["messages"]`: se for um `AIMessage`, seu
+    `content` vira `output.text`; caso contrário (ex.: terminou num
+    `ToolMessage`), `output.text` é `None` — mas `output` continua sendo
+    um `AgentRunOutcome` (não `None`), já que a extração em si teve
+    sucesso. `attachments` fica vazio aqui; a extração de anexos é
+    responsabilidade da spec irmã (`agent-output-capture` REQ-002).
+
+    Fail-safe (REQ-004): qualquer exceção durante a extração (ex.:
+    `state["messages"]` é `None` em vez de lista) é engolida e logada como
+    WARNING — o método NUNCA propaga, e devolve `None` (não um
+    `AgentRunOutcome` parcial) para sinalizar "captura indisponível".
+    """
+    try:
+        if not isinstance(state, dict):
+            raise TypeError(f"state não é um dict (type={type(state).__name__})")
+        messages = state["messages"]
+        if not isinstance(messages, list):
+            raise TypeError(f"state['messages'] não é uma lista (type={type(messages).__name__})")
+        if not messages:
+            # Lista vazia é um caso válido (turno sem mensagens) — não é
+            # "malformado", então não gera warning; só não há o que capturar.
+            return None
+        last_message = messages[-1]
+        text = last_message.content if isinstance(last_message, AIMessage) else None
+        attachments = _extract_attachments(messages)
+        return AgentRunOutcome(text=text, attachments=attachments)
+    except Exception:  # noqa: BLE001 — fail-safe por design (REQ-004)
+        logger.warning(
+            "output_capture_failed: thread_id=%s falhou ao extrair output do agente",
+            thread_id,
+            exc_info=True,
+        )
+        return None
+
+
 class LangGraphDirectAgentRunner(AgentRunnerPort):
     """Adapter que compila o grafo `unified` contra um Postgres próprio.
 
@@ -268,7 +374,8 @@ class LangGraphDirectAgentRunner(AgentRunnerPort):
                 interrupt=interrupt_info,
             )
 
-        return AgentRunResult(thread_id=thread_id, status="ok", error=None)
+        output = _extract_output(state, thread_id=thread_id)
+        return AgentRunResult(thread_id=thread_id, status="ok", error=None, output=output)
 
     async def resume(
         self,

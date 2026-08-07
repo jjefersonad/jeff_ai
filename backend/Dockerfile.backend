@@ -32,6 +32,19 @@ RUN pip install --no-cache-dir \
     "pypdf==6.14.2" \
     "langchain-text-splitters==1.1.2" \
     "langchain-mcp-adapters==0.3.0" \
+    # `mcp` (transitiva de langchain-mcp-adapters) precisa ser fixada
+    # explicitamente aqui também — sem isso, o `pip install` do build resolve
+    # o `mcp` mais novo disponível no PyPI no momento do build, não a versão
+    # travada em `uv.lock` (1.28.1). Sintoma real (2026-08-03): container
+    # inteiro falha no boot com `ImportError: cannot import name
+    # 'RequestContext' from 'mcp.shared.context'` — `RequestContext` foi
+    # movido/renomeado em versões mais novas do `mcp`, incompatível com
+    # `langchain-mcp-adapters==0.3.0`. Derruba TODO o `webapp.py` (imagens,
+    # documentos, auth, integrações — não só MCP), porque
+    # `whatsapp_webhook_router.py` importa `LangGraphDirectAgentRunner` no
+    # topo do módulo, puxando `build_unified()` e toda a cadeia de MCP no
+    # carregamento do app.
+    "mcp==1.28.1" \
     "markitdown[all]==0.0.1" \
     # Necessário para `POST /api/references` (`UploadFile`/`File(...)`) funcionar
     # dentro da imagem `langchain/langgraph-api:3.11`, que não inclui essa
@@ -63,7 +76,15 @@ RUN pip install --no-cache-dir \
     # `telegram_gateway` e com o `telegram_tools.py` (que usa `Bot` e
     # `MessageLimit` do pacote). Registrado durante o verify da change
     # `telegram-slash-commands` (2026-07-23).
-    "python-telegram-bot>=21.0"
+    "python-telegram-bot>=21.0" \
+    # Necessário para `scheduling_router.py` (`GET`/`POST`/`PATCH`/`DELETE
+    # /api/scheduled-tasks`) carregar — `apscheduler_task_scheduler.py` importa
+    # `apscheduler.jobstores.base` no topo do módulo. Estava ausente daqui
+    # (só existia no `.venv` bare-metal local), por isso o router nunca podia
+    # ser montado em `webapp.py`: `app.include_router(scheduling_router)`
+    # derrubava o container inteiro com `ModuleNotFoundError: No module named
+    # 'apscheduler'` no boot. Versão alinhada com o `.venv` local (2026-08-04).
+    "apscheduler==3.11.3"
 
 ENV PYTHONPATH="/deps/backend:$PYTHONPATH"
 # `store` e `checkpointer` são lidos do `langgraph.json` (que resolve

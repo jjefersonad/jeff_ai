@@ -1,7 +1,19 @@
 import useSWRInfinite from "swr/infinite";
 import type { Thread } from "@langchain/langgraph-sdk";
 import { getConfig } from "@/lib/config";
+import { useAuth } from "@/providers/AuthProvider";
 import { useClient } from "@/providers/ClientProvider";
+import {
+  threadsSwrKeyFor,
+  type ThreadsSwrKey,
+} from "@/app/hooks/threadsSwrCache";
+
+export type { ThreadsSwrKey } from "@/app/hooks/threadsSwrCache";
+export {
+  clearThreadsSwrCache,
+  isThreadsSwrKey,
+  threadsSwrKeyFor,
+} from "@/app/hooks/threadsSwrCache";
 
 export interface ThreadItem {
   id: string;
@@ -23,6 +35,8 @@ export function useThreads(props: {
   // credentials: 'include' — see its docstring) instead of building a bare
   // Client here, which would silently drop the session cookie cross-origin.
   const client = useClient();
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
 
   const swr = useSWRInfinite(
     (pageIndex: number, previousPageData: ThreadItem[] | null) => {
@@ -37,26 +51,20 @@ export function useThreads(props: {
         return null;
       }
 
-      return {
-        kind: "threads" as const,
+      return threadsSwrKeyFor(
+        userId,
         pageIndex,
         pageSize,
-        assistantId: config.assistantId,
-        status: props?.status,
-      };
+        config.assistantId,
+        props?.status
+      );
     },
     async ({
       assistantId,
       status,
       pageIndex,
       pageSize,
-    }: {
-      kind: "threads";
-      pageIndex: number;
-      pageSize: number;
-      assistantId: string;
-      status?: Thread["status"];
-    }) => {
+    }: ThreadsSwrKey) => {
       // Check if assistantId is a UUID (deployed) or graph name (local)
       const isUUID =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(

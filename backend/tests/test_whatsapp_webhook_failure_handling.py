@@ -1,24 +1,22 @@
-"""Testes do tratamento de falha do webhook WhatsApp (REQ-006, task `channel-5`).
+"""Testes do tratamento de falha do webhook WhatsApp (REQ-006 legado /
+`HandleChatMessage` + `WhatsAppChannel` após whatsapp-1).
 
-Cobre o unit-test linkado à task no OpenSddRag:
+Quando `AgentRunnerPort.run()` levanta exceção OU o `AgentRunResult.status`
+indica falha, o canal envia mensagem de erro ao `phone_number` via
+`WhatsAppChannel.deliver(kind="failure")` → `evolution_client.send_text`,
+sem propagar a exceção.
 
-- unit-1 (whatsapp-channel REQ-006, cenário "Timeout ou exceção na invocação
-  do agente"): quando `AgentRunnerPort.run()` levanta exceção OU o
-  `AgentRunResult.status` retornado indica falha/timeout, o sistema envia uma
-  mensagem de erro ao `phone_number` de origem via `evolution_client.send_text`,
-  sem propagar a exceção para o processo que atende o webhook.
-
-Mesmo padrão de dependency override dos demais testes deste router
-(`test_whatsapp_webhook_authorization.py`).
+Chama o endpoint diretamente (não via `TestClient`) — mesmo motivo de
+`test_whatsapp_webhook_slash_commands.py` (FastAPI 204 no scheduling_router
+bloqueia a coleção de testes que sobem `webapp.app`).
 """
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi.testclient import TestClient
 
-import src.infrastructure.web.webapp as webapp
 import src.infrastructure.web.whatsapp_webhook_router as whatsapp_webhook_router
 from src.application.ports.agent_runner import AgentRunResult
 from src.application.ports.user_integration_repository import (
@@ -28,7 +26,6 @@ from src.application.ports.whatsapp_link_code_repository import (
     WhatsAppLinkCodeRepositoryPort,
 )
 from src.domain.integrations import UserIntegration, WhatsAppLinkCode
-from src.infrastructure.auth.dependencies import require_auth
 
 
 class _FakeWhatsAppLinkCodeRepository(WhatsAppLinkCodeRepositoryPort):
@@ -72,11 +69,20 @@ class _RaisingAgentRunner:
 
 class _FailingStatusAgentRunner:
     async def run(self, **kwargs: Any) -> AgentRunResult:
-        return AgentRunResult(thread_id=kwargs["thread_id"], status="timeout", error="timed out")
+        return AgentRunResult(
+            thread_id=kwargs["thread_id"], status="timeout", error="timed out"
+        )
+
+
+class _FakeRequest:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    async def json(self) -> dict[str, object]:
+        return self._payload
 
 
 def _sample_messages_upsert_payload(*, text: str, phone_number: str) -> dict[str, object]:
-    """Payload representativo de um webhook `messages.upsert` da Evolution API."""
     return {
         "event": "messages.upsert",
         "instance": "jeff-ai-central",
@@ -92,19 +98,20 @@ def _sample_messages_upsert_payload(*, text: str, phone_number: str) -> dict[str
     }
 
 
+_TOKEN = "test-webhook-token-abc123"
+_PHONE = "5511111111111"
+
+
 @pytest.fixture(autouse=True)
 def _evolution_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EVOLUTION_API_URL", "http://evolution_api:8080")
     monkeypatch.setenv("EVOLUTION_API_KEY", "fake-key")
     monkeypatch.setenv("EVOLUTION_INSTANCE_NAME", "jeff-ai-central")
+    monkeypatch.setenv("EVOLUTION_WEBHOOK_TOKEN", _TOKEN)
 
 
 @pytest.fixture(autouse=True)
 def _linked_phone_number(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`phone_number="5511111111111"` sempre resolve para um `user_id` vinculado
-    e um `thread_id` fixo — estes testes cobrem só o tratamento de falha
-    downstream da autorização (`task-channel-3`), já coberta em outro arquivo."""
-
     async def _fake_resolve(phone_number: str) -> str | None:
         return "user-a"
 
@@ -115,68 +122,65 @@ def _linked_phone_number(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         whatsapp_webhook_router, "get_or_create_thread_id", _fake_get_or_create_thread_id
     )
+    dispatch = AsyncMock(return_value=False)
+    fake_commands = MagicMock()
+    fake_commands.dispatch_command = dispatch
+    monkeypatch.setattr(whatsapp_webhook_router, "commands", fake_commands)
 
 
 @pytest.fixture
 def send_text_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, str]]:
-    """Espiona `evolution_client.send_text` sem bater na rede."""
     calls: list[tuple[str, str, str]] = []
 
     async def _fake_send_text(instance: str, phone_number: str, text: str) -> None:
         calls.append((instance, phone_number, text))
 
-    monkeypatch.setattr(whatsapp_webhook_router, "send_text", _fake_send_text)
+    monkeypatch.setattr(
+        "src.infrastructure.channels.whatsapp_channel.evolution_client.send_text",
+        _fake_send_text,
+    )
     return calls
 
 
-def _client(agent_runner: Any) -> TestClient:
-    link_codes = _FakeWhatsAppLinkCodeRepository()
-    user_integrations = _FakeUserIntegrationRepository()
-    webapp.app.dependency_overrides[require_auth] = lambda: None
-    webapp.app.dependency_overrides[
-        whatsapp_webhook_router._whatsapp_link_code_repository
-    ] = lambda: link_codes
-    webapp.app.dependency_overrides[
-        whatsapp_webhook_router._user_integration_repository
-    ] = lambda: user_integrations
-    webapp.app.dependency_overrides[whatsapp_webhook_router._agent_runner] = lambda: agent_runner
-    return TestClient(webapp.app)
-
-
-@pytest.fixture
-def _cleanup_overrides():
-    yield
-    webapp.app.dependency_overrides.pop(require_auth, None)
-    webapp.app.dependency_overrides.pop(whatsapp_webhook_router._whatsapp_link_code_repository, None)
-    webapp.app.dependency_overrides.pop(whatsapp_webhook_router._user_integration_repository, None)
-    webapp.app.dependency_overrides.pop(whatsapp_webhook_router._agent_runner, None)
-
-
+@pytest.mark.asyncio
 async def test_agent_runner_exception_notifies_phone_number_without_propagating(
-    send_text_calls: list[tuple[str, str, str]], _cleanup_overrides: None
+    send_text_calls: list[tuple[str, str, str]],
 ) -> None:
-    """whatsapp-evolution-channel-task-channel-5-unit-1 (exceção)."""
-    client = _client(_RaisingAgentRunner())
-    payload = _sample_messages_upsert_payload(text="oi, tudo bem?", phone_number="5511111111111")
+    """Exceção no runner → `kind=failure` via WhatsAppChannel."""
+    result = await whatsapp_webhook_router.whatsapp_webhook_endpoint(
+        token=_TOKEN,
+        request=_FakeRequest(
+            _sample_messages_upsert_payload(text="oi, tudo bem?", phone_number=_PHONE)
+        ),
+        link_codes=_FakeWhatsAppLinkCodeRepository(),
+        user_integrations=_FakeUserIntegrationRepository(),
+        agent_runner=_RaisingAgentRunner(),
+    )
 
-    resp = client.post("/api/webhooks/whatsapp", json=payload)
-
-    assert resp.status_code == 200, resp.text
+    assert result == {"received": True}
     assert len(send_text_calls) == 1
-    instance, phone_number, _text = send_text_calls[0]
+    instance, phone_number, text = send_text_calls[0]
     assert instance == "jeff-ai-central"
-    assert phone_number == "5511111111111"
+    assert phone_number == _PHONE
+    assert text
+    assert "falha" in text.lower()
 
 
+@pytest.mark.asyncio
 async def test_agent_runner_failure_status_notifies_phone_number(
-    send_text_calls: list[tuple[str, str, str]], _cleanup_overrides: None
+    send_text_calls: list[tuple[str, str, str]],
 ) -> None:
-    """whatsapp-evolution-channel-task-channel-5-unit-1 (status de falha/timeout)."""
-    client = _client(_FailingStatusAgentRunner())
-    payload = _sample_messages_upsert_payload(text="oi, tudo bem?", phone_number="5511111111111")
+    """status=timeout → `kind=failure` via WhatsAppChannel."""
+    result = await whatsapp_webhook_router.whatsapp_webhook_endpoint(
+        token=_TOKEN,
+        request=_FakeRequest(
+            _sample_messages_upsert_payload(text="oi, tudo bem?", phone_number=_PHONE)
+        ),
+        link_codes=_FakeWhatsAppLinkCodeRepository(),
+        user_integrations=_FakeUserIntegrationRepository(),
+        agent_runner=_FailingStatusAgentRunner(),
+    )
 
-    resp = client.post("/api/webhooks/whatsapp", json=payload)
-
-    assert resp.status_code == 200, resp.text
+    assert result == {"received": True}
     assert len(send_text_calls) == 1
-    assert send_text_calls[0][1] == "5511111111111"
+    assert send_text_calls[0][1] == _PHONE

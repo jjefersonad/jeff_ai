@@ -82,6 +82,11 @@ TIER_1_TOOLS: tuple[str, ...] = (
     # envelope) — exatamente o tipo de atrito redundante que o design pede para
     # evitar (risco R1, fadiga de aprovação).
     "propose_envelope",
+    # Self-debug dos MCPs (change `fix-mcp-tool-not-exposed-error`, Decision 4).
+    # Read-only — devolve o `last_load_status` mais recente. Tier 1 para que o
+    # agente possa investigar sem precisar de aprovação humana no meio do
+    # debug. Mesmo nível de risco de `git_status`.
+    "list_mcp_servers_status",
 )
 
 # Tier 2 — Escrita de NOVOS arquivos (sem interrupt_on; notificação no front).
@@ -100,21 +105,26 @@ TIER_2_TOOLS: tuple[str, ...] = (
     # exige que um humano revise, adicione o nome a `approved.json` e reinicie.
     # Esse gate fora-de-banda é o que a mantém em Tier 2 e não em Tier 3.
     "save_generated_tool",
-    # Telegram (integracao-telegram, REQ-001 / telegram-tools-spec) — envio
-    # ativo para um chat de Telegram. Execução direta (sem `interrupt_on`):
-    # o canal é single-user (allowlist de 1 `chat_id`) e o `path` de foto/
-    # documento é validado contra a allowlist `backend/outputs/` pela
-    # própria tool (REQ-004 / telegram-tools-spec) — gate humano não
-    # acrescenta proteção real.
-    "send_telegram_message",
+    # Entrega canal-agnóstica (unify-message-delivery-pipeline) — resolve
+    # o canal via `configurable.user_key` + `ChannelRegistry`. Tier 2:
+    # execução direta (mesmo raciocínio das antigas tools por canal).
+    "send_message",
+    # Telegram mídia (integracao-telegram) — photo/document ainda são
+    # tools por canal; texto unificado em `send_message`. Path validado
+    # contra `backend/outputs/` pela própria tool.
     "send_telegram_photo",
     "send_telegram_document",
-    # WhatsApp (whatsapp-evolution-channel, REQ-001 / whatsapp-tools-spec) —
-    # envio ativo via Evolution API (número central, Modelo B). Execução
-    # direta pelo mesmo raciocínio do Telegram: destino resolvido por vínculo
-    # em `user_integrations` (não por env var), e sem I/O de arquivo local —
-    # gate humano não acrescenta proteção real.
-    "send_whatsapp_message",
+    # Agendamento de tarefas (wire-scheduling-tools-to-agent) — cria,
+    # lista e cancela tarefas que o agente vai rodar no futuro. Efeito
+    # colateral persistente (escrita no `scheduled_tasks` + trigger no
+    # APScheduler) — mesma classe de risco de `save_memory`, por isso
+    # Tier 2 (roda direto, frontend notifica) e não Tier 1. Não é Tier 3
+    # porque a execução futura reaplica `interrupt_on` quando
+    # `tool_scope=FULL` (REQ-006 da spec `task-scheduling`), então aprovar
+    # aqui de novo seria atrito redundante.
+    "create_scheduled_task",
+    "list_scheduled_tasks",
+    "cancel_scheduled_task",
 )
 
 # Tier 3 — Edição de EXISTENTES + commit (interrupt_on com diff preview).
