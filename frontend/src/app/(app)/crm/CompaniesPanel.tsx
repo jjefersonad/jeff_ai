@@ -719,13 +719,8 @@ export function CompaniesPanel({
 
             <div className="flex flex-col gap-2 rounded-md border border-dashed border-border p-3">
               <h3 className="text-sm font-medium">
-                Novo campo personalizado
+                Campo personalizado
               </h3>
-              <p className="text-xs text-muted-foreground">
-                Clique em &quot;Cadastrar definição&quot; (ou salve a empresa
-                com rótulo preenchido). A chave vira slug automático (ex.:
-                Segmento → segmento).
-              </p>
               <div className="grid gap-2 sm:grid-cols-3">
                 <Input
                   placeholder="chave (opcional)"
@@ -768,16 +763,6 @@ export function CompaniesPanel({
                   <dd>{formatCrmTimestamp(editing.updated_at)}</dd>
                 </div>
               </dl>
-            )}
-
-            {/* Notas inline: apenas no modo editar (criar ainda não tem empresa). */}
-            {editing && (
-              <NotesBlock
-                notes={notes}
-                noteBody={noteBody}
-                setNoteBody={setNoteBody}
-                onAddNote={onAddNote}
-              />
             )}
 
             {formError && (

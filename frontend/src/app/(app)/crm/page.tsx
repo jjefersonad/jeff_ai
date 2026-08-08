@@ -372,7 +372,7 @@ export default function CrmPage() {
                   value={dealLinkCompanyId}
                   onValueChange={setDealLinkCompanyId}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger className="h-9 bg-transparent">
                     <SelectValue placeholder="Sem empresa" />
                   </SelectTrigger>
                   <SelectContent>

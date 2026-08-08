@@ -313,8 +313,14 @@ button {
   font-family: inherit;
   font-size: inherit;
   line-height: inherit;
-  border: none;
-  background: none;
+  /* Reset only border-width/background, NOT `border: none` (shorthand), so
+     Tailwind's `border border-input` utility on shadcn <button> components
+     (SelectTrigger, etc.) still produces a visible 1px border. The global
+     Tailwind Preflight sets `border-style: solid` on every element; setting
+     `border: none` here would override that and make all borders invisible
+     on <button> elements until focus (when the focus ring kicks in). */
+  border-width: 0;
+  background: transparent;
   cursor: pointer;
 
   &:disabled {

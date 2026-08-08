@@ -679,7 +679,7 @@ export function ContactsPanel({
                   setForm((f) => ({ ...f, company_id: value }))
                 }
               >
-                <SelectTrigger>
+                <SelectTrigger className="h-9 bg-transparent">
                   <SelectValue placeholder="Sem empresa" />
                 </SelectTrigger>
                 <SelectContent>
@@ -745,13 +745,8 @@ export function ContactsPanel({
 
             <div className="flex flex-col gap-2 rounded-md border border-dashed border-border p-3">
               <h3 className="text-sm font-medium">
-                Novo campo personalizado
+                Campo personalizado
               </h3>
-              <p className="text-xs text-muted-foreground">
-                Clique em &quot;Cadastrar definição&quot; (ou salve o contato
-                com rótulo preenchido). A chave vira slug automático (ex.:
-                Segmento → segmento).
-              </p>
               <div className="grid gap-2 sm:grid-cols-3">
                 <Input
                   placeholder="chave (opcional)"
@@ -794,16 +789,6 @@ export function ContactsPanel({
                   <dd>{formatCrmTimestamp(editing.updated_at)}</dd>
                 </div>
               </dl>
-            )}
-
-            {/* Notas inline: apenas no modo editar (criar ainda não tem contato). */}
-            {editing && (
-              <NotesBlock
-                notes={notes}
-                noteBody={noteBody}
-                setNoteBody={setNoteBody}
-                onAddNote={onAddNote}
-              />
             )}
 
             {formError && (
