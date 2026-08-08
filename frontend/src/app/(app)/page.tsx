@@ -150,7 +150,7 @@ function ChatPageInner({ config }: HomePageInnerProps) {
                 order={1}
                 defaultSize={25}
                 minSize={20}
-                className="relative min-w-[380px]"
+                className="relative md:min-w-[380px]"
               >
                 <ThreadList
                   onThreadSelect={async (id) => {

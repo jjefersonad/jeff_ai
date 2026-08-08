@@ -403,7 +403,12 @@ button {
 }
 
 @layer utilities {
-  .text-logo {
+  /* Texto que precisa ser preto no tema claro e branco no tema escuro
+     (logo do cabeçalho, labels do menu lateral). Usa a CSS var
+     --color-logo, que flipa via @media (prefers-color-scheme: dark)
+     acima neste mesmo arquivo — Tailwind's `dark:` não funciona aqui
+     porque o projeto não tem a classe `.dark` em <html> automaticamente. */
+  .text-on-surface {
     color: var(--color-logo);
   }
 }

@@ -43,7 +43,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <SidebarToggle />
             <Link
               href="/"
-              className="text-logo text-xl font-semibold hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+              className="text-on-surface text-xl font-semibold hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
               aria-label="JEFF"
             >
               JEFF
