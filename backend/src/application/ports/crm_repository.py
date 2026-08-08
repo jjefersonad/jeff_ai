@@ -1,4 +1,4 @@
-"""Port de repositório CRM (contacts, companies, deals, notes).
+"""Port de repositório CRM (contacts, companies, deals, notes, field defs).
 
 Abstrai a persistência Postgres do restante da camada de aplicação.
 Todas as leituras/escritas são escopadas a `user_id` — miss cross-user
@@ -7,8 +7,25 @@ retorna `None` / lista vazia, nunca vaza existência.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
-from src.domain.crm import Company, Contact, Deal, DealStage, Note
+from src.domain.crm import (
+    Company,
+    Contact,
+    Deal,
+    DealStage,
+    FieldDefinition,
+    FieldEntity,
+    Note,
+)
+
+
+@dataclass(frozen=True)
+class ContactPage:
+    """Página de contatos com total para paginação."""
+
+    items: list[Contact]
+    total: int
 
 
 class CrmRepositoryPort(ABC):
@@ -72,13 +89,27 @@ class CrmRepositoryPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def list_contacts_page(
+        self,
+        user_id: str,
+        *,
+        query: str | None = None,
+        company_id: str | None = None,
+        include_archived: bool = False,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> ContactPage:
+        """Lista paginada de contatos (page 1-based) com total filtrado."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def update_contact(self, contact: Contact) -> Contact | None:
         """Atualiza contato próprio; None se miss."""
         raise NotImplementedError
 
     @abstractmethod
     async def archive_contact(self, user_id: str, contact_id: str) -> Contact | None:
-        """Arquiva (soft-delete); ``None`` se miss."""
+        """Arquiva contato e soft-arquiva notes/deals vinculados; ``None`` se miss."""
         raise NotImplementedError
 
     # --- Deals ---------------------------------------------------------------
@@ -130,19 +161,59 @@ class CrmRepositoryPort(ABC):
 
     @abstractmethod
     async def list_notes_for_contact(
-        self, user_id: str, contact_id: str
+        self,
+        user_id: str,
+        contact_id: str,
+        *,
+        include_archived: bool = False,
     ) -> list[Note]:
         """Notas do contato, mais recente primeiro."""
         raise NotImplementedError
 
     @abstractmethod
     async def list_notes_for_company(
-        self, user_id: str, company_id: str
+        self,
+        user_id: str,
+        company_id: str,
+        *,
+        include_archived: bool = False,
     ) -> list[Note]:
         """Notas da empresa, mais recente primeiro."""
         raise NotImplementedError
 
     @abstractmethod
-    async def list_notes_for_deal(self, user_id: str, deal_id: str) -> list[Note]:
+    async def list_notes_for_deal(
+        self,
+        user_id: str,
+        deal_id: str,
+        *,
+        include_archived: bool = False,
+    ) -> list[Note]:
         """Notas do deal, mais recente primeiro."""
+        raise NotImplementedError
+
+    # --- Field definitions ---------------------------------------------------
+
+    @abstractmethod
+    async def create_field_definition(
+        self, definition: FieldDefinition
+    ) -> FieldDefinition:
+        """Cria definição; duplicata (user, entity, key) → DuplicateFieldDefinitionError."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def list_field_definitions(
+        self,
+        user_id: str,
+        *,
+        entity: FieldEntity | None = None,
+    ) -> list[FieldDefinition]:
+        """Lista definições do user; filtro opcional por entidade."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def update_field_definition_label(
+        self, user_id: str, definition_id: str, label: str
+    ) -> FieldDefinition | None:
+        """Atualiza só o label; ``None`` se miss/cross-user."""
         raise NotImplementedError

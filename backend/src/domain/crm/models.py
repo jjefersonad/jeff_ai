@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
+from typing import Any
 
 
 class DealStage(str, Enum):
@@ -34,6 +35,36 @@ class NoteSource(str, Enum):
     AGENT = "agent"
 
 
+class FieldEntity(str, Enum):
+    """Entidade alvo de uma definição de campo personalizado."""
+
+    CONTACT = "contact"
+    COMPANY = "company"
+    DEAL = "deal"
+
+
+class FieldType(str, Enum):
+    """Tipos permitidos de campo personalizado na v1."""
+
+    TEXT = "text"
+    NUMBER = "number"
+    BOOLEAN = "boolean"
+
+
+@dataclass
+class FieldDefinition:
+    """Definição de campo personalizado escopada a um `user_id`."""
+
+    id: str
+    user_id: str
+    entity: FieldEntity
+    key: str
+    label: str
+    field_type: FieldType
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
 @dataclass
 class Company:
     """Empresa/conta do CRM, escopada a um `user_id`."""
@@ -45,6 +76,9 @@ class Company:
     domain: str | None = None
     phone: str | None = None
     notes: str | None = None
+    city: str | None = None
+    state: str | None = None
+    custom_values: dict[str, Any] = field(default_factory=dict)
     archived_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -62,6 +96,9 @@ class Contact:
     company_id: str | None = None
     status: str | None = None
     tags: list[str] = field(default_factory=list)
+    city: str | None = None
+    state: str | None = None
+    custom_values: dict[str, Any] = field(default_factory=dict)
     archived_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -79,6 +116,7 @@ class Deal:
     currency: str | None = None
     contact_id: str | None = None
     company_id: str | None = None
+    custom_values: dict[str, Any] = field(default_factory=dict)
     archived_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -95,4 +133,5 @@ class Note:
     contact_id: str | None = None
     company_id: str | None = None
     deal_id: str | None = None
+    archived_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))

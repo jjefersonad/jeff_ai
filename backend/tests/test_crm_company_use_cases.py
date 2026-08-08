@@ -9,11 +9,12 @@ from datetime import UTC, datetime
 import pytest
 
 from src.application.ports.crm_repository import CrmRepositoryPort
+from crm_repository_fakes import CrmRepositoryPortExtensions
 from src.domain.crm import Company, Contact, Deal, DealStage, Note
 from src.domain.shared.errors import DomainError
 
 
-class _FakeCrmRepository(CrmRepositoryPort):
+class _FakeCrmRepository(CrmRepositoryPortExtensions, CrmRepositoryPort):
     def __init__(self) -> None:
         self.companies: dict[str, Company] = {}
         self.contacts: dict[str, Contact] = {}
@@ -128,16 +129,30 @@ class _FakeCrmRepository(CrmRepositoryPort):
         raise NotImplementedError
 
     async def list_notes_for_contact(
-        self, user_id: str, contact_id: str
+        self,
+        user_id: str,
+        contact_id: str,
+        *,
+        include_archived: bool = False,
     ) -> list[Note]:
         return []
 
     async def list_notes_for_company(
-        self, user_id: str, company_id: str
+        self,
+        user_id: str,
+        company_id: str,
+        *,
+        include_archived: bool = False,
     ) -> list[Note]:
         return []
 
-    async def list_notes_for_deal(self, user_id: str, deal_id: str) -> list[Note]:
+    async def list_notes_for_deal(
+        self,
+        user_id: str,
+        deal_id: str,
+        *,
+        include_archived: bool = False,
+    ) -> list[Note]:
         return []
 
 
@@ -214,7 +229,7 @@ async def test_link_contact_to_own_company() -> None:
     linked = await ListCrmContacts(repository=repo).execute(
         user_id="user-a", company_id=company.id
     )
-    assert [c.id for c in linked] == [contact.id]
+    assert [c.id for c in linked.items] == [contact.id]
 
 
 async def test_get_company_cross_user_returns_none() -> None:

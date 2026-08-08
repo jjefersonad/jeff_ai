@@ -1,7 +1,7 @@
-"""Testes de `/api/crm` contacts/companies (add-simple-crm-module-task-api-1).
+"""Testes da API CRM estendida (crm-ext-task-api-1).
 
-Unit-1: POST contacts 201 / 422
-Unit-2: GET foreign company 404
+Unit-1: GET contacts envelope paginado
+Unit-2: POST field-definitions 201 / 422 / 401
 """
 from __future__ import annotations
 
@@ -12,10 +12,18 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 import src.infrastructure.web.crm_router as crm_router
-import src.infrastructure.web.webapp as webapp
-from src.application.ports.crm_repository import CrmRepositoryPort
 from crm_repository_fakes import CrmRepositoryPortExtensions
-from src.domain.crm import Company, Contact, Deal, DealStage, Note
+from src.application.ports.crm_repository import CrmRepositoryPort
+from src.domain.crm import (
+    Company,
+    Contact,
+    Deal,
+    DealStage,
+    DuplicateFieldDefinitionError,
+    FieldDefinition,
+    FieldEntity,
+    Note,
+)
 from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.users import User
 
@@ -27,20 +35,13 @@ _USER_A = User(
     is_active=True,
     created_at=datetime(2026, 1, 1, tzinfo=UTC),
 )
-_USER_B = User(
-    id="user-b",
-    username="bob",
-    password_hash="h",
-    role="user",
-    is_active=True,
-    created_at=datetime(2026, 1, 1, tzinfo=UTC),
-)
 
 
 class _FakeCrmRepository(CrmRepositoryPortExtensions, CrmRepositoryPort):
     def __init__(self) -> None:
         self.companies: dict[str, Company] = {}
         self.contacts: dict[str, Contact] = {}
+        self.definitions: dict[str, FieldDefinition] = {}
 
     async def create_company(self, company: Company) -> Company:
         self.companies[company.id] = company
@@ -59,25 +60,13 @@ class _FakeCrmRepository(CrmRepositoryPortExtensions, CrmRepositoryPort):
         query: str | None = None,
         include_archived: bool = False,
     ) -> list[Company]:
-        items = [c for c in self.companies.values() if c.user_id == user_id]
-        if not include_archived:
-            items = [c for c in items if c.archived_at is None]
-        return items
+        return []
 
     async def update_company(self, company: Company) -> Company | None:
-        existing = self.companies.get(company.id)
-        if existing is None or existing.user_id != company.user_id:
-            return None
-        self.companies[company.id] = company
-        return company
+        return None
 
     async def archive_company(self, user_id: str, company_id: str) -> Company | None:
-        company = await self.get_company(user_id, company_id)
-        if company is None:
-            return None
-        company.archived_at = datetime.now(UTC)
-        self.companies[company.id] = company
-        return company
+        return None
 
     async def create_contact(self, contact: Contact) -> Contact:
         self.contacts[contact.id] = contact
@@ -103,19 +92,10 @@ class _FakeCrmRepository(CrmRepositoryPortExtensions, CrmRepositoryPort):
         return items
 
     async def update_contact(self, contact: Contact) -> Contact | None:
-        existing = self.contacts.get(contact.id)
-        if existing is None or existing.user_id != contact.user_id:
-            return None
-        self.contacts[contact.id] = contact
-        return contact
+        return None
 
     async def archive_contact(self, user_id: str, contact_id: str) -> Contact | None:
-        contact = await self.get_contact(user_id, contact_id)
-        if contact is None:
-            return None
-        contact.archived_at = datetime.now(UTC)
-        self.contacts[contact.id] = contact
-        return contact
+        return None
 
     async def create_deal(self, deal: Deal) -> Deal:
         raise NotImplementedError
@@ -173,6 +153,40 @@ class _FakeCrmRepository(CrmRepositoryPortExtensions, CrmRepositoryPort):
     ) -> list[Note]:
         return []
 
+    async def create_field_definition(
+        self, definition: FieldDefinition
+    ) -> FieldDefinition:
+        for existing in self.definitions.values():
+            if (
+                existing.user_id == definition.user_id
+                and existing.entity == definition.entity
+                and existing.key == definition.key
+            ):
+                raise DuplicateFieldDefinitionError("duplicate")
+        self.definitions[definition.id] = definition
+        return definition
+
+    async def list_field_definitions(
+        self,
+        user_id: str,
+        *,
+        entity: FieldEntity | None = None,
+    ) -> list[FieldDefinition]:
+        items = [d for d in self.definitions.values() if d.user_id == user_id]
+        if entity is not None:
+            items = [d for d in items if d.entity == entity]
+        return items
+
+    async def update_field_definition_label(
+        self, user_id: str, definition_id: str, label: str
+    ) -> FieldDefinition | None:
+        definition = self.definitions.get(definition_id)
+        if definition is None or definition.user_id != user_id:
+            return None
+        definition.label = label
+        definition.updated_at = datetime.now(UTC)
+        return definition
+
 
 @pytest.fixture
 def repo() -> _FakeCrmRepository:
@@ -194,44 +208,69 @@ def _as(client: TestClient, user: User) -> None:
     client.app.dependency_overrides[require_auth] = lambda: user
 
 
-def test_post_contact_valid_returns_201(client: TestClient) -> None:
-    """unit-1: POST contact válido → 201 com id."""
+def test_get_contacts_returns_paginated_envelope(client: TestClient) -> None:
+    """unit-1: GET /api/crm/contacts → {items,total,page,page_size}."""
+    _as(client, _USER_A)
+    for i in range(3):
+        created = client.post(
+            "/api/crm/contacts",
+            json={"name": f"C{i}", "email": f"c{i}@x.com"},
+        )
+        assert created.status_code == 201
+
+    response = client.get("/api/crm/contacts?page=1&page_size=2")
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body, dict)
+    assert "items" in body
+    assert body["total"] == 3
+    assert body["page"] == 1
+    assert body["page_size"] == 2
+    assert len(body["items"]) == 2
+    assert "city" in body["items"][0]
+    assert "custom_values" in body["items"][0]
+
+
+def test_post_field_definition_creates_and_rejects_duplicate(
+    client: TestClient,
+) -> None:
+    """unit-2: POST definition → 201; duplicata → 422; sem auth → 401."""
+    payload = {
+        "entity": "contact",
+        "key": "segmento",
+        "label": "Segmento",
+        "field_type": "text",
+    }
+
+    unauth = client.post("/api/crm/field-definitions", json=payload)
+    assert unauth.status_code == 401
+
+    _as(client, _USER_A)
+    created = client.post("/api/crm/field-definitions", json=payload)
+    assert created.status_code == 201
+    body = created.json()
+    assert body["id"]
+    assert body["key"] == "segmento"
+    assert body["entity"] == "contact"
+
+    duplicate = client.post("/api/crm/field-definitions", json=payload)
+    assert duplicate.status_code == 422
+
+
+def test_post_contact_with_city_returns_location_fields(client: TestClient) -> None:
+    """REQ-ADD-001: create contact devolve city/state/custom_values."""
     _as(client, _USER_A)
     response = client.post(
         "/api/crm/contacts",
-        json={"name": "Ana", "email": "ana@example.com"},
+        json={
+            "name": "Ana",
+            "email": "ana@x.com",
+            "city": "São Paulo",
+            "state": "SP",
+        },
     )
     assert response.status_code == 201
     body = response.json()
-    assert body["id"]
-    assert body["user_id"] == "user-a"
-    assert body["email"] == "ana@example.com"
-
-
-def test_post_contact_without_identifier_returns_422(client: TestClient) -> None:
-    """unit-1: sem email/phone → 422."""
-    _as(client, _USER_A)
-    response = client.post("/api/crm/contacts", json={"name": "Só Nome"})
-    assert response.status_code == 422
-
-
-def test_get_foreign_company_returns_404(
-    client: TestClient, repo: _FakeCrmRepository
-) -> None:
-    """unit-2: GET company de outro user → 404."""
-    _as(client, _USER_B)
-    created = client.post("/api/crm/companies", json={"name": "Empresa B"})
-    assert created.status_code == 201
-    company_id = created.json()["id"]
-
-    _as(client, _USER_A)
-    response = client.get(f"/api/crm/companies/{company_id}")
-    assert response.status_code == 404
-
-
-def test_webapp_includes_crm_router() -> None:
-    """Design: crm_router montado no webapp."""
-    paths = {getattr(route, "path", "") for route in webapp.app.routes}
-    assert "/api/crm/contacts" in paths
-    assert "/api/crm/companies" in paths
-    assert "/api/crm/field-definitions" in paths
+    assert body["city"] == "São Paulo"
+    assert body["state"] == "SP"
+    assert body["custom_values"] == {}

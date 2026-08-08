@@ -88,9 +88,10 @@ TIER_1_TOOLS: tuple[str, ...] = (
     # agente possa investigar sem precisar de aprovação humana no meio do
     # debug. Mesmo nível de risco de `git_status`.
     "list_mcp_servers_status",
-    # CRM — leituras (add-simple-crm-module).
+    # CRM — leituras (add-simple-crm-module / extend-crm-fields).
     "crm_search_contacts",
     "crm_list_deals",
+    "crm_list_field_definitions",
 )
 
 # Tier 2 — Escrita de NOVOS arquivos (sem interrupt_on; notificação no front).
@@ -131,11 +132,13 @@ TIER_2_TOOLS: tuple[str, ...] = (
     "create_scheduled_task",
     "list_scheduled_tasks",
     "cancel_scheduled_task",
-    # CRM — escritas (add-simple-crm-module); frontend notifica.
+    # CRM — escritas (add-simple-crm-module / extend-crm-fields); frontend notifica.
     "crm_upsert_contact",
     "crm_add_note",
     "crm_create_deal",
     "crm_move_deal",
+    "crm_create_field_definition",
+    "crm_update_field_definition",
 )
 
 # Tier 3 — Edição de EXISTENTES + commit (interrupt_on com diff preview).

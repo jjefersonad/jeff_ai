@@ -43,10 +43,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <SidebarToggle />
             <Link
               href="/"
-              className="text-xl font-semibold hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
-              aria-label="JEFF AI — voltar para o chat"
+              className="text-logo text-xl font-semibold hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+              aria-label="JEFF"
             >
-              JEFF AI
+              JEFF
             </Link>
           </div>
           <div className="flex items-center gap-2">

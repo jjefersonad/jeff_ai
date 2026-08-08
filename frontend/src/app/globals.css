@@ -33,6 +33,7 @@
     --color-text-primary: #111827;
     --color-text-secondary: #6b7280;
     --color-text-tertiary: #9ca3af;
+    --color-logo: #000000;
     --color-file-button: #ffffff;
     --color-file-button-hover: #e5e7eb;
 
@@ -155,6 +156,7 @@
       --color-text-primary: #f3f4f6;
       --color-text-secondary: #9ca3af;
       --color-text-tertiary: #6b7280;
+      --color-logo: #ffffff;
       --color-file-button: #2a2a2a;
       --color-file-button-hover: #353535;
 
@@ -311,8 +313,14 @@ button {
   font-family: inherit;
   font-size: inherit;
   line-height: inherit;
-  border: none;
-  background: none;
+  /* Reset only border-width/background, NOT `border: none` (shorthand), so
+     Tailwind's `border border-input` utility on shadcn <button> components
+     (SelectTrigger, etc.) still produces a visible 1px border. The global
+     Tailwind Preflight sets `border-style: solid` on every element; setting
+     `border: none` here would override that and make all borders invisible
+     on <button> elements until focus (when the focus ring kicks in). */
+  border-width: 0;
+  background: transparent;
   cursor: pointer;
 
   &:disabled {
@@ -392,4 +400,10 @@ button {
   font-weight: 600;
   text-decoration: line-through;
   text-decoration-color: #f85149;
+}
+
+@layer utilities {
+  .text-logo {
+    color: var(--color-logo);
+  }
 }

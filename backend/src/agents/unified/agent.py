@@ -113,9 +113,12 @@ from src.tools.read_document_tool import read_document
 from src.tools.crm_tools import (
     crm_add_note,
     crm_create_deal,
+    crm_create_field_definition,
     crm_list_deals,
+    crm_list_field_definitions,
     crm_move_deal,
     crm_search_contacts,
+    crm_update_field_definition,
     crm_upsert_contact,
 )
 from src.tools.scheduling_tools import (
@@ -320,18 +323,24 @@ usuário.
 - **CRM Jeff AI** (módulo nativo em `/crm`, Postgres do usuário autenticado):
   use **somente** as tools cujo nome começa com `crm_` —
   `crm_search_contacts`, `crm_upsert_contact`, `crm_add_note`,
-  `crm_list_deals`, `crm_create_deal`, `crm_move_deal`.
+  `crm_list_deals`, `crm_create_deal`, `crm_move_deal`,
+  `crm_list_field_definitions`, `crm_create_field_definition`,
+  `crm_update_field_definition`.
   - NÃO use tools MCP de terceiros (`contacts_*`, `lead_gen_*`,
     `sequences_*`, `mcp__…`) para o CRM Jeff AI — essas são APIs de
     outra plataforma e **não** gravama em `/api/crm` nem na UI `/crm`.
   - NÃO procure módulo CRM no repositório com `list_project_files`/
     `grep_project`. Ownership vem da sessão; ignore `user_id` inventado.
   - Contatos: `crm_search_contacts` / `crm_upsert_contact` (exige email
-    e/ou phone).
+    e/ou phone; aceita `city`/`state`/`custom_values`).
+  - Campos personalizados: `crm_list_field_definitions` ANTES de criar;
+    `crm_create_field_definition` só se a chave ainda não existir;
+    `crm_update_field_definition` altera só o label.
   - Nota/follow-up (`source=agent`): `crm_add_note` com exatamente um
     alvo (`contact_id` | `company_id` | `deal_id`).
-  - Funil: `crm_list_deals`, `crm_create_deal` (default `lead`),
-    `crm_move_deal` (`lead` → `qualified` → `proposal` → `won`/`lost`).
+  - Funil: `crm_list_deals`, `crm_create_deal` (default `lead`,
+    `value`/`custom_values`), `crm_move_deal`
+    (`lead` → `qualified` → `proposal` → `won`/`lost`).
   - Leituras Tier 1; escritas Tier 2. Skill: `crm`.
 - **Imagens**: delegue para `image_design_subagent` (sempre).
 - **Leitura do projeto**: `read_project_file`, `list_project_files`
@@ -407,6 +416,9 @@ _UNIFIED_TOOLS: list = [
     crm_list_deals,
     crm_create_deal,
     crm_move_deal,
+    crm_list_field_definitions,
+    crm_create_field_definition,
+    crm_update_field_definition,
     # --- Self-extension (listagens, leitura, tools geradas) --------------- #
     list_project_files,
     read_project_file,

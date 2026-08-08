@@ -1,7 +1,4 @@
-"""Testes de `PostgresCrmRepository` (add-simple-crm-module-task-persistence-1).
-
-Unit-1: get contact isolation (REQ-005)
-Unit-2: archive excludes from default list (REQ-004)
+"""Testes de `PostgresCrmRepository` (CRM persistence + extend-crm-fields).
 
 Requer `INTEGRATION_POSTGRES_URI` (ou use o mesmo Postgres de dev).
 """
@@ -14,7 +11,16 @@ from datetime import UTC, datetime
 import psycopg
 import pytest
 
-from src.domain.crm import Contact
+from src.domain.crm import (
+    Contact,
+    Deal,
+    DealStage,
+    FieldDefinition,
+    FieldEntity,
+    FieldType,
+    Note,
+    NoteSource,
+)
 from src.infrastructure.auth.schema import ensure_schema as ensure_auth_schema
 from src.infrastructure.persistence.crm_schema import ensure_crm_schema
 
@@ -39,8 +45,8 @@ def _setup_postgres() -> None:
     with psycopg.connect(_uri()) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "TRUNCATE TABLE crm_notes, crm_deals, crm_contacts, crm_companies "
-                "CASCADE"
+                "TRUNCATE TABLE crm_notes, crm_deals, crm_contacts, "
+                "crm_companies, crm_field_definitions CASCADE"
             )
         conn.commit()
 
@@ -126,3 +132,102 @@ async def test_list_contacts_search_filters_by_name() -> None:
     results = await repo.list_contacts(user_id, query="ana")
     assert len(results) == 1
     assert results[0].name == "Ana Silva"
+
+
+async def test_list_contacts_page_returns_items_and_total() -> None:
+    """crm-ext-task-persistence-1-unit-1: page=1 page_size=2 com 5 contatos → 2 + total 5."""
+    from src.infrastructure.persistence.crm_repository import PostgresCrmRepository
+
+    user_id = _insert_test_user()
+    repo = PostgresCrmRepository(_uri())
+    for i in range(5):
+        await repo.create_contact(
+            _new_contact(
+                user_id,
+                name=f"Contact {i}",
+                email=f"c{i}@example.com",
+            )
+        )
+
+    page = await repo.list_contacts_page(user_id, page=1, page_size=2)
+    assert len(page.items) == 2
+    assert page.total == 5
+
+
+async def test_archive_contact_cascades_notes_and_deals() -> None:
+    """crm-ext-task-persistence-1-unit-2: archive contato arquiva note + deal vinculados."""
+    from src.infrastructure.persistence.crm_repository import PostgresCrmRepository
+
+    user_id = _insert_test_user()
+    repo = PostgresCrmRepository(_uri())
+    contact = _new_contact(user_id)
+    await repo.create_contact(contact)
+
+    deal = Deal(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        title="Opp",
+        stage=DealStage.LEAD,
+        contact_id=contact.id,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    await repo.create_deal(deal)
+
+    note = Note(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        body="follow-up",
+        source=NoteSource.USER,
+        contact_id=contact.id,
+        created_at=datetime.now(UTC),
+    )
+    await repo.create_note(note)
+
+    archived = await repo.archive_contact(user_id, contact.id)
+    assert archived is not None
+    assert archived.archived_at is not None
+
+    assert await repo.list_deals(user_id) == []
+    assert await repo.list_notes_for_contact(user_id, contact.id) == []
+
+    deals_archived = await repo.list_deals(user_id, include_archived=True)
+    assert any(d.id == deal.id and d.archived_at is not None for d in deals_archived)
+
+    notes_archived = await repo.list_notes_for_contact(
+        user_id, contact.id, include_archived=True
+    )
+    assert any(n.id == note.id and n.archived_at is not None for n in notes_archived)
+
+
+async def test_create_field_definition_rejects_duplicate_key() -> None:
+    """crm-ext-task-persistence-1-unit-3: duplicata (user, entity, key) falha."""
+    from src.domain.crm import DuplicateFieldDefinitionError
+    from src.infrastructure.persistence.crm_repository import PostgresCrmRepository
+
+    user_id = _insert_test_user()
+    repo = PostgresCrmRepository(_uri())
+    first = FieldDefinition(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        entity=FieldEntity.CONTACT,
+        key="segmento",
+        label="Segmento",
+        field_type=FieldType.TEXT,
+    )
+    await repo.create_field_definition(first)
+
+    second = FieldDefinition(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        entity=FieldEntity.CONTACT,
+        key="segmento",
+        label="Outro",
+        field_type=FieldType.TEXT,
+    )
+    with pytest.raises(DuplicateFieldDefinitionError):
+        await repo.create_field_definition(second)
+
+    listed = await repo.list_field_definitions(user_id, entity=FieldEntity.CONTACT)
+    assert len(listed) == 1
+    assert listed[0].label == "Segmento"

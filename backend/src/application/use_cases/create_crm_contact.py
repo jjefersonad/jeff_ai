@@ -1,12 +1,21 @@
-"""Caso de uso: criar contato CRM (REQ-001 crm-contacts)."""
+"""Caso de uso: criar contato CRM (REQ-001 crm-contacts + location/custom)."""
 from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from src.application.ports.crm_repository import CrmRepositoryPort
-from src.domain.crm import Contact
+from src.application.use_cases.crm_custom_values import validate_custom_values
+from src.domain.crm import Contact, FieldEntity
 from src.domain.shared.errors import DomainError
+
+
+def _clean_optional(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 class CreateCrmContact:
@@ -26,6 +35,9 @@ class CreateCrmContact:
         company_id: str | None = None,
         status: str | None = None,
         tags: list[str] | None = None,
+        city: str | None = None,
+        state: str | None = None,
+        custom_values: dict[str, Any] | None = None,
     ) -> Contact:
         """Valida identificador (email ou phone) e persiste o contato.
 
@@ -46,6 +58,15 @@ class CreateCrmContact:
             if company is None:
                 raise DomainError("company_id inválido para este usuário.")
 
+        definitions = await self._repository.list_field_definitions(
+            user_id, entity=FieldEntity.CONTACT
+        )
+        values = validate_custom_values(
+            definitions=definitions,
+            existing={},
+            incoming=custom_values,
+        )
+
         now = datetime.now(UTC)
         contact = Contact(
             id=str(uuid.uuid4()),
@@ -56,6 +77,9 @@ class CreateCrmContact:
             company_id=company_id,
             status=status,
             tags=list(tags) if tags else [],
+            city=_clean_optional(city),
+            state=_clean_optional(state),
+            custom_values=values,
             created_at=now,
             updated_at=now,
         )

@@ -1,12 +1,14 @@
-"""Caso de uso: criar deal CRM (REQ-002 crm-deals)."""
+"""Caso de uso: criar deal CRM (REQ-002 crm-deals + custom_values)."""
 from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any
 
 from src.application.ports.crm_repository import CrmRepositoryPort
-from src.domain.crm import Deal, DealStage
+from src.application.use_cases.crm_custom_values import validate_custom_values
+from src.domain.crm import Deal, DealStage, FieldEntity
 from src.domain.shared.errors import DomainError
 
 
@@ -27,6 +29,7 @@ class CreateCrmDeal:
         currency: str | None = None,
         contact_id: str | None = None,
         company_id: str | None = None,
+        custom_values: dict[str, Any] | None = None,
     ) -> Deal:
         """Valida vínculos e persiste o deal.
 
@@ -48,6 +51,15 @@ class CreateCrmDeal:
         if value is not None and not resolved_currency:
             resolved_currency = "BRL"
 
+        definitions = await self._repository.list_field_definitions(
+            user_id, entity=FieldEntity.DEAL
+        )
+        values = validate_custom_values(
+            definitions=definitions,
+            existing={},
+            incoming=custom_values,
+        )
+
         now = datetime.now(UTC)
         deal = Deal(
             id=str(uuid.uuid4()),
@@ -58,6 +70,7 @@ class CreateCrmDeal:
             currency=resolved_currency,
             contact_id=contact_id,
             company_id=company_id,
+            custom_values=values,
             created_at=now,
             updated_at=now,
         )

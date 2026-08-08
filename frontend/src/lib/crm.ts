@@ -15,6 +15,9 @@ export type DealStage =
   | "won"
   | "lost";
 
+export type FieldEntity = "contact" | "company" | "deal";
+export type FieldType = "text" | "number" | "boolean";
+
 export interface CrmContact {
   id: string;
   user_id: string;
@@ -24,9 +27,19 @@ export interface CrmContact {
   company_id: string | null;
   status: string | null;
   tags: string[];
+  city: string | null;
+  state: string | null;
+  custom_values: Record<string, unknown>;
   archived_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface CrmContactPage {
+  items: CrmContact[];
+  total: number;
+  page: number;
+  page_size: number;
 }
 
 export interface CrmCompany {
@@ -37,6 +50,9 @@ export interface CrmCompany {
   domain: string | null;
   phone: string | null;
   notes: string | null;
+  city: string | null;
+  state: string | null;
+  custom_values: Record<string, unknown>;
   archived_at: string | null;
   created_at: string;
   updated_at: string;
@@ -51,6 +67,7 @@ export interface CrmDeal {
   currency: string | null;
   contact_id: string | null;
   company_id: string | null;
+  custom_values: Record<string, unknown>;
   archived_at: string | null;
   created_at: string;
   updated_at: string;
@@ -67,6 +84,17 @@ export interface CrmNote {
   created_at: string;
 }
 
+export interface CrmFieldDefinition {
+  id: string;
+  user_id: string;
+  entity: FieldEntity | string;
+  key: string;
+  label: string;
+  field_type: FieldType | string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ContactCreatePayload {
   name: string;
   email?: string | null;
@@ -74,6 +102,9 @@ export interface ContactCreatePayload {
   company_id?: string | null;
   status?: string | null;
   tags?: string[] | null;
+  city?: string | null;
+  state?: string | null;
+  custom_values?: Record<string, unknown> | null;
 }
 
 export interface ContactUpdatePayload {
@@ -84,6 +115,9 @@ export interface ContactUpdatePayload {
   clear_company?: boolean;
   status?: string | null;
   tags?: string[] | null;
+  city?: string | null;
+  state?: string | null;
+  custom_values?: Record<string, unknown> | null;
 }
 
 export interface CompanyCreatePayload {
@@ -92,6 +126,9 @@ export interface CompanyCreatePayload {
   domain?: string | null;
   phone?: string | null;
   notes?: string | null;
+  city?: string | null;
+  state?: string | null;
+  custom_values?: Record<string, unknown> | null;
 }
 
 export interface CompanyUpdatePayload {
@@ -100,6 +137,9 @@ export interface CompanyUpdatePayload {
   domain?: string | null;
   phone?: string | null;
   notes?: string | null;
+  city?: string | null;
+  state?: string | null;
+  custom_values?: Record<string, unknown> | null;
 }
 
 export interface DealCreatePayload {
@@ -109,6 +149,7 @@ export interface DealCreatePayload {
   currency?: string | null;
   contact_id?: string | null;
   company_id?: string | null;
+  custom_values?: Record<string, unknown> | null;
 }
 
 export interface NoteCreatePayload {
@@ -117,6 +158,17 @@ export interface NoteCreatePayload {
   contact_id?: string | null;
   company_id?: string | null;
   deal_id?: string | null;
+}
+
+export interface FieldDefinitionCreatePayload {
+  entity: FieldEntity | string;
+  key: string;
+  label: string;
+  field_type: FieldType | string;
+}
+
+export interface FieldDefinitionUpdatePayload {
+  label: string;
 }
 
 async function parseJsonOrThrow<T>(response: Response): Promise<T> {
@@ -128,7 +180,7 @@ async function parseJsonOrThrow<T>(response: Response): Promise<T> {
 
 function withQuery(
   path: string,
-  params: Record<string, string | boolean | undefined | null>
+  params: Record<string, string | number | boolean | undefined | null>
 ): string {
   const qs = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -145,15 +197,34 @@ export async function listContacts(options?: {
   query?: string;
   company_id?: string;
   archived?: boolean;
-}): Promise<CrmContact[]> {
+  page?: number;
+  page_size?: number;
+}): Promise<CrmContactPage> {
   const response = await apiFetch(
     withQuery("/api/crm/contacts", {
       query: options?.query,
       company_id: options?.company_id,
       archived: options?.archived,
+      page: options?.page,
+      page_size: options?.page_size,
     })
   );
-  return parseJsonOrThrow<CrmContact[]>(response);
+  const body = await parseJsonOrThrow<CrmContactPage | CrmContact[]>(response);
+  // Envelope is canonical; tolerate a bare array from an older backend.
+  if (Array.isArray(body)) {
+    return {
+      items: body,
+      total: body.length,
+      page: options?.page ?? 1,
+      page_size: options?.page_size ?? body.length,
+    };
+  }
+  return {
+    items: body.items ?? [],
+    total: body.total ?? 0,
+    page: body.page ?? options?.page ?? 1,
+    page_size: body.page_size ?? options?.page_size ?? 20,
+  };
 }
 
 export async function getContact(id: string): Promise<CrmContact> {
@@ -235,6 +306,40 @@ export async function archiveCompany(id: string): Promise<CrmCompany> {
     method: "POST",
   });
   return parseJsonOrThrow<CrmCompany>(response);
+}
+
+// --- Field definitions ------------------------------------------------------
+
+export async function listFieldDefinitions(options?: {
+  entity?: FieldEntity | string;
+}): Promise<CrmFieldDefinition[]> {
+  const response = await apiFetch(
+    withQuery("/api/crm/field-definitions", {
+      entity: options?.entity,
+    })
+  );
+  return parseJsonOrThrow<CrmFieldDefinition[]>(response);
+}
+
+export async function createFieldDefinition(
+  payload: FieldDefinitionCreatePayload
+): Promise<CrmFieldDefinition> {
+  const response = await apiFetch("/api/crm/field-definitions", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return parseJsonOrThrow<CrmFieldDefinition>(response);
+}
+
+export async function updateFieldDefinition(
+  id: string,
+  payload: FieldDefinitionUpdatePayload
+): Promise<CrmFieldDefinition> {
+  const response = await apiFetch(`/api/crm/field-definitions/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+  return parseJsonOrThrow<CrmFieldDefinition>(response);
 }
 
 // --- Deals ------------------------------------------------------------------
@@ -341,6 +446,80 @@ export function validateContactForm(input: {
 }
 
 export type CrmUiTab = "contacts" | "companies" | "pipeline";
+
+/** Colunas da lista Contatos (desktop). */
+export const CONTACT_LIST_COLUMNS = [
+  "name",
+  "email",
+  "phone",
+  "updated_at",
+] as const;
+
+/**
+ * Formata timestamp ISO para exibição na lista/modal (locale pt-BR).
+ * Entrada inválida → string vazia.
+ */
+export function formatCrmTimestamp(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
+}
+
+/**
+ * Gera slug de chave de campo personalizado (`^[a-z][a-z0-9_]*$`).
+ * Aceita rótulo ou chave digitada; remove acentos e caracteres inválidos.
+ */
+export function slugifyFieldKey(raw: string): string {
+  const normalized = raw
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_+/g, "_");
+  if (!normalized) return "";
+  if (/^[a-z]/.test(normalized)) return normalized;
+  return `f_${normalized}`;
+}
+
+/**
+ * Layout tabela a partir do breakpoint `md` (768px); abaixo → cards.
+ */
+export function contactsListUsesTableLayout(viewportWidth: number): boolean {
+  return viewportWidth >= 768;
+}
+
+/**
+ * Monta payload de create/update de contato a partir do formulário.
+ * Nunca inclui `created_at` / `updated_at` (readonly na UI).
+ */
+export function buildContactWritePayload(input: {
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  company_id?: string | null;
+  city?: string | null;
+  state?: string | null;
+  custom_values?: Record<string, unknown> | null;
+  created_at?: string;
+  updated_at?: string;
+}): ContactCreatePayload {
+  void input.created_at;
+  void input.updated_at;
+  return {
+    name: input.name.trim(),
+    email: input.email?.trim() || null,
+    phone: input.phone?.trim() || null,
+    company_id: input.company_id ?? null,
+    city: input.city?.trim() || null,
+    state: input.state?.trim() || null,
+    custom_values: input.custom_values ?? {},
+  };
+}
 
 export type NotesListTarget =
   | { contact_id: string }

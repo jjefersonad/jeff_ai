@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 import src.infrastructure.web.crm_router as crm_router
 from src.application.ports.crm_repository import CrmRepositoryPort
+from crm_repository_fakes import CrmRepositoryPortExtensions
 from src.domain.crm import Company, Contact, Deal, DealStage, Note
 from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.users import User
@@ -26,7 +27,7 @@ _USER_A = User(
 )
 
 
-class _FakeCrmRepository(CrmRepositoryPort):
+class _FakeCrmRepository(CrmRepositoryPortExtensions, CrmRepositoryPort):
     def __init__(self) -> None:
         self.companies: dict[str, Company] = {}
         self.contacts: dict[str, Contact] = {}
@@ -138,7 +139,11 @@ class _FakeCrmRepository(CrmRepositoryPort):
         return note
 
     async def list_notes_for_contact(
-        self, user_id: str, contact_id: str
+        self,
+        user_id: str,
+        contact_id: str,
+        *,
+        include_archived: bool = False,
     ) -> list[Note]:
         return [
             n
@@ -147,7 +152,11 @@ class _FakeCrmRepository(CrmRepositoryPort):
         ]
 
     async def list_notes_for_company(
-        self, user_id: str, company_id: str
+        self,
+        user_id: str,
+        company_id: str,
+        *,
+        include_archived: bool = False,
     ) -> list[Note]:
         return [
             n
@@ -155,7 +164,13 @@ class _FakeCrmRepository(CrmRepositoryPort):
             if n.user_id == user_id and n.company_id == company_id
         ]
 
-    async def list_notes_for_deal(self, user_id: str, deal_id: str) -> list[Note]:
+    async def list_notes_for_deal(
+        self,
+        user_id: str,
+        deal_id: str,
+        *,
+        include_archived: bool = False,
+    ) -> list[Note]:
         return [
             n for n in self.notes if n.user_id == user_id and n.deal_id == deal_id
         ]

@@ -60,3 +60,70 @@ def test_entities_are_importable() -> None:
     assert Note.__name__ == "Note"
     assert NoteSource.USER.value == "user"
     assert NoteSource.AGENT.value == "agent"
+
+
+def test_contact_and_company_expose_location_and_custom_values() -> None:
+    """crm-ext-task-domain-1-unit-1: city/state/custom_values nas entidades."""
+    contact = Contact(
+        id="c1",
+        user_id="u1",
+        name="Ana",
+        email="ana@ex.com",
+        city="São Paulo",
+        state="SP",
+        custom_values={"segmento": "PME"},
+    )
+    company = Company(
+        id="co1",
+        user_id="u1",
+        name="Acme",
+        city="Rio",
+        state="RJ",
+        custom_values={"porte": "grande"},
+    )
+    deal = Deal(
+        id="d1",
+        user_id="u1",
+        title="Proposta",
+        custom_values={"prazo_contrato": "12m"},
+    )
+
+    assert contact.city == "São Paulo"
+    assert contact.state == "SP"
+    assert contact.custom_values == {"segmento": "PME"}
+    assert company.city == "Rio"
+    assert company.state == "RJ"
+    assert company.custom_values == {"porte": "grande"}
+    assert deal.custom_values == {"prazo_contrato": "12m"}
+
+
+def test_field_definition_and_enums_v1() -> None:
+    """crm-ext-task-domain-1-unit-1: FieldDefinition + FieldType/FieldEntity."""
+    from src.domain.crm import FieldDefinition, FieldEntity, FieldType
+
+    definition = FieldDefinition(
+        id="f1",
+        user_id="u1",
+        entity=FieldEntity.CONTACT,
+        key="segmento",
+        label="Segmento",
+        field_type=FieldType.TEXT,
+    )
+    assert definition.key == "segmento"
+    assert definition.label == "Segmento"
+    assert definition.field_type is FieldType.TEXT
+    assert definition.entity is FieldEntity.CONTACT
+    assert {t.value for t in FieldType} == {"text", "number", "boolean"}
+    assert {e.value for e in FieldEntity} == {"contact", "company", "deal"}
+
+
+def test_note_optional_archived_at() -> None:
+    note = Note(
+        id="n1",
+        user_id="u1",
+        body="oi",
+        source=NoteSource.USER,
+        contact_id="c1",
+    )
+    assert note.archived_at is None
+

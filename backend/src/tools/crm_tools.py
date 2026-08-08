@@ -1,6 +1,6 @@
-"""Tools CRM (`crm_*`): search/upsert contact, add note, list/create/move deals.
+"""Tools CRM (`crm_*`): contacts, notes, deals, field definitions.
 
-Controllers finos sobre os use cases em `application/use_cases/crm_*`. Ownership
+Controllers finos sobre os use cases em `application/use_cases/`. Ownership
 vem só de `resolve_user_id()` da sessão do run — parâmetro `user_id` do modelo,
 se presente, é ignorado (REQ-003 crm-agent-access).
 
@@ -16,13 +16,25 @@ from langchain_core.tools import tool
 from src.composition.dependencies import (
     build_create_crm_contact,
     build_create_crm_deal,
+    build_create_crm_field_definition,
     build_create_crm_note,
     build_list_crm_contacts,
     build_list_crm_deals,
+    build_list_crm_field_definitions,
     build_move_crm_deal,
     build_update_crm_contact,
+    build_update_crm_field_definition,
 )
-from src.domain.crm import Contact, Deal, DealStage, Note, NoteSource
+from src.domain.crm import (
+    Contact,
+    Deal,
+    DealStage,
+    FieldDefinition,
+    FieldEntity,
+    FieldType,
+    Note,
+    NoteSource,
+)
 from src.domain.shared.errors import DomainError
 from src.infrastructure.ownership.store import resolve_user_id
 
@@ -50,6 +62,9 @@ def _contact_dict(contact: Contact) -> dict[str, Any]:
         "company_id": contact.company_id,
         "status": contact.status,
         "tags": list(contact.tags),
+        "city": contact.city,
+        "state": contact.state,
+        "custom_values": dict(contact.custom_values),
         "archived_at": contact.archived_at.isoformat() if contact.archived_at else None,
         "created_at": contact.created_at.isoformat(),
         "updated_at": contact.updated_at.isoformat(),
@@ -66,6 +81,7 @@ def _deal_dict(deal: Deal) -> dict[str, Any]:
         "currency": deal.currency,
         "contact_id": deal.contact_id,
         "company_id": deal.company_id,
+        "custom_values": dict(deal.custom_values),
         "archived_at": deal.archived_at.isoformat() if deal.archived_at else None,
         "created_at": deal.created_at.isoformat(),
         "updated_at": deal.updated_at.isoformat(),
@@ -82,6 +98,19 @@ def _note_dict(note: Note) -> dict[str, Any]:
         "company_id": note.company_id,
         "deal_id": note.deal_id,
         "created_at": note.created_at.isoformat(),
+    }
+
+
+def _field_definition_dict(definition: FieldDefinition) -> dict[str, Any]:
+    return {
+        "id": definition.id,
+        "user_id": definition.user_id,
+        "entity": definition.entity.value,
+        "key": definition.key,
+        "label": definition.label,
+        "field_type": definition.field_type.value,
+        "created_at": definition.created_at.isoformat(),
+        "updated_at": definition.updated_at.isoformat(),
     }
 
 
@@ -102,12 +131,14 @@ async def crm_search_contacts(
     resolved = await _require_user_id()
     if isinstance(resolved, dict):
         return resolved
-    contacts = await build_list_crm_contacts().execute(
+    page = await build_list_crm_contacts().execute(
         user_id=resolved,
         query=query,
         company_id=company_id,
+        page=1,
+        page_size=100,
     )
-    return [_contact_dict(c) for c in contacts]
+    return [_contact_dict(c) for c in page.items]
 
 
 @tool
@@ -119,13 +150,16 @@ async def crm_upsert_contact(
     company_id: str | None = None,
     status: str | None = None,
     tags: list[str] | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    custom_values: dict[str, Any] | None = None,
     user_id: str | None = None,
 ) -> dict[str, Any]:
     """[CRM Jeff AI] `crm_upsert_contact` — cria ou atualiza contato no CRM nativo.
 
     Sem `contact_id` → cria. Com `contact_id` → atualiza. Exige `email` e/ou
-    `phone`. NÃO usar MCP `contacts_*` / `lead_gen_*` no lugar desta tool.
-    `user_id` do modelo é IGNORADO.
+    `phone`. Aceita `city`/`state`/`custom_values`. NÃO usar MCP `contacts_*` /
+    `lead_gen_*` no lugar desta tool. `user_id` do modelo é IGNORADO.
     """
     del user_id
     resolved = await _require_user_id()
@@ -142,6 +176,9 @@ async def crm_upsert_contact(
                 company_id=company_id,
                 status=status,
                 tags=tags,
+                city=city,
+                state=state,
+                custom_values=custom_values,
             )
             if contact is None:
                 return {"error": "Contact not found"}
@@ -154,6 +191,9 @@ async def crm_upsert_contact(
                 company_id=company_id,
                 status=status,
                 tags=tags,
+                city=city,
+                state=state,
+                custom_values=custom_values,
             )
     except DomainError as exc:
         return {"error": str(exc)}
@@ -224,13 +264,14 @@ async def crm_create_deal(
     currency: str | None = None,
     contact_id: str | None = None,
     company_id: str | None = None,
+    custom_values: dict[str, Any] | None = None,
     user_id: str | None = None,
 ) -> dict[str, Any]:
     r"""[CRM Jeff AI] `crm_create_deal` — cria deal no funil nativo (default lead).
 
     Use para LEADs no CRM Jeff AI (`/crm`). `value` string decimal (ex. "1500.00");
-    moeda default BRL se value presente. Não usar MCP `lead_gen_*` no lugar.
-    `user_id` do modelo é IGNORADO.
+    moeda default BRL se value presente. Aceita `custom_values`. Não usar MCP
+    `lead_gen_*` no lugar. `user_id` do modelo é IGNORADO.
     """
     del user_id
     resolved = await _require_user_id()
@@ -257,6 +298,7 @@ async def crm_create_deal(
             currency=currency,
             contact_id=contact_id,
             company_id=company_id,
+            custom_values=custom_values,
         )
     except DomainError as exc:
         return {"error": str(exc)}
@@ -287,3 +329,93 @@ async def crm_move_deal(
     if deal is None:
         return {"error": "Deal not found"}
     return _deal_dict(deal)
+
+
+@tool
+async def crm_list_field_definitions(
+    entity: str | None = None,
+    user_id: str | None = None,
+) -> list[dict[str, Any]] | dict[str, Any]:
+    """[CRM Jeff AI] `crm_list_field_definitions` — lista campos personalizados.
+
+    `entity` opcional: contact, company, deal. Liste ANTES de criar definição
+    nova para reutilizar chave existente. `user_id` do modelo é IGNORADO.
+    """
+    del user_id
+    resolved = await _require_user_id()
+    if isinstance(resolved, dict):
+        return resolved
+    entity_filter: FieldEntity | None = None
+    if entity is not None:
+        try:
+            entity_filter = FieldEntity(entity)
+        except ValueError:
+            return {"error": f"entity inválida: {entity!r}"}
+    definitions = await build_list_crm_field_definitions().execute(
+        user_id=resolved, entity=entity_filter
+    )
+    return [_field_definition_dict(d) for d in definitions]
+
+
+@tool
+async def crm_create_field_definition(
+    entity: str,
+    key: str,
+    label: str,
+    field_type: str,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """[CRM Jeff AI] `crm_create_field_definition` — cria campo personalizado.
+
+    `entity`: contact|company|deal. `field_type`: text|number|boolean.
+    `key` slug estável (`^[a-z][a-z0-9_]*$`). Prefira `crm_list_field_definitions`
+    antes de criar. `user_id` do modelo é IGNORADO.
+    """
+    del user_id
+    resolved = await _require_user_id()
+    if isinstance(resolved, dict):
+        return resolved
+    try:
+        parsed_entity = FieldEntity(entity)
+        parsed_type = FieldType(field_type)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    try:
+        definition = await build_create_crm_field_definition().execute(
+            user_id=resolved,
+            entity=parsed_entity,
+            key=key,
+            label=label,
+            field_type=parsed_type,
+        )
+    except DomainError as exc:
+        return {"error": str(exc)}
+    return _field_definition_dict(definition)
+
+
+@tool
+async def crm_update_field_definition(
+    definition_id: str,
+    label: str,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """[CRM Jeff AI] `crm_update_field_definition` — atualiza só o label.
+
+    `key`/`field_type`/`entity` são imutáveis na v1. `user_id` do modelo é
+    IGNORADO.
+    """
+    del user_id
+    resolved = await _require_user_id()
+    if isinstance(resolved, dict):
+        return resolved
+    try:
+        definition = await build_update_crm_field_definition().execute(
+            user_id=resolved,
+            definition_id=definition_id,
+            label=label,
+        )
+    except DomainError as exc:
+        return {"error": str(exc)}
+    if definition is None:
+        return {"error": "Field definition not found"}
+    return _field_definition_dict(definition)

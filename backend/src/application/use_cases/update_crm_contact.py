@@ -1,11 +1,20 @@
-"""Caso de uso: atualizar contato CRM (REQ-003 / REQ-005 crm-contacts)."""
+"""Caso de uso: atualizar contato CRM (REQ-003 / REQ-005 + location/custom)."""
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from src.application.ports.crm_repository import CrmRepositoryPort
-from src.domain.crm import Contact
+from src.application.use_cases.crm_custom_values import validate_custom_values
+from src.domain.crm import Contact, FieldEntity
 from src.domain.shared.errors import DomainError
+
+
+def _clean_optional(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 class UpdateCrmContact:
@@ -27,6 +36,9 @@ class UpdateCrmContact:
         clear_company: bool = False,
         status: str | None = None,
         tags: list[str] | None = None,
+        city: str | None = None,
+        state: str | None = None,
+        custom_values: dict[str, Any] | None = None,
     ) -> Contact | None:
         """Atualiza o contato; ``None`` se miss / cross-user.
 
@@ -59,6 +71,18 @@ class UpdateCrmContact:
         else:
             new_company_id = existing.company_id
 
+        definitions = await self._repository.list_field_definitions(
+            user_id, entity=FieldEntity.CONTACT
+        )
+        values = validate_custom_values(
+            definitions=definitions,
+            existing=existing.custom_values,
+            incoming=custom_values,
+        )
+
+        new_city = existing.city if city is None else _clean_optional(city)
+        new_state = existing.state if state is None else _clean_optional(state)
+
         updated = Contact(
             id=existing.id,
             user_id=existing.user_id,
@@ -68,6 +92,9 @@ class UpdateCrmContact:
             company_id=new_company_id,
             status=existing.status if status is None else status,
             tags=existing.tags if tags is None else list(tags),
+            city=new_city,
+            state=new_state,
+            custom_values=values,
             archived_at=existing.archived_at,
             created_at=existing.created_at,
             updated_at=datetime.now(UTC),
