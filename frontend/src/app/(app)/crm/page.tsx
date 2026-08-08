@@ -1,14 +1,16 @@
 "use client";
 
 /**
- * CRM page — contacts, companies, and deal funnel (add-simple-crm-module).
- *
- * Authenticated shell only (`(app)/crm`). Uses `lib/crm.ts` → `/api/crm/*`.
+ * CRM page — contacts, companies, and deal funnel
+ * (extend-crm-fields-location-value-custom).
  */
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { BriefcaseBusiness } from "lucide-react";
+import { toast } from "sonner";
 
+import { CompaniesPanel } from "./CompaniesPanel";
+import { ContactsPanel } from "./ContactsPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,13 +25,10 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiError } from "@/lib/api";
 import {
-  archiveCompany,
-  archiveContact,
   archiveDeal,
-  createCompany,
-  createContact,
   createDeal,
   createNote,
+  formatCrmTimestamp,
   listCompanies,
   listContacts,
   listDealStages,
@@ -37,9 +36,6 @@ import {
   listNotes,
   moveDeal,
   resolveNotesTarget,
-  updateCompany,
-  updateContact,
-  validateContactForm,
   type CrmCompany,
   type CrmContact,
   type CrmDeal,
@@ -77,39 +73,17 @@ export default function CrmPage() {
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [notes, setNotes] = useState<CrmNote[]>([]);
 
-  const [contactName, setContactName] = useState("");
-  const [contactEmail, setContactEmail] = useState("");
-  const [contactPhone, setContactPhone] = useState("");
-  const [contactFormError, setContactFormError] = useState<string | null>(null);
-
-  const [companyName, setCompanyName] = useState("");
-  const [companyWebsite, setCompanyWebsite] = useState("");
-
   const [dealTitle, setDealTitle] = useState("");
   const [dealStage, setDealStage] = useState("lead");
+  const [dealValue, setDealValue] = useState("");
+  const [dealCurrency, setDealCurrency] = useState("BRL");
   const [dealLinkContactId, setDealLinkContactId] = useState<string>("none");
   const [dealLinkCompanyId, setDealLinkCompanyId] = useState<string>("none");
   const [noteBody, setNoteBody] = useState("");
 
-  const selectedContact = useMemo(
-    () => contacts.find((c) => c.id === selectedContactId) ?? null,
-    [contacts, selectedContactId]
-  );
-  const selectedCompany = useMemo(
-    () => companies.find((c) => c.id === selectedCompanyId) ?? null,
-    [companies, selectedCompanyId]
-  );
   const selectedDeal = useMemo(
     () => deals.find((d) => d.id === selectedDealId) ?? null,
     [deals, selectedDealId]
-  );
-
-  const companyContacts = useMemo(
-    () =>
-      selectedCompany
-        ? contacts.filter((c) => c.company_id === selectedCompany.id)
-        : [],
-    [contacts, selectedCompany]
   );
 
   const selectedDealContact = useMemo(
@@ -128,22 +102,22 @@ export default function CrmPage() {
     [companies, selectedDeal]
   );
 
-  const refreshLists = useCallback(async () => {
+  const refreshShared = useCallback(async () => {
     const [c, co, d, st] = await Promise.all([
-      listContacts(),
+      listContacts({ page: 1, page_size: 100 }),
       listCompanies(),
       listDeals(),
       listDealStages(),
     ]);
-    setContacts(c);
+    setContacts(c.items ?? []);
     setCompanies(co);
     setDeals(d);
     if (st.length > 0) setStages(st);
   }, []);
 
   useEffect(() => {
-    refreshLists().catch((err) => setError(errMessage(err)));
-  }, [refreshLists]);
+    refreshShared().catch((err) => setError(errMessage(err)));
+  }, [refreshShared]);
 
   const loadNotesFor = useCallback(
     async (target: {
@@ -178,126 +152,6 @@ export default function CrmPage() {
     loadNotesFor,
   ]);
 
-  const onCreateContact = async (event: FormEvent) => {
-    event.preventDefault();
-    const validation = validateContactForm({
-      name: contactName,
-      email: contactEmail,
-      phone: contactPhone,
-    });
-    if (!validation.valid) {
-      setContactFormError(validation.error ?? "Dados inválidos");
-      return;
-    }
-    setContactFormError(null);
-    setError(null);
-    try {
-      const created = await createContact({
-        name: contactName,
-        email: contactEmail || null,
-        phone: contactPhone || null,
-      });
-      setContacts((prev) => [created, ...prev]);
-      setContactName("");
-      setContactEmail("");
-      setContactPhone("");
-      setSelectedCompanyId(null);
-      setSelectedDealId(null);
-      setSelectedContactId(created.id);
-      setTab("contacts");
-    } catch (err) {
-      setError(errMessage(err));
-    }
-  };
-
-  const onSaveContact = async () => {
-    if (!selectedContact) return;
-    const validation = validateContactForm({
-      name: selectedContact.name,
-      email: selectedContact.email,
-      phone: selectedContact.phone,
-    });
-    if (!validation.valid) {
-      setContactFormError(validation.error ?? "Dados inválidos");
-      return;
-    }
-    setContactFormError(null);
-    try {
-      const updated = await updateContact(selectedContact.id, {
-        name: selectedContact.name,
-        email: selectedContact.email,
-        phone: selectedContact.phone,
-        company_id: selectedContact.company_id,
-        clear_company: selectedContact.company_id == null,
-      });
-      setContacts((prev) =>
-        prev.map((c) => (c.id === updated.id ? updated : c))
-      );
-    } catch (err) {
-      setError(errMessage(err));
-    }
-  };
-
-  const onArchiveContact = async () => {
-    if (!selectedContact) return;
-    try {
-      await archiveContact(selectedContact.id);
-      setContacts((prev) => prev.filter((c) => c.id !== selectedContact.id));
-      setSelectedContactId(null);
-    } catch (err) {
-      setError(errMessage(err));
-    }
-  };
-
-  const onCreateCompany = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!companyName.trim()) return;
-    try {
-      const created = await createCompany({
-        name: companyName,
-        website: companyWebsite || null,
-      });
-      setCompanies((prev) => [created, ...prev]);
-      setCompanyName("");
-      setCompanyWebsite("");
-      setSelectedContactId(null);
-      setSelectedDealId(null);
-      setSelectedCompanyId(created.id);
-      setTab("companies");
-    } catch (err) {
-      setError(errMessage(err));
-    }
-  };
-
-  const onSaveCompany = async () => {
-    if (!selectedCompany) return;
-    try {
-      const updated = await updateCompany(selectedCompany.id, {
-        name: selectedCompany.name,
-        website: selectedCompany.website,
-        domain: selectedCompany.domain,
-        phone: selectedCompany.phone,
-        notes: selectedCompany.notes,
-      });
-      setCompanies((prev) =>
-        prev.map((c) => (c.id === updated.id ? updated : c))
-      );
-    } catch (err) {
-      setError(errMessage(err));
-    }
-  };
-
-  const onArchiveCompany = async () => {
-    if (!selectedCompany) return;
-    try {
-      await archiveCompany(selectedCompany.id);
-      setCompanies((prev) => prev.filter((c) => c.id !== selectedCompany.id));
-      setSelectedCompanyId(null);
-    } catch (err) {
-      setError(errMessage(err));
-    }
-  };
-
   const onCreateDeal = async (event: FormEvent) => {
     event.preventDefault();
     if (!dealTitle.trim()) return;
@@ -311,15 +165,19 @@ export default function CrmPage() {
         stage: dealStage,
         contact_id: linkContactId,
         company_id: linkCompanyId,
+        value: dealValue.trim() ? dealValue.trim() : null,
+        currency: dealValue.trim() ? dealCurrency || "BRL" : null,
       });
       setDeals((prev) => [created, ...prev]);
       setDealTitle("");
+      setDealValue("");
       setDealLinkContactId("none");
       setDealLinkCompanyId("none");
       setSelectedContactId(null);
       setSelectedCompanyId(null);
       setSelectedDealId(created.id);
       setTab("pipeline");
+      toast.success("Deal criado");
     } catch (err) {
       setError(errMessage(err));
     }
@@ -399,10 +257,7 @@ export default function CrmPage() {
           </p>
         )}
 
-        <Tabs
-          value={tab}
-          onValueChange={(value) => setTab(value as TabId)}
-        >
+        <Tabs value={tab} onValueChange={(value) => setTab(value as TabId)}>
           <TabsList>
             <TabsTrigger value="contacts">Contatos</TabsTrigger>
             <TabsTrigger value="companies">Empresas</TabsTrigger>
@@ -410,309 +265,40 @@ export default function CrmPage() {
           </TabsList>
 
           <TabsContent value="contacts" className="mt-4">
-            <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
-              <section className="flex flex-col gap-4">
-                <form
-                  onSubmit={onCreateContact}
-                  className="flex flex-col gap-3 rounded-md border border-border p-3"
-                >
-                  <h2 className="text-sm font-medium">Novo contato</h2>
-                  <div className="flex flex-col gap-1">
-                    <Label htmlFor="contact-name">Nome</Label>
-                    <Input
-                      id="contact-name"
-                      value={contactName}
-                      onChange={(e) => setContactName(e.target.value)}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <Label htmlFor="contact-email">E-mail</Label>
-                    <Input
-                      id="contact-email"
-                      type="email"
-                      value={contactEmail}
-                      onChange={(e) => setContactEmail(e.target.value)}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <Label htmlFor="contact-phone">Telefone</Label>
-                    <Input
-                      id="contact-phone"
-                      value={contactPhone}
-                      onChange={(e) => setContactPhone(e.target.value)}
-                    />
-                  </div>
-                  {contactFormError && (
-                    <p className="text-sm text-destructive" role="alert">
-                      {contactFormError}
-                    </p>
-                  )}
-                  <Button type="submit">Criar</Button>
-                </form>
-
-                <ul className="flex flex-col gap-1">
-                  {contacts.map((contact) => (
-                    <li key={contact.id}>
-                      <button
-                        type="button"
-                        className={`w-full rounded-md px-3 py-2 text-left text-sm hover:bg-accent ${
-                          selectedContactId === contact.id ? "bg-accent" : ""
-                        }`}
-                        onClick={() => {
-                          setSelectedContactId(contact.id);
-                          setSelectedCompanyId(null);
-                          setSelectedDealId(null);
-                        }}
-                      >
-                        <span className="font-medium">{contact.name}</span>
-                        <span className="block text-xs text-muted-foreground">
-                          {contact.email || contact.phone}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-
-              <section className="rounded-md border border-border p-4">
-                {selectedContact ? (
-                  <div className="flex flex-col gap-4">
-                    <h2 className="font-medium">Detalhe</h2>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="flex flex-col gap-1">
-                        <Label>Nome</Label>
-                        <Input
-                          value={selectedContact.name}
-                          onChange={(e) =>
-                            setContacts((prev) =>
-                              prev.map((c) =>
-                                c.id === selectedContact.id
-                                  ? { ...c, name: e.target.value }
-                                  : c
-                              )
-                            )
-                          }
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <Label>Empresa</Label>
-                        <Select
-                          value={selectedContact.company_id ?? "none"}
-                          onValueChange={(value) =>
-                            setContacts((prev) =>
-                              prev.map((c) =>
-                                c.id === selectedContact.id
-                                  ? {
-                                      ...c,
-                                      company_id:
-                                        value === "none" ? null : value,
-                                    }
-                                  : c
-                              )
-                            )
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Sem empresa" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">Sem empresa</SelectItem>
-                            {companies.map((company) => (
-                              <SelectItem key={company.id} value={company.id}>
-                                {company.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <Label>E-mail</Label>
-                        <Input
-                          value={selectedContact.email ?? ""}
-                          onChange={(e) =>
-                            setContacts((prev) =>
-                              prev.map((c) =>
-                                c.id === selectedContact.id
-                                  ? { ...c, email: e.target.value || null }
-                                  : c
-                              )
-                            )
-                          }
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <Label>Telefone</Label>
-                        <Input
-                          value={selectedContact.phone ?? ""}
-                          onChange={(e) =>
-                            setContacts((prev) =>
-                              prev.map((c) =>
-                                c.id === selectedContact.id
-                                  ? { ...c, phone: e.target.value || null }
-                                  : c
-                              )
-                            )
-                          }
-                        />
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button type="button" onClick={onSaveContact}>
-                        Salvar
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={onArchiveContact}
-                      >
-                        Arquivar
-                      </Button>
-                    </div>
-
-                    <NotesBlock
-                      notes={notes}
-                      noteBody={noteBody}
-                      setNoteBody={setNoteBody}
-                      onAddNote={onAddNote}
-                    />
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    Selecione um contato.
-                  </p>
-                )}
-              </section>
-            </div>
+            <ContactsPanel
+              companies={companies}
+              selectedContactId={selectedContactId}
+              onSelectContact={(id) => {
+                setSelectedContactId(id);
+                setSelectedCompanyId(null);
+                setSelectedDealId(null);
+              }}
+              notes={notes}
+              noteBody={noteBody}
+              setNoteBody={setNoteBody}
+              onAddNote={onAddNote}
+              onContactsChanged={() => {
+                refreshShared().catch((err) => setError(errMessage(err)));
+              }}
+            />
           </TabsContent>
 
           <TabsContent value="companies" className="mt-4">
-            <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
-              <section className="flex flex-col gap-4">
-                <form
-                  onSubmit={onCreateCompany}
-                  className="flex flex-col gap-3 rounded-md border border-border p-3"
-                >
-                  <h2 className="text-sm font-medium">Nova empresa</h2>
-                  <div className="flex flex-col gap-1">
-                    <Label htmlFor="company-name">Nome</Label>
-                    <Input
-                      id="company-name"
-                      value={companyName}
-                      onChange={(e) => setCompanyName(e.target.value)}
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <Label htmlFor="company-website">Website</Label>
-                    <Input
-                      id="company-website"
-                      value={companyWebsite}
-                      onChange={(e) => setCompanyWebsite(e.target.value)}
-                    />
-                  </div>
-                  <Button type="submit">Criar</Button>
-                </form>
-                <ul className="flex flex-col gap-1">
-                  {companies.map((company) => (
-                    <li key={company.id}>
-                      <button
-                        type="button"
-                        className={`w-full rounded-md px-3 py-2 text-left text-sm hover:bg-accent ${
-                          selectedCompanyId === company.id ? "bg-accent" : ""
-                        }`}
-                        onClick={() => {
-                          setSelectedCompanyId(company.id);
-                          setSelectedContactId(null);
-                          setSelectedDealId(null);
-                        }}
-                      >
-                        {company.name}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-
-              <section className="rounded-md border border-border p-4">
-                {selectedCompany ? (
-                  <div className="flex flex-col gap-4">
-                    <h2 className="font-medium">Detalhe</h2>
-                    <div className="flex flex-col gap-1">
-                      <Label>Nome</Label>
-                      <Input
-                        value={selectedCompany.name}
-                        onChange={(e) =>
-                          setCompanies((prev) =>
-                            prev.map((c) =>
-                              c.id === selectedCompany.id
-                                ? { ...c, name: e.target.value }
-                                : c
-                            )
-                          )
-                        }
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <Label>Website</Label>
-                      <Input
-                        value={selectedCompany.website ?? ""}
-                        onChange={(e) =>
-                          setCompanies((prev) =>
-                            prev.map((c) =>
-                              c.id === selectedCompany.id
-                                ? { ...c, website: e.target.value || null }
-                                : c
-                            )
-                          )
-                        }
-                      />
-                    </div>
-                    <div className="flex gap-2">
-                      <Button type="button" onClick={onSaveCompany}>
-                        Salvar
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={onArchiveCompany}
-                      >
-                        Arquivar
-                      </Button>
-                    </div>
-
-                    <div>
-                      <h3 className="mb-2 text-sm font-medium">
-                        Contatos vinculados
-                      </h3>
-                      {companyContacts.length === 0 ? (
-                        <p className="text-sm text-muted-foreground">
-                          Nenhum contato vinculado.
-                        </p>
-                      ) : (
-                        <ul className="flex flex-col gap-1 text-sm">
-                          {companyContacts.map((c) => (
-                            <li key={c.id}>
-                              {c.name}
-                              {c.email ? ` · ${c.email}` : ""}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-
-                    <NotesBlock
-                      notes={notes}
-                      noteBody={noteBody}
-                      setNoteBody={setNoteBody}
-                      onAddNote={onAddNote}
-                    />
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    Selecione uma empresa.
-                  </p>
-                )}
-              </section>
-            </div>
+            <CompaniesPanel
+              selectedCompanyId={selectedCompanyId}
+              onSelectCompany={(id) => {
+                setSelectedCompanyId(id);
+                setSelectedContactId(null);
+                setSelectedDealId(null);
+              }}
+              notes={notes}
+              noteBody={noteBody}
+              setNoteBody={setNoteBody}
+              onAddNote={onAddNote}
+              onCompaniesChanged={() => {
+                refreshShared().catch((err) => setError(errMessage(err)));
+              }}
+            />
           </TabsContent>
 
           <TabsContent value="pipeline" className="mt-4">
@@ -742,6 +328,24 @@ export default function CrmPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="flex w-32 flex-col gap-1">
+                <Label htmlFor="deal-value">Valor</Label>
+                <Input
+                  id="deal-value"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  value={dealValue}
+                  onChange={(e) => setDealValue(e.target.value)}
+                />
+              </div>
+              <div className="flex w-24 flex-col gap-1">
+                <Label htmlFor="deal-currency">Moeda</Label>
+                <Input
+                  id="deal-currency"
+                  value={dealCurrency}
+                  onChange={(e) => setDealCurrency(e.target.value)}
+                />
               </div>
               <div className="flex w-48 flex-col gap-1">
                 <Label>Contato (opcional)</Label>
@@ -805,6 +409,11 @@ export default function CrmPage() {
                       }}
                     >
                       <span className="font-medium">{deal.title}</span>
+                      {deal.value != null && (
+                        <span className="mt-1 block text-xs text-muted-foreground">
+                          {deal.currency ?? "BRL"} {deal.value}
+                        </span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -818,6 +427,22 @@ export default function CrmPage() {
                   Contato: {selectedDealContact?.name ?? "—"} · Empresa:{" "}
                   {selectedDealCompany?.name ?? "—"}
                 </p>
+                <p className="mt-1 text-sm">
+                  Valor:{" "}
+                  {selectedDeal.value != null
+                    ? `${selectedDeal.currency ?? "BRL"} ${selectedDeal.value}`
+                    : "—"}
+                </p>
+                <dl className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+                  <div>
+                    <dt>Criado</dt>
+                    <dd>{formatCrmTimestamp(selectedDeal.created_at)}</dd>
+                  </div>
+                  <div>
+                    <dt>Atualizado</dt>
+                    <dd>{formatCrmTimestamp(selectedDeal.updated_at)}</dd>
+                  </div>
+                </dl>
                 <div className="mt-3 flex flex-wrap items-center gap-3">
                   <Label>Mover para</Label>
                   <Select
@@ -895,7 +520,7 @@ function NotesBlock({
           >
             <p>{note.body}</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              {note.source} · {new Date(note.created_at).toLocaleString()}
+              {note.source} · {formatCrmTimestamp(note.created_at)}
             </p>
           </li>
         ))}

@@ -33,6 +33,7 @@
     --color-text-primary: #111827;
     --color-text-secondary: #6b7280;
     --color-text-tertiary: #9ca3af;
+    --color-logo: #000000;
     --color-file-button: #ffffff;
     --color-file-button-hover: #e5e7eb;
 
@@ -155,6 +156,7 @@
       --color-text-primary: #f3f4f6;
       --color-text-secondary: #9ca3af;
       --color-text-tertiary: #6b7280;
+      --color-logo: #ffffff;
       --color-file-button: #2a2a2a;
       --color-file-button-hover: #353535;
 
@@ -392,4 +394,10 @@ button {
   font-weight: 600;
   text-decoration: line-through;
   text-decoration-color: #f85149;
+}
+
+@layer utilities {
+  .text-logo {
+    color: var(--color-logo);
+  }
 }

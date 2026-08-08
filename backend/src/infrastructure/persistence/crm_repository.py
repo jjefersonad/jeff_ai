@@ -1,35 +1,55 @@
-"""Adapter Postgres de `CrmRepositoryPort` (add-simple-crm-module-task-persistence-1).
+"""Adapter Postgres de `CrmRepositoryPort`.
 
 Todas as queries filtram por `user_id`. Miss cross-user → `None` / lista vazia.
-Padrão: `psycopg` async, uma conexão por operação (como
-`user_integrations_repository` / `scheduled_task_repository`).
+Padrão: `psycopg` async, uma conexão por operação.
 """
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
 import psycopg
+from psycopg.errors import UniqueViolation
 
-from src.application.ports.crm_repository import CrmRepositoryPort
-from src.domain.crm import Company, Contact, Deal, DealStage, Note, NoteSource
+from src.application.ports.crm_repository import ContactPage, CrmRepositoryPort
+from src.domain.crm import (
+    Company,
+    Contact,
+    Deal,
+    DealStage,
+    DuplicateFieldDefinitionError,
+    FieldDefinition,
+    FieldEntity,
+    FieldType,
+    Note,
+    NoteSource,
+)
 
 _CONTACT_COLUMNS = (
     "id, user_id, name, email, phone, company_id, status, tags, "
-    "archived_at, created_at, updated_at"
+    "city, state, custom_values, archived_at, created_at, updated_at"
 )
 _COMPANY_COLUMNS = (
     "id, user_id, name, website, domain, phone, notes, "
-    "archived_at, created_at, updated_at"
+    "city, state, custom_values, archived_at, created_at, updated_at"
 )
 _DEAL_COLUMNS = (
     "id, user_id, title, stage, value, currency, contact_id, company_id, "
-    "archived_at, created_at, updated_at"
+    "custom_values, archived_at, created_at, updated_at"
 )
 _NOTE_COLUMNS = (
-    "id, user_id, body, source, contact_id, company_id, deal_id, created_at"
+    "id, user_id, body, source, contact_id, company_id, deal_id, "
+    "archived_at, created_at"
 )
+_FIELD_DEF_COLUMNS = (
+    "id, user_id, entity, key, label, field_type, created_at, updated_at"
+)
+
+
+def _as_jsonb(value: dict[str, Any] | None) -> str:
+    return json.dumps(value or {})
 
 
 def _row_to_contact(row: tuple[Any, ...]) -> Contact:
@@ -42,6 +62,9 @@ def _row_to_contact(row: tuple[Any, ...]) -> Contact:
         company_id,
         status,
         tags,
+        city,
+        state,
+        custom_values,
         archived_at,
         created_at,
         updated_at,
@@ -55,6 +78,9 @@ def _row_to_contact(row: tuple[Any, ...]) -> Contact:
         company_id=str(company_id) if company_id is not None else None,
         status=status,
         tags=list(tags) if tags is not None else [],
+        city=city,
+        state=state,
+        custom_values=dict(custom_values or {}),
         archived_at=archived_at,
         created_at=created_at,
         updated_at=updated_at,
@@ -70,6 +96,9 @@ def _row_to_company(row: tuple[Any, ...]) -> Company:
         domain,
         phone,
         notes,
+        city,
+        state,
+        custom_values,
         archived_at,
         created_at,
         updated_at,
@@ -82,6 +111,9 @@ def _row_to_company(row: tuple[Any, ...]) -> Company:
         domain=domain,
         phone=phone,
         notes=notes,
+        city=city,
+        state=state,
+        custom_values=dict(custom_values or {}),
         archived_at=archived_at,
         created_at=created_at,
         updated_at=updated_at,
@@ -98,6 +130,7 @@ def _row_to_deal(row: tuple[Any, ...]) -> Deal:
         currency,
         contact_id,
         company_id,
+        custom_values,
         archived_at,
         created_at,
         updated_at,
@@ -111,6 +144,7 @@ def _row_to_deal(row: tuple[Any, ...]) -> Deal:
         currency=currency,
         contact_id=str(contact_id) if contact_id is not None else None,
         company_id=str(company_id) if company_id is not None else None,
+        custom_values=dict(custom_values or {}),
         archived_at=archived_at,
         created_at=created_at,
         updated_at=updated_at,
@@ -126,6 +160,7 @@ def _row_to_note(row: tuple[Any, ...]) -> Note:
         contact_id,
         company_id,
         deal_id,
+        archived_at,
         created_at,
     ) = row
     return Note(
@@ -136,7 +171,31 @@ def _row_to_note(row: tuple[Any, ...]) -> Note:
         contact_id=str(contact_id) if contact_id is not None else None,
         company_id=str(company_id) if company_id is not None else None,
         deal_id=str(deal_id) if deal_id is not None else None,
+        archived_at=archived_at,
         created_at=created_at,
+    )
+
+
+def _row_to_field_definition(row: tuple[Any, ...]) -> FieldDefinition:
+    (
+        definition_id,
+        user_id,
+        entity,
+        key,
+        label,
+        field_type,
+        created_at,
+        updated_at,
+    ) = row
+    return FieldDefinition(
+        id=str(definition_id),
+        user_id=str(user_id),
+        entity=FieldEntity(entity),
+        key=key,
+        label=label,
+        field_type=FieldType(field_type),
+        created_at=created_at,
+        updated_at=updated_at,
     )
 
 
@@ -156,7 +215,9 @@ class PostgresCrmRepository(CrmRepositoryPort):
                 await cur.execute(
                     f"""
                     INSERT INTO crm_companies ({_COMPANY_COLUMNS})
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s
+                    )
                     RETURNING {_COMPANY_COLUMNS}
                     """,
                     (
@@ -167,6 +228,9 @@ class PostgresCrmRepository(CrmRepositoryPort):
                         company.domain,
                         company.phone,
                         company.notes,
+                        company.city,
+                        company.state,
+                        _as_jsonb(company.custom_values),
                         company.archived_at,
                         company.created_at,
                         company.updated_at,
@@ -224,7 +288,8 @@ class PostgresCrmRepository(CrmRepositoryPort):
                     f"""
                     UPDATE crm_companies SET
                         name = %s, website = %s, domain = %s, phone = %s,
-                        notes = %s, archived_at = %s, updated_at = %s
+                        notes = %s, city = %s, state = %s,
+                        custom_values = %s::jsonb, archived_at = %s, updated_at = %s
                     WHERE id = %s AND user_id = %s
                     RETURNING {_COMPANY_COLUMNS}
                     """,
@@ -234,6 +299,9 @@ class PostgresCrmRepository(CrmRepositoryPort):
                         company.domain,
                         company.phone,
                         company.notes,
+                        company.city,
+                        company.state,
+                        _as_jsonb(company.custom_values),
                         company.archived_at,
                         company.updated_at,
                         company.id,
@@ -271,7 +339,9 @@ class PostgresCrmRepository(CrmRepositoryPort):
                 await cur.execute(
                     f"""
                     INSERT INTO crm_contacts ({_CONTACT_COLUMNS})
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s
+                    )
                     RETURNING {_CONTACT_COLUMNS}
                     """,
                     (
@@ -283,6 +353,9 @@ class PostgresCrmRepository(CrmRepositoryPort):
                         contact.company_id,
                         contact.status,
                         contact.tags,
+                        contact.city,
+                        contact.state,
+                        _as_jsonb(contact.custom_values),
                         contact.archived_at,
                         contact.created_at,
                         contact.updated_at,
@@ -305,15 +378,14 @@ class PostgresCrmRepository(CrmRepositoryPort):
                 row = await cur.fetchone()
         return _row_to_contact(row) if row is not None else None
 
-    async def list_contacts(
+    def _contact_filters(
         self,
         user_id: str,
         *,
-        query: str | None = None,
-        company_id: str | None = None,
-        include_archived: bool = False,
-    ) -> list[Contact]:
-        """Lista contatos do user; filtro opcional por termo/empresa."""
+        query: str | None,
+        company_id: str | None,
+        include_archived: bool,
+    ) -> tuple[str, list[object]]:
         clauses = ["user_id = %s"]
         params: list[object] = [user_id]
         if not include_archived:
@@ -328,16 +400,63 @@ class PostgresCrmRepository(CrmRepositoryPort):
             )
             like = f"%{query}%"
             params.extend([like, like, like])
-        where = " AND ".join(clauses)
+        return " AND ".join(clauses), params
+
+    async def list_contacts(
+        self,
+        user_id: str,
+        *,
+        query: str | None = None,
+        company_id: str | None = None,
+        include_archived: bool = False,
+    ) -> list[Contact]:
+        """Lista contatos do user; filtro opcional por termo/empresa."""
+        page = await self.list_contacts_page(
+            user_id,
+            query=query,
+            company_id=company_id,
+            include_archived=include_archived,
+            page=1,
+            page_size=10_000,
+        )
+        return page.items
+
+    async def list_contacts_page(
+        self,
+        user_id: str,
+        *,
+        query: str | None = None,
+        company_id: str | None = None,
+        include_archived: bool = False,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> ContactPage:
+        """Lista paginada de contatos ordenada por updated_at DESC."""
+        safe_page = max(1, page)
+        safe_size = max(1, min(page_size, 100))
+        where, params = self._contact_filters(
+            user_id,
+            query=query,
+            company_id=company_id,
+            include_archived=include_archived,
+        )
+        offset = (safe_page - 1) * safe_size
         async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
-                    f"SELECT {_CONTACT_COLUMNS} FROM crm_contacts "
-                    f"WHERE {where} ORDER BY created_at DESC",
+                    f"SELECT COUNT(*) FROM crm_contacts WHERE {where}",
                     params,
                 )
+                count_row = await cur.fetchone()
+                total = int(count_row[0]) if count_row is not None else 0
+                await cur.execute(
+                    f"SELECT {_CONTACT_COLUMNS} FROM crm_contacts "
+                    f"WHERE {where} ORDER BY updated_at DESC "
+                    f"LIMIT %s OFFSET %s",
+                    [*params, safe_size, offset],
+                )
                 rows = await cur.fetchall()
-        return [_row_to_contact(r) for r in rows]
+        return ContactPage(items=[_row_to_contact(r) for r in rows], total=total)
 
     async def update_contact(self, contact: Contact) -> Contact | None:
         """Atualiza contato próprio; ``None`` se miss."""
@@ -347,7 +466,8 @@ class PostgresCrmRepository(CrmRepositoryPort):
                     f"""
                     UPDATE crm_contacts SET
                         name = %s, email = %s, phone = %s, company_id = %s,
-                        status = %s, tags = %s, archived_at = %s, updated_at = %s
+                        status = %s, tags = %s, city = %s, state = %s,
+                        custom_values = %s::jsonb, archived_at = %s, updated_at = %s
                     WHERE id = %s AND user_id = %s
                     RETURNING {_CONTACT_COLUMNS}
                     """,
@@ -358,6 +478,9 @@ class PostgresCrmRepository(CrmRepositoryPort):
                         contact.company_id,
                         contact.status,
                         contact.tags,
+                        contact.city,
+                        contact.state,
+                        _as_jsonb(contact.custom_values),
                         contact.archived_at,
                         contact.updated_at,
                         contact.id,
@@ -369,7 +492,7 @@ class PostgresCrmRepository(CrmRepositoryPort):
         return _row_to_contact(row) if row is not None else None
 
     async def archive_contact(self, user_id: str, contact_id: str) -> Contact | None:
-        """Arquiva (soft-delete); ``None`` se miss."""
+        """Arquiva contato e soft-arquiva notes/deals do mesmo user vinculados."""
         now = datetime.now(UTC)
         async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
             async with conn.cursor() as cur:
@@ -383,8 +506,27 @@ class PostgresCrmRepository(CrmRepositoryPort):
                     (now, now, contact_id, user_id),
                 )
                 row = await cur.fetchone()
+                if row is None:
+                    await conn.commit()
+                    return None
+                await cur.execute(
+                    """
+                    UPDATE crm_deals
+                    SET archived_at = %s, updated_at = %s
+                    WHERE contact_id = %s AND user_id = %s AND archived_at IS NULL
+                    """,
+                    (now, now, contact_id, user_id),
+                )
+                await cur.execute(
+                    """
+                    UPDATE crm_notes
+                    SET archived_at = %s
+                    WHERE contact_id = %s AND user_id = %s AND archived_at IS NULL
+                    """,
+                    (now, contact_id, user_id),
+                )
             await conn.commit()
-        return _row_to_contact(row) if row is not None else None
+        return _row_to_contact(row)
 
     # --- Deals ---------------------------------------------------------------
 
@@ -395,7 +537,9 @@ class PostgresCrmRepository(CrmRepositoryPort):
                 await cur.execute(
                     f"""
                     INSERT INTO crm_deals ({_DEAL_COLUMNS})
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s
+                    )
                     RETURNING {_DEAL_COLUMNS}
                     """,
                     (
@@ -407,6 +551,7 @@ class PostgresCrmRepository(CrmRepositoryPort):
                         deal.currency,
                         deal.contact_id,
                         deal.company_id,
+                        _as_jsonb(deal.custom_values),
                         deal.archived_at,
                         deal.created_at,
                         deal.updated_at,
@@ -463,8 +608,8 @@ class PostgresCrmRepository(CrmRepositoryPort):
                     f"""
                     UPDATE crm_deals SET
                         title = %s, stage = %s, value = %s, currency = %s,
-                        contact_id = %s, company_id = %s, archived_at = %s,
-                        updated_at = %s
+                        contact_id = %s, company_id = %s,
+                        custom_values = %s::jsonb, archived_at = %s, updated_at = %s
                     WHERE id = %s AND user_id = %s
                     RETURNING {_DEAL_COLUMNS}
                     """,
@@ -475,6 +620,7 @@ class PostgresCrmRepository(CrmRepositoryPort):
                         deal.currency,
                         deal.contact_id,
                         deal.company_id,
+                        _as_jsonb(deal.custom_values),
                         deal.archived_at,
                         deal.updated_at,
                         deal.id,
@@ -532,7 +678,7 @@ class PostgresCrmRepository(CrmRepositoryPort):
                 await cur.execute(
                     f"""
                     INSERT INTO crm_notes ({_NOTE_COLUMNS})
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING {_NOTE_COLUMNS}
                     """,
                     (
@@ -543,6 +689,7 @@ class PostgresCrmRepository(CrmRepositoryPort):
                         note.contact_id,
                         note.company_id,
                         note.deal_id,
+                        note.archived_at,
                         note.created_at,
                     ),
                 )
@@ -552,33 +699,142 @@ class PostgresCrmRepository(CrmRepositoryPort):
         return _row_to_note(row)
 
     async def list_notes_for_contact(
-        self, user_id: str, contact_id: str
+        self,
+        user_id: str,
+        contact_id: str,
+        *,
+        include_archived: bool = False,
     ) -> list[Note]:
         """Notas do contato, mais recente primeiro."""
-        return await self._list_notes(user_id, "contact_id", contact_id)
+        return await self._list_notes(
+            user_id, "contact_id", contact_id, include_archived=include_archived
+        )
 
     async def list_notes_for_company(
-        self, user_id: str, company_id: str
+        self,
+        user_id: str,
+        company_id: str,
+        *,
+        include_archived: bool = False,
     ) -> list[Note]:
         """Notas da empresa, mais recente primeiro."""
-        return await self._list_notes(user_id, "company_id", company_id)
+        return await self._list_notes(
+            user_id, "company_id", company_id, include_archived=include_archived
+        )
 
-    async def list_notes_for_deal(self, user_id: str, deal_id: str) -> list[Note]:
+    async def list_notes_for_deal(
+        self,
+        user_id: str,
+        deal_id: str,
+        *,
+        include_archived: bool = False,
+    ) -> list[Note]:
         """Notas do deal, mais recente primeiro."""
-        return await self._list_notes(user_id, "deal_id", deal_id)
+        return await self._list_notes(
+            user_id, "deal_id", deal_id, include_archived=include_archived
+        )
 
     async def _list_notes(
-        self, user_id: str, target_column: str, target_id: str
+        self,
+        user_id: str,
+        target_column: str,
+        target_id: str,
+        *,
+        include_archived: bool,
     ) -> list[Note]:
         if target_column not in {"contact_id", "company_id", "deal_id"}:
             raise ValueError(f"coluna de alvo inválida: {target_column}")
+        clauses = [f"user_id = %s", f"{target_column} = %s"]
+        params: list[object] = [user_id, target_id]
+        if not include_archived:
+            clauses.append("archived_at IS NULL")
+        where = " AND ".join(clauses)
         async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     f"SELECT {_NOTE_COLUMNS} FROM crm_notes "
-                    f"WHERE user_id = %s AND {target_column} = %s "
-                    "ORDER BY created_at DESC",
-                    (user_id, target_id),
+                    f"WHERE {where} ORDER BY created_at DESC",
+                    params,
                 )
                 rows = await cur.fetchall()
         return [_row_to_note(r) for r in rows]
+
+    # --- Field definitions ---------------------------------------------------
+
+    async def create_field_definition(
+        self, definition: FieldDefinition
+    ) -> FieldDefinition:
+        """Insere definição; duplicata → DuplicateFieldDefinitionError."""
+        async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
+            async with conn.cursor() as cur:
+                try:
+                    await cur.execute(
+                        f"""
+                        INSERT INTO crm_field_definitions ({_FIELD_DEF_COLUMNS})
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING {_FIELD_DEF_COLUMNS}
+                        """,
+                        (
+                            definition.id,
+                            definition.user_id,
+                            definition.entity.value,
+                            definition.key,
+                            definition.label,
+                            definition.field_type.value,
+                            definition.created_at,
+                            definition.updated_at,
+                        ),
+                    )
+                except UniqueViolation as exc:
+                    await conn.rollback()
+                    raise DuplicateFieldDefinitionError(
+                        f"field definition already exists: "
+                        f"{definition.entity.value}/{definition.key}"
+                    ) from exc
+                row = await cur.fetchone()
+            await conn.commit()
+        assert row is not None
+        return _row_to_field_definition(row)
+
+    async def list_field_definitions(
+        self,
+        user_id: str,
+        *,
+        entity: FieldEntity | None = None,
+    ) -> list[FieldDefinition]:
+        """Lista definições do user; filtro opcional por entidade."""
+        clauses = ["user_id = %s"]
+        params: list[object] = [user_id]
+        if entity is not None:
+            clauses.append("entity = %s")
+            params.append(entity.value)
+        where = " AND ".join(clauses)
+        async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"SELECT {_FIELD_DEF_COLUMNS} FROM crm_field_definitions "
+                    f"WHERE {where} ORDER BY key ASC",
+                    params,
+                )
+                rows = await cur.fetchall()
+        return [_row_to_field_definition(r) for r in rows]
+
+    async def update_field_definition_label(
+        self, user_id: str, definition_id: str, label: str
+    ) -> FieldDefinition | None:
+        """Atualiza só o label; ``None`` se miss/cross-user."""
+        now = datetime.now(UTC)
+        async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"""
+                    UPDATE crm_field_definitions
+                    SET label = %s, updated_at = %s
+                    WHERE id = %s AND user_id = %s
+                    RETURNING {_FIELD_DEF_COLUMNS}
+                    """,
+                    (label, now, definition_id, user_id),
+                )
+                row = await cur.fetchone()
+            await conn.commit()
+        return _row_to_field_definition(row) if row is not None else None

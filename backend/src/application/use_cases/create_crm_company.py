@@ -1,12 +1,21 @@
-"""Caso de uso: criar empresa CRM (REQ-001 crm-companies)."""
+"""Caso de uso: criar empresa CRM (REQ-001 + location/custom)."""
 from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from src.application.ports.crm_repository import CrmRepositoryPort
-from src.domain.crm import Company
+from src.application.use_cases.crm_custom_values import validate_custom_values
+from src.domain.crm import Company, FieldEntity
 from src.domain.shared.errors import DomainError
+
+
+def _clean_optional(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 class CreateCrmCompany:
@@ -25,6 +34,9 @@ class CreateCrmCompany:
         domain: str | None = None,
         phone: str | None = None,
         notes: str | None = None,
+        city: str | None = None,
+        state: str | None = None,
+        custom_values: dict[str, Any] | None = None,
     ) -> Company:
         """Valida `name` e persiste a empresa.
 
@@ -35,6 +47,15 @@ class CreateCrmCompany:
         if not cleaned_name:
             raise DomainError("Company.name é obrigatório e não pode ser vazio.")
 
+        definitions = await self._repository.list_field_definitions(
+            user_id, entity=FieldEntity.COMPANY
+        )
+        values = validate_custom_values(
+            definitions=definitions,
+            existing={},
+            incoming=custom_values,
+        )
+
         now = datetime.now(UTC)
         company = Company(
             id=str(uuid.uuid4()),
@@ -44,6 +65,9 @@ class CreateCrmCompany:
             domain=domain.strip() if domain else None,
             phone=phone.strip() if phone else None,
             notes=notes,
+            city=_clean_optional(city),
+            state=_clean_optional(state),
+            custom_values=values,
             created_at=now,
             updated_at=now,
         )

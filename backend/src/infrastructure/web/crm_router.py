@@ -1,4 +1,4 @@
-"""Rotas REST do CRM (`/api/crm/contacts|companies|notes|deals`).
+"""Rotas REST do CRM (`/api/crm/contacts|companies|notes|deals|field-definitions`).
 
 `user_id` vem só de `require_auth` — nunca do body. DomainError → 422;
 miss / cross-user → 404. Notas não têm PATCH (imutáveis na v1).
@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -19,6 +20,9 @@ from src.application.use_cases.archive_crm_deal import ArchiveCrmDeal
 from src.application.use_cases.create_crm_company import CreateCrmCompany
 from src.application.use_cases.create_crm_contact import CreateCrmContact
 from src.application.use_cases.create_crm_deal import CreateCrmDeal
+from src.application.use_cases.create_crm_field_definition import (
+    CreateCrmFieldDefinition,
+)
 from src.application.use_cases.create_crm_note import CreateCrmNote
 from src.application.use_cases.get_crm_company import GetCrmCompany
 from src.application.use_cases.get_crm_contact import GetCrmContact
@@ -27,11 +31,27 @@ from src.application.use_cases.list_crm_companies import ListCrmCompanies
 from src.application.use_cases.list_crm_contacts import ListCrmContacts
 from src.application.use_cases.list_crm_deal_stages import ListCrmDealStages
 from src.application.use_cases.list_crm_deals import ListCrmDeals
+from src.application.use_cases.list_crm_field_definitions import (
+    ListCrmFieldDefinitions,
+)
 from src.application.use_cases.list_crm_notes import ListCrmNotes
 from src.application.use_cases.move_crm_deal import MoveCrmDeal
 from src.application.use_cases.update_crm_company import UpdateCrmCompany
 from src.application.use_cases.update_crm_contact import UpdateCrmContact
-from src.domain.crm import Company, Contact, Deal, DealStage, Note, NoteSource
+from src.application.use_cases.update_crm_field_definition import (
+    UpdateCrmFieldDefinition,
+)
+from src.domain.crm import (
+    Company,
+    Contact,
+    Deal,
+    DealStage,
+    FieldDefinition,
+    FieldEntity,
+    FieldType,
+    Note,
+    NoteSource,
+)
 from src.domain.shared.errors import DomainError
 from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.users import User
@@ -54,6 +74,9 @@ class ContactCreateRequest(BaseModel):
     company_id: str | None = None
     status: str | None = None
     tags: list[str] | None = None
+    city: str | None = None
+    state: str | None = None
+    custom_values: dict[str, Any] | None = None
 
 
 class ContactUpdateRequest(BaseModel):
@@ -66,6 +89,9 @@ class ContactUpdateRequest(BaseModel):
     clear_company: bool = False
     status: str | None = None
     tags: list[str] | None = None
+    city: str | None = None
+    state: str | None = None
+    custom_values: dict[str, Any] | None = None
 
 
 class ContactResponse(BaseModel):
@@ -79,9 +105,21 @@ class ContactResponse(BaseModel):
     company_id: str | None
     status: str | None
     tags: list[str]
+    city: str | None
+    state: str | None
+    custom_values: dict[str, Any]
     archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class ContactPageResponse(BaseModel):
+    """Envelope paginado de `GET /api/crm/contacts`."""
+
+    items: list[ContactResponse]
+    total: int
+    page: int
+    page_size: int
 
 
 class CompanyCreateRequest(BaseModel):
@@ -92,6 +130,9 @@ class CompanyCreateRequest(BaseModel):
     domain: str | None = None
     phone: str | None = None
     notes: str | None = None
+    city: str | None = None
+    state: str | None = None
+    custom_values: dict[str, Any] | None = None
 
 
 class CompanyUpdateRequest(BaseModel):
@@ -102,6 +143,9 @@ class CompanyUpdateRequest(BaseModel):
     domain: str | None = None
     phone: str | None = None
     notes: str | None = None
+    city: str | None = None
+    state: str | None = None
+    custom_values: dict[str, Any] | None = None
 
 
 class CompanyResponse(BaseModel):
@@ -114,7 +158,38 @@ class CompanyResponse(BaseModel):
     domain: str | None
     phone: str | None
     notes: str | None
+    city: str | None
+    state: str | None
+    custom_values: dict[str, Any]
     archived_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class FieldDefinitionCreateRequest(BaseModel):
+    """Corpo de `POST /api/crm/field-definitions`."""
+
+    entity: str
+    key: str
+    label: str
+    field_type: str
+
+
+class FieldDefinitionUpdateRequest(BaseModel):
+    """Corpo de `PATCH /api/crm/field-definitions/{id}` — só label na v1."""
+
+    label: str
+
+
+class FieldDefinitionResponse(BaseModel):
+    """Contrato HTTP de definição de campo."""
+
+    id: str
+    user_id: str
+    entity: str
+    key: str
+    label: str
+    field_type: str
     created_at: datetime
     updated_at: datetime
 
@@ -129,6 +204,9 @@ def _contact_response(contact: Contact) -> ContactResponse:
         company_id=contact.company_id,
         status=contact.status,
         tags=list(contact.tags),
+        city=contact.city,
+        state=contact.state,
+        custom_values=dict(contact.custom_values),
         archived_at=contact.archived_at,
         created_at=contact.created_at,
         updated_at=contact.updated_at,
@@ -144,9 +222,27 @@ def _company_response(company: Company) -> CompanyResponse:
         domain=company.domain,
         phone=company.phone,
         notes=company.notes,
+        city=company.city,
+        state=company.state,
+        custom_values=dict(company.custom_values),
         archived_at=company.archived_at,
         created_at=company.created_at,
         updated_at=company.updated_at,
+    )
+
+
+def _field_definition_response(
+    definition: FieldDefinition,
+) -> FieldDefinitionResponse:
+    return FieldDefinitionResponse(
+        id=definition.id,
+        user_id=definition.user_id,
+        entity=definition.entity.value,
+        key=definition.key,
+        label=definition.label,
+        field_type=definition.field_type.value,
+        created_at=definition.created_at,
+        updated_at=definition.updated_at,
     )
 
 
@@ -176,6 +272,9 @@ async def create_contact_endpoint(
             company_id=body.company_id,
             status=body.status,
             tags=body.tags,
+            city=body.city,
+            state=body.state,
+            custom_values=body.custom_values,
         )
     except DomainError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -187,18 +286,27 @@ async def list_contacts_endpoint(
     query: str | None = Query(default=None),
     company_id: str | None = Query(default=None),
     archived: bool = Query(default=False),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
     user: User | None = Depends(require_auth),
     repository: CrmRepositoryPort = Depends(_crm_repository),
-) -> list[ContactResponse]:
-    """Lista contatos do usuário."""
+) -> ContactPageResponse:
+    """Lista contatos do usuário (envelope paginado)."""
     actor = _require_user(user)
-    contacts = await ListCrmContacts(repository=repository).execute(
+    result = await ListCrmContacts(repository=repository).execute(
         user_id=actor.id,
         query=query,
         company_id=company_id,
         include_archived=archived,
+        page=page,
+        page_size=page_size,
     )
-    return [_contact_response(c) for c in contacts]
+    return ContactPageResponse(
+        items=[_contact_response(c) for c in result.items],
+        total=result.total,
+        page=result.page,
+        page_size=result.page_size,
+    )
 
 
 @router.get("/api/crm/contacts/{contact_id}")
@@ -237,6 +345,9 @@ async def update_contact_endpoint(
             clear_company=body.clear_company,
             status=body.status,
             tags=body.tags,
+            city=body.city,
+            state=body.state,
+            custom_values=body.custom_values,
         )
     except DomainError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -280,6 +391,9 @@ async def create_company_endpoint(
             domain=body.domain,
             phone=body.phone,
             notes=body.notes,
+            city=body.city,
+            state=body.state,
+            custom_values=body.custom_values,
         )
     except DomainError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -337,6 +451,9 @@ async def update_company_endpoint(
             domain=body.domain,
             phone=body.phone,
             notes=body.notes,
+            city=body.city,
+            state=body.state,
+            custom_values=body.custom_values,
         )
     except DomainError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -359,6 +476,79 @@ async def archive_company_endpoint(
     if company is None:
         raise HTTPException(status_code=404, detail="Company not found")
     return _company_response(company)
+
+
+# --- Field definitions -------------------------------------------------------
+
+
+@router.get("/api/crm/field-definitions")
+async def list_field_definitions_endpoint(
+    entity: str | None = Query(default=None),
+    user: User | None = Depends(require_auth),
+    repository: CrmRepositoryPort = Depends(_crm_repository),
+) -> list[FieldDefinitionResponse]:
+    """Lista definições de campo do usuário; filtro opcional por entity."""
+    actor = _require_user(user)
+    entity_filter: FieldEntity | None = None
+    if entity is not None:
+        try:
+            entity_filter = FieldEntity(entity)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail=f"entity inválida: {entity}"
+            ) from exc
+    definitions = await ListCrmFieldDefinitions(repository=repository).execute(
+        user_id=actor.id, entity=entity_filter
+    )
+    return [_field_definition_response(d) for d in definitions]
+
+
+@router.post("/api/crm/field-definitions", status_code=201)
+async def create_field_definition_endpoint(
+    body: FieldDefinitionCreateRequest,
+    user: User | None = Depends(require_auth),
+    repository: CrmRepositoryPort = Depends(_crm_repository),
+) -> FieldDefinitionResponse:
+    """Cria definição de campo personalizado."""
+    actor = _require_user(user)
+    try:
+        entity = FieldEntity(body.entity)
+        field_type = FieldType(body.field_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        definition = await CreateCrmFieldDefinition(repository=repository).execute(
+            user_id=actor.id,
+            entity=entity,
+            key=body.key,
+            label=body.label,
+            field_type=field_type,
+        )
+    except DomainError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _field_definition_response(definition)
+
+
+@router.patch("/api/crm/field-definitions/{definition_id}")
+async def update_field_definition_endpoint(
+    definition_id: str,
+    body: FieldDefinitionUpdateRequest,
+    user: User | None = Depends(require_auth),
+    repository: CrmRepositoryPort = Depends(_crm_repository),
+) -> FieldDefinitionResponse:
+    """Atualiza apenas o label da definição."""
+    actor = _require_user(user)
+    try:
+        definition = await UpdateCrmFieldDefinition(repository=repository).execute(
+            user_id=actor.id,
+            definition_id=definition_id,
+            label=body.label,
+        )
+    except DomainError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if definition is None:
+        raise HTTPException(status_code=404, detail="Field definition not found")
+    return _field_definition_response(definition)
 
 
 # --- Notes -------------------------------------------------------------------
@@ -460,6 +650,7 @@ class DealCreateRequest(BaseModel):
     currency: str | None = None
     contact_id: str | None = None
     company_id: str | None = None
+    custom_values: dict[str, Any] | None = None
 
 
 class DealMoveRequest(BaseModel):
@@ -479,6 +670,7 @@ class DealResponse(BaseModel):
     currency: str | None
     contact_id: str | None
     company_id: str | None
+    custom_values: dict[str, Any]
     archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -494,6 +686,7 @@ def _deal_response(deal: Deal) -> DealResponse:
         currency=deal.currency,
         contact_id=deal.contact_id,
         company_id=deal.company_id,
+        custom_values=dict(deal.custom_values),
         archived_at=deal.archived_at,
         created_at=deal.created_at,
         updated_at=deal.updated_at,
@@ -535,6 +728,7 @@ async def create_deal_endpoint(
             currency=body.currency,
             contact_id=body.contact_id,
             company_id=body.company_id,
+            custom_values=body.custom_values,
         )
     except DomainError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

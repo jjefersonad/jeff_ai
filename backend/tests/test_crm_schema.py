@@ -1,8 +1,8 @@
 """Testes de `src/infrastructure/persistence/crm_schema.py`.
 
-Cobre `add-simple-crm-module-task-schema-1-unit-1`:
+Cobre schema v1 + extensão location/custom fields/field_definitions:
 - WHEN `ensure_crm_schema(conninfo)` roda duas vezes
-- THEN as quatro tabelas crm_* existem e a segunda chamada não levanta erro
+- THEN as tabelas crm_* (incl. field_definitions) existem e a 2ª chamada é idempotente
 """
 from __future__ import annotations
 
@@ -12,6 +12,14 @@ from pathlib import Path
 import pytest
 
 from src.infrastructure.persistence import crm_schema as schema
+
+_CRM_TABLES = (
+    "crm_companies",
+    "crm_contacts",
+    "crm_deals",
+    "crm_notes",
+    "crm_field_definitions",
+)
 
 
 class _FakeCursor:
@@ -42,10 +50,7 @@ class _FakeConnection:
         return self._cursor
 
 
-@pytest.mark.parametrize(
-    "table",
-    ["crm_companies", "crm_contacts", "crm_deals", "crm_notes"],
-)
+@pytest.mark.parametrize("table", list(_CRM_TABLES))
 def test_ensure_crm_schema_creates_table(
     monkeypatch: pytest.MonkeyPatch, table: str
 ) -> None:
@@ -71,7 +76,7 @@ def test_ensure_crm_schema_runs_twice_without_raising(
 
     assert first_run == second_run
     executed_sql = "\n".join(first_run)
-    for table in ("crm_companies", "crm_contacts", "crm_deals", "crm_notes"):
+    for table in _CRM_TABLES:
         assert f"CREATE TABLE IF NOT EXISTS {table}" in executed_sql
 
 
@@ -98,6 +103,39 @@ def test_crm_notes_require_exactly_one_target(monkeypatch: pytest.MonkeyPatch) -
         "(contact_id IS NOT NULL)::int + (company_id IS NOT NULL)::int + "
         "(deal_id IS NOT NULL)::int = 1"
     ) in executed_sql
+
+
+def test_ensure_crm_schema_adds_location_and_custom_values_columns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_conn = _FakeConnection()
+    monkeypatch.setattr(schema.psycopg, "connect", lambda *a, **kw: fake_conn)
+
+    schema.ensure_crm_schema("postgresql://fake")
+    executed_sql = "\n".join(fake_conn._cursor.executed)
+
+    assert "ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS city TEXT" in executed_sql
+    assert "ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS state TEXT" in executed_sql
+    assert "ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS city TEXT" in executed_sql
+    assert "ALTER TABLE crm_companies ADD COLUMN IF NOT EXISTS state TEXT" in executed_sql
+    assert "custom_values JSONB" in executed_sql
+    assert (
+        "ALTER TABLE crm_notes ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ"
+        in executed_sql
+    )
+
+
+def test_crm_field_definitions_unique_user_entity_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_conn = _FakeConnection()
+    monkeypatch.setattr(schema.psycopg, "connect", lambda *a, **kw: fake_conn)
+
+    schema.ensure_crm_schema("postgresql://fake")
+    executed_sql = "\n".join(fake_conn._cursor.executed)
+    assert "UNIQUE (user_id, entity, key)" in executed_sql
+    assert "entity IN ('contact', 'company', 'deal')" in executed_sql
+    assert "field_type IN ('text', 'number', 'boolean')" in executed_sql
 
 
 def test_crm_schema_module_does_not_import_sqlalchemy() -> None:

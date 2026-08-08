@@ -9,12 +9,18 @@ from src.agents.unified.agent import _TOOL_NAMES, _UNIFIED_SUBAGENTS, _UNIFIED_T
 from src.agents.unified.effects import TOOL_EFFECTS, Capability, classify, needs_grant
 from src.agents.unified.tier_config import TIER_REGISTRY, build_interrupt_on
 
-_CRM_READ_TOOLS = ("crm_search_contacts", "crm_list_deals")
+_CRM_READ_TOOLS = (
+    "crm_search_contacts",
+    "crm_list_deals",
+    "crm_list_field_definitions",
+)
 _CRM_WRITE_TOOLS = (
     "crm_upsert_contact",
     "crm_add_note",
     "crm_create_deal",
     "crm_move_deal",
+    "crm_create_field_definition",
+    "crm_update_field_definition",
 )
 _CRM_ALL = _CRM_READ_TOOLS + _CRM_WRITE_TOOLS
 
