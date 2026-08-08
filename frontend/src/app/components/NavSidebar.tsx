@@ -219,15 +219,15 @@ function SidebarLink({
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
       className={cn(
-        "flex items-start gap-3 rounded-md p-2 text-sm transition-colors text-white",
-        "hover:bg-accent hover:text-white",
+        "flex items-start gap-3 rounded-md p-2 text-sm transition-colors text-on-surface",
+        "hover:bg-accent hover:text-on-surface",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        active && "bg-accent text-white"
+        active && "bg-accent text-on-surface"
       )}
     >
-      <Icon aria-hidden="true" className="mt-0.5 text-white" />
+      <Icon aria-hidden="true" className="mt-0.5 text-on-surface" />
       <span className="flex min-w-0 flex-col">
-        <span className="font-medium text-white">{entry.label}</span>
+        <span className="font-medium text-on-surface">{entry.label}</span>
         <span className="text-xs text-muted-foreground">
           {entry.description}
         </span>
