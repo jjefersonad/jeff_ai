@@ -5,6 +5,7 @@ import React, {
   useRef,
   useCallback,
   useMemo,
+  useEffect,
   FormEvent,
   Fragment,
 } from "react";
@@ -94,6 +95,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant, assist
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
   const { scrollRef, contentRef } = useStickToBottom();
+  const inputWrapperRef = useRef<HTMLDivElement | null>(null);
 
   const {
     stream,
@@ -334,6 +336,57 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant, assist
 
   const hasTasks = todos.length > 0;
   const hasFiles = Object.keys(files).length > 0;
+  const hasMessages = messages.length > 0;
+  // chat-empty-state-input REQ-001: a thread with zero messages (and not
+  // loading an existing thread) renders the input+toolbar centered in the
+  // viewport instead of docked to the bottom. Loading keeps the docked
+  // footer so an existing thread never flashes a centered layout mid-load.
+  const isEmptyState = !hasMessages && !isThreadLoading;
+
+  // Reserve scroll space for the docked input+toolbar (chat-viewport-docking
+  // REQ-002). The docked wrapper is out of flow (`position: fixed`), so the
+  // messages scroll container must reserve bottom padding equal to the input's
+  // rendered height, measured via ResizeObserver.
+  useEffect(() => {
+    const wrapper = inputWrapperRef.current;
+    const content = contentRef.current;
+    if (!wrapper || !content) return;
+
+    const applyPadding = (entries: ResizeObserverEntry[]) => {
+      const entry = entries[entries.length - 1];
+      if (!entry) return;
+      content.style.paddingBottom = `${entry.contentRect.height}px`;
+    };
+
+    const observer = new ResizeObserver(applyPadding);
+    observer.observe(wrapper);
+    return () => observer.disconnect();
+  }, [contentRef]);
+
+  // Mobile on-screen keyboard avoidance (chat-viewport-docking REQ-003).
+  // The docked input is bottom-anchored to the viewport; when the keyboard
+  // opens `visualViewport.height` shrinks and `offsetTop` grows, so we push
+  // the wrapper up by the obscured amount. Cleanup removes the listeners.
+  useEffect(() => {
+    const wrapper = inputWrapperRef.current;
+    const viewport = window.visualViewport;
+    if (!wrapper || !viewport) return;
+
+    const handleVisualViewportChange = () => {
+      const keyboardOffset =
+        window.innerHeight - viewport.height - viewport.offsetTop;
+      wrapper.style.transform = `translateY(${-keyboardOffset}px)`;
+    };
+
+    viewport.addEventListener("resize", handleVisualViewportChange);
+    viewport.addEventListener("scroll", handleVisualViewportChange);
+    handleVisualViewportChange();
+
+    return () => {
+      viewport.removeEventListener("resize", handleVisualViewportChange);
+      viewport.removeEventListener("scroll", handleVisualViewportChange);
+    };
+  }, []);
 
   // Parse out any action requests or review configs from the interrupt
   const actionRequestsMap: Map<string, ActionRequest> | null = useMemo(() => {
@@ -397,12 +450,24 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant, assist
   );
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div
+      data-testid="chat-interface-root"
+      // `transform: translateZ(0)` turns this element into the containing
+      // block for the `position: fixed` input wrapper below — keeping the
+      // input docked to the chat panel regardless of ancestor layout
+      // correctness (chat-viewport-docking REQ-001).
+      style={{ transform: "translateZ(0)" }}
+      className="flex h-dvh max-h-dvh flex-1 flex-col overflow-hidden"
+    >
       <div
-        className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"
+        className={cn(
+          "flex-1 overflow-y-auto overflow-x-hidden overscroll-contain",
+          isEmptyState && "hidden"
+        )}
         ref={scrollRef}
       >
         <div
+          data-testid="chat-messages-content"
           className="mx-auto w-full max-w-[1024px] px-6 pb-6 pt-4"
           ref={contentRef}
         >
@@ -486,11 +551,26 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant, assist
         </div>
       </div>
 
-      <div className="flex-shrink-0 bg-background">
+      <div
+        data-testid="chat-input-dock"
+        ref={inputWrapperRef}
+        className={cn(
+          "bg-background",
+          hasMessages
+            ? "fixed inset-x-0 bottom-0"
+            : isEmptyState
+              ? "flex flex-1 flex-col items-center justify-center"
+              : "flex-shrink-0"
+        )}
+      >
         <div
           className={cn(
             "mx-4 mb-6 flex flex-shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-background",
-            "mx-auto w-[calc(100%-32px)] max-w-[1024px] transition-colors duration-200 ease-in-out"
+            "mx-auto w-[calc(100%-32px)] max-w-[1024px] transition-colors duration-200 ease-in-out",
+            // The `mb-6` bottom margin is meant for the docked footer;
+            // drop it in the centered empty state so the card sits truly
+            // centered (chat-empty-state-input REQ-001).
+            isEmptyState && "mb-0"
           )}
         >
           {(hasTasks || hasFiles) && (

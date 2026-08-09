@@ -1,22 +1,28 @@
 "use client";
 
 /**
- * Minimal "Integrações" screen (whatsapp-evolution-channel-task-frontend-1).
+ * Minimal "Integrações" screen (whatsapp-evolution-channel-task-frontend-1,
+ * telegram-integration-frontend-registration).
  *
- * Lets an authenticated user request a WhatsApp link code
- * (`POST /api/integrations/whatsapp/link-code`, whatsapp-channel REQ-001)
- * and see the code plus its expiration without calling the API manually.
- * The user then sends that code as the first WhatsApp message to Jeff AI's
- * central number to complete the link.
+ * Lets an authenticated user request a WhatsApp or Telegram link code
+ * (`POST /api/integrations/{whatsapp,telegram}/link-code`) and see the code
+ * plus its expiration without calling the API manually. The user then sends
+ * that code as the first WhatsApp message, or as `/start <código>` to the
+ * Telegram bot, to complete the link.
  */
 
 import { useCallback, useState } from "react";
-import { MessageCircle, Copy } from "lucide-react";
-import { toast } from "sonner";
+import { MessageCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { LinkCodeCard } from "@/components/integrations/link-code-card";
 import { ApiError } from "@/lib/api";
-import { createWhatsAppLinkCode, type WhatsAppLinkCode } from "@/lib/integrations";
+import {
+  createTelegramLinkCode,
+  createWhatsAppLinkCode,
+  type TelegramLinkCode,
+  type WhatsAppLinkCode,
+} from "@/lib/integrations";
 
 export default function IntegrationsPage() {
   const [linkCode, setLinkCode] = useState<WhatsAppLinkCode | null>(null);
@@ -39,11 +45,27 @@ export default function IntegrationsPage() {
     }
   }, []);
 
-  const handleCopy = useCallback(() => {
-    if (!linkCode) return;
-    navigator.clipboard.writeText(linkCode.code);
-    toast.success("Código copiado");
-  }, [linkCode]);
+  const [telegramLinkCode, setTelegramLinkCode] = useState<TelegramLinkCode | null>(
+    null
+  );
+  const [telegramLoading, setTelegramLoading] = useState(false);
+  const [telegramError, setTelegramError] = useState<string | null>(null);
+
+  const handleGenerateTelegram = useCallback(async () => {
+    setTelegramLoading(true);
+    setTelegramError(null);
+    try {
+      const result = await createTelegramLinkCode();
+      setTelegramLinkCode(result);
+    } catch (err) {
+      setTelegramLinkCode(null);
+      setTelegramError(
+        err instanceof ApiError ? err.message : "Falha ao gerar código de vínculo"
+      );
+    } finally {
+      setTelegramLoading(false);
+    }
+  }, []);
 
   return (
     <div className="min-h-screen bg-background">
@@ -73,24 +95,36 @@ export default function IntegrationsPage() {
           )}
 
           {linkCode && (
-            <div className="mt-4 flex items-center justify-between gap-3 rounded-md border border-border bg-background p-3">
-              <div>
-                <p className="font-mono text-lg font-semibold tracking-wide">
-                  {linkCode.code}
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Expira em {new Date(linkCode.expires_at).toLocaleString()}
-                </p>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleCopy}
-                aria-label="Copiar código"
-              >
-                <Copy className="h-3.5 w-3.5" />
-              </Button>
-            </div>
+            <LinkCodeCard code={linkCode.code} expiresAt={linkCode.expires_at} />
+          )}
+        </section>
+
+        <section className="rounded-md border border-border bg-card p-4">
+          <h2 className="font-medium">Telegram</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Gere um código de vínculo e envie-o como <code>/start &lt;código&gt;</code>{" "}
+            para o bot da Jeff AI no Telegram para conectar sua conta.
+          </p>
+
+          <Button
+            className="mt-4"
+            onClick={handleGenerateTelegram}
+            disabled={telegramLoading}
+          >
+            {telegramLoading ? "Gerando..." : "Gerar código de vínculo"}
+          </Button>
+
+          {telegramError && (
+            <p className="mt-3 text-sm text-destructive" role="alert">
+              {telegramError}
+            </p>
+          )}
+
+          {telegramLinkCode && (
+            <LinkCodeCard
+              code={telegramLinkCode.code}
+              expiresAt={telegramLinkCode.expires_at}
+            />
           )}
         </section>
       </main>

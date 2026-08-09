@@ -37,13 +37,19 @@ import src.infrastructure.usage.user_key as user_key_mod
 
 
 class _RecordingChannel(ChatChannelPort):
-    def __init__(self, *, events: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        events: list[str] | None = None,
+        channel_kind: ChannelKind = ChannelKind.TELEGRAM,
+    ) -> None:
         self.calls: list[dict] = []
         self.events: list[str] = events if events is not None else []
+        self._channel_kind = channel_kind
 
     @property
     def channel_kind(self) -> ChannelKind:
-        return ChannelKind.TELEGRAM
+        return self._channel_kind
 
     async def deliver(
         self,
@@ -499,6 +505,81 @@ async def test_execute_precomputed_output_does_not_type() -> None:
             "thread_id": None,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_execute_web_channel_is_excluded_by_orchestrator() -> None:
+    """Unit-5: orquestrador não chama typing para WEB (REQ-002/REQ-006) — não
+    basta o no-op do adapter, o port não pode nem ser invocado."""
+    events: list[str] = []
+    channel = _RecordingChannel(events=events, channel_kind=ChannelKind.WEB)
+    runner = _RecordingRunner(
+        result=AgentRunResult(
+            thread_id="th-1",
+            status="ok",
+            output=AgentRunOutcome(text="ok", attachments=()),
+        ),
+        events=events,
+    )
+    use_case = HandleChatMessage(agent_runner=runner)
+
+    await use_case.execute(
+        channel=channel, user_key="web:user-7", thread_id="th-1", text="oi"
+    )
+
+    assert not any(
+        e.startswith("start_typing:") or e.startswith("stop_typing:") for e in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_scheduled_channel_is_excluded_by_orchestrator() -> None:
+    """Unit-5b: mesmo comportamento para SCHEDULED (REQ-002/REQ-006)."""
+    events: list[str] = []
+    channel = _RecordingChannel(events=events, channel_kind=ChannelKind.SCHEDULED)
+    runner = _RecordingRunner(
+        result=AgentRunResult(
+            thread_id="th-1",
+            status="ok",
+            output=AgentRunOutcome(text="ok", attachments=()),
+        ),
+        events=events,
+    )
+    use_case = HandleChatMessage(agent_runner=runner)
+
+    await use_case.execute(
+        channel=channel, user_key="telegram:123", thread_id="th-1", text="oi"
+    )
+
+    assert not any(
+        e.startswith("start_typing:") or e.startswith("stop_typing:") for e in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_typing_disabled_via_env_flag(monkeypatch) -> None:
+    """Unit-6: `TYPING_INDICATOR_ENABLED=false` desliga start/stop (REQ-003)."""
+    monkeypatch.setenv("TYPING_INDICATOR_ENABLED", "false")
+    events: list[str] = []
+    channel = _RecordingChannel(events=events)
+    runner = _RecordingRunner(
+        result=AgentRunResult(
+            thread_id="th-1",
+            status="ok",
+            output=AgentRunOutcome(text="ok", attachments=()),
+        ),
+        events=events,
+    )
+    use_case = HandleChatMessage(agent_runner=runner)
+
+    await use_case.execute(
+        channel=channel, user_key="telegram:123", thread_id="th-1", text="oi"
+    )
+
+    assert not any(
+        e.startswith("start_typing:") or e.startswith("stop_typing:") for e in events
+    )
+    assert "run" in events
 
 
 def test_unified_tool_set_has_no_typing_tools() -> None:
