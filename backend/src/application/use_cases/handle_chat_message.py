@@ -10,6 +10,7 @@ modelo respondia em texto puro sem tool-call e o usuário não recebia nada.
 from __future__ import annotations
 
 import logging
+import os
 
 from src.application.ports.agent_runner import (
     AgentRunnerPort,
@@ -17,9 +18,25 @@ from src.application.ports.agent_runner import (
     AgentRunResult,
 )
 from src.application.ports.chat_channel import ChatChannelPort
+from src.domain.channels import ChannelKind
 from src.domain.scheduling import ToolScope
 
 logger = logging.getLogger(__name__)
+
+_TYPING_EXCLUDED_KINDS = frozenset({ChannelKind.WEB, ChannelKind.SCHEDULED})
+"""Canais cujo `ChatChannelPort` já resolve feedback de forma própria (web
+streama tokens via SSE; scheduled delega para outro `user_key`) — REQ-002/
+REQ-006 do typing-indicator: o orquestrador não deve nem chamar o port
+para esses `channel_kind`s, não basta confiar no no-op do adapter."""
+
+
+def _typing_enabled() -> bool:
+    """Kill-switch de operador sem redeploy.
+
+    `TYPING_INDICATOR_ENABLED` (default `"true"`) — REQ-003 typing-indicator /
+    REQ-006 message-delivery-pipeline.
+    """
+    return os.getenv("TYPING_INDICATOR_ENABLED", "true").strip().lower() != "false"
 
 
 class HandleChatMessage:
@@ -50,7 +67,9 @@ class HandleChatMessage:
         sem reinvocar o runner — evita double-run no notify agendado.
 
         Typing (typing-indicator-chat-channels): `start` antes do `run` e
-        `stop` em `finally` — não tipa no caminho `precomputed_output`.
+        `stop` em `finally` — não tipa no caminho `precomputed_output`, em
+        canais `WEB`/`SCHEDULED` (REQ-002/REQ-006), nem com
+        `TYPING_INDICATOR_ENABLED=false` (REQ-003).
         """
         if precomputed_output is not None:
             await channel.deliver(
@@ -61,9 +80,14 @@ class HandleChatMessage:
             )
             return
 
+        typing_active = (
+            _typing_enabled() and channel.channel_kind not in _TYPING_EXCLUDED_KINDS
+        )
+
         run_failed = False
         result: AgentRunResult | None = None
-        await channel.start_typing_indicator(user_key=user_key)
+        if typing_active:
+            await channel.start_typing_indicator(user_key=user_key)
         try:
             try:
                 result = await self._agent_runner.run(
@@ -81,7 +105,8 @@ class HandleChatMessage:
                     exc,
                 )
         finally:
-            await channel.stop_typing_indicator(user_key=user_key)
+            if typing_active:
+                await channel.stop_typing_indicator(user_key=user_key)
 
         if run_failed:
             await channel.deliver(

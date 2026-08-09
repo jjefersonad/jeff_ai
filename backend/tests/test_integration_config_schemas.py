@@ -46,6 +46,57 @@ def test_validate_config_rejects_whatsapp_business_payload_empty_phone_number() 
         config_schemas.validate_config("whatsapp_business", {"phone_number": ""})
 
 
+def test_validate_config_accepts_valid_imap_payload() -> None:
+    """email-client-imap-mvp-task-schema-1-unit-1 (REQ-006 delta)."""
+    result = config_schemas.validate_config(
+        "imap",
+        {
+            "imap_host": "imap.example.com",
+            "imap_port": 993,
+            "imap_username": "user@example.com",
+            "imap_password": "secret",
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 587,
+        },
+    )
+
+    assert result.imap_host == "imap.example.com"
+    assert result.imap_port == 993
+
+
+def test_validate_config_rejects_imap_payload_missing_host() -> None:
+    """email-client-imap-mvp-task-schema-1-unit-1 (REQ-006 delta)."""
+    with pytest.raises(ValidationError):
+        config_schemas.validate_config(
+            "imap",
+            {
+                "imap_port": 993,
+                "imap_username": "user@example.com",
+                "imap_password": "secret",
+                "smtp_host": "smtp.example.com",
+                "smtp_port": 587,
+            },
+        )
+
+
+def test_validate_config_imap_smtp_credentials_default_to_imap_credentials() -> None:
+    """email-client-imap-mvp-task-schema-1-unit-1 (REQ-006 delta)."""
+    result = config_schemas.validate_config(
+        "imap",
+        {
+            "imap_host": "imap.example.com",
+            "imap_port": 993,
+            "imap_username": "user@example.com",
+            "imap_password": "secret",
+            "smtp_host": "smtp.example.com",
+            "smtp_port": 587,
+        },
+    )
+
+    assert result.smtp_username == "user@example.com"
+    assert result.smtp_password == "secret"
+
+
 def test_register_new_integration_type_validates_immediately() -> None:
     class _ThrowawayConfig(BaseModel):
         foo: str

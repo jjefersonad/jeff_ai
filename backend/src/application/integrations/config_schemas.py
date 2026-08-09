@@ -28,6 +28,31 @@ class SmtpIntegrationConfig(BaseModel):
     """Stub — adapter de SMTP está fora de escopo desta mudança."""
 
 
+class ImapIntegrationConfig(BaseModel):
+    """`config` de uma conta de email genérica IMAP/SMTP (email-client-imap-mvp).
+
+    `smtp_username`/`smtp_password` herdam `imap_username`/`imap_password`
+    quando omitidos, já que a maioria dos provedores usa a mesma credencial
+    para os dois protocolos.
+    """
+
+    imap_host: str = Field(min_length=1)
+    imap_port: int
+    imap_username: str = Field(min_length=1)
+    imap_password: str = Field(min_length=1)
+    smtp_host: str = Field(min_length=1)
+    smtp_port: int
+    smtp_username: str | None = Field(default=None, min_length=1)
+    smtp_password: str | None = Field(default=None, min_length=1)
+
+    def model_post_init(self, __context: object) -> None:
+        """Fill `smtp_username`/`smtp_password` from the IMAP credentials when omitted."""
+        if self.smtp_username is None:
+            self.smtp_username = self.imap_username
+        if self.smtp_password is None:
+            self.smtp_password = self.imap_password
+
+
 class UnknownIntegrationTypeError(ValueError):
     """`integration_type` sem schema registrado em `validate_config`."""
 
@@ -36,6 +61,7 @@ _REGISTRY: dict[str, type[BaseModel]] = {
     "telegram": TelegramIntegrationConfig,
     "whatsapp_business": WhatsAppBusinessIntegrationConfig,
     "smtp": SmtpIntegrationConfig,
+    "imap": ImapIntegrationConfig,
 }
 
 

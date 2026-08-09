@@ -66,7 +66,7 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
   {
     label: "Integrações",
     href: "/integrations",
-    description: "Link your account to other channels (WhatsApp)",
+    description: "Link your account to other channels (WhatsApp, Telegram)",
     icon: MessageCircle,
     match: (p) => p === "/integrations" || p.startsWith("/integrations/"),
   },
