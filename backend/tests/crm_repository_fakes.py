@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from src.application.ports.crm_repository import ContactPage
-from src.domain.crm import FieldDefinition, FieldEntity
+from src.domain.crm import Contact, FieldDefinition, FieldEntity
 
 
 class CrmRepositoryPortExtensions:
@@ -46,4 +46,10 @@ class CrmRepositoryPortExtensions:
     async def update_field_definition_label(
         self, user_id: str, definition_id: str, label: str
     ) -> FieldDefinition | None:
+        return None
+
+    async def get_contact_by_email(
+        self, user_id: str, email: str
+    ) -> Contact | None:
+        """Default: sem match — testes que precisam de comportamento sobrescrevem."""
         return None

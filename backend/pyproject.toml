@@ -31,7 +31,10 @@ dependencies = [
     "psycopg-pool>=3.2.0",
     "passlib[bcrypt]>=1.7.4",
     "bcrypt>=3.2.0,<4.1",
-    "python-telegram-bot>=21.0"
+    "python-telegram-bot>=21.0",
+    "aioimaplib>=1.1.0",
+    "aiosmtplib>=3.0.0",
+    "nh3>=0.2.0"
 ]
 
 [project.optional-dependencies]

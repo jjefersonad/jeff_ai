@@ -76,3 +76,24 @@ async def test_start_command_invalid_code_replies_with_error_and_does_not_raise(
     text = bot.sent[0][1]
     assert "traceback" not in text.lower()
     assert "exception" not in text.lower()
+
+
+async def test_start_command_no_code_shows_usage_and_does_not_call_use_case() -> None:
+    """Unit (channel-link-wiring-telegram-start-command-wiring-REQ-003-scenario-1):
+    bare `/start` (no code argument) replies with usage instructions and MUST NOT
+    call the redemption use case.
+    """
+    bot = _FakeBot()
+    redeem_use_case = AsyncMock()
+    handler = start_command.make_start_command_handler(
+        redeem_use_case=redeem_use_case, bot=bot
+    )
+    update = _make_update("chat-1", "/start")
+
+    await handler(update, MagicMock())
+
+    redeem_use_case.execute.assert_not_awaited()
+    assert len(bot.sent) == 1
+    assert bot.sent[0][0] == "chat-1"
+    assert "uso" in bot.sent[0][1].lower()
+    assert "/start" in bot.sent[0][1]

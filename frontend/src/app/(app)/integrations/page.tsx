@@ -1,133 +1,253 @@
 "use client";
 
 /**
- * Minimal "Integrações" screen (whatsapp-evolution-channel-task-frontend-1,
- * telegram-integration-frontend-registration).
+ * "Integrações" screen (user-integrations-list-delete).
  *
- * Lets an authenticated user request a WhatsApp or Telegram link code
- * (`POST /api/integrations/{whatsapp,telegram}/link-code`) and see the code
- * plus its expiration without calling the API manually. The user then sends
- * that code as the first WhatsApp message, or as `/start <código>` to the
- * Telegram bot, to complete the link.
+ * Lists the authenticated user's `UserIntegration`s (mirroring the
+ * `/mcp-servers` list layout) with a delete action per row. The header's
+ * "Adicionar integração" button opens `AddIntegrationDialog` (type picker +
+ * WhatsApp/Telegram generate-code flow); closing it re-runs `loadIntegrations()`.
+ * The two always-visible WhatsApp/Telegram sections this page used to have
+ * (`telegram-integration-frontend-registration`) were superseded by that
+ * modal per explicit user correction; see `user-integrations-list-delete-design`.
  */
 
-import { useCallback, useState } from "react";
-import { MessageCircle } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Plug, Plus } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { LinkCodeCard } from "@/components/integrations/link-code-card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { AddIntegrationDialog } from "@/components/integrations/add-integration-dialog";
 import { ApiError } from "@/lib/api";
 import {
-  createTelegramLinkCode,
-  createWhatsAppLinkCode,
-  type TelegramLinkCode,
-  type WhatsAppLinkCode,
+  deleteUserIntegration,
+  getIntegrationTypeMeta,
+  listUserIntegrations,
+  type UserIntegrationSummary,
 } from "@/lib/integrations";
 
 export default function IntegrationsPage() {
-  const [linkCode, setLinkCode] = useState<WhatsAppLinkCode | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleGenerate = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await createWhatsAppLinkCode();
-      setLinkCode(result);
-    } catch (err) {
-      setLinkCode(null);
-      setError(
-        err instanceof ApiError ? err.message : "Falha ao gerar código de vínculo"
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const [telegramLinkCode, setTelegramLinkCode] = useState<TelegramLinkCode | null>(
+  const [integrations, setIntegrations] = useState<UserIntegrationSummary[] | null>(
     null
   );
-  const [telegramLoading, setTelegramLoading] = useState(false);
-  const [telegramError, setTelegramError] = useState<string | null>(null);
+  const [integrationsLoading, setIntegrationsLoading] = useState(true);
+  const [integrationsError, setIntegrationsError] = useState<string | null>(null);
 
-  const handleGenerateTelegram = useCallback(async () => {
-    setTelegramLoading(true);
-    setTelegramError(null);
+  const loadIntegrations = useCallback(async () => {
+    setIntegrationsLoading(true);
+    setIntegrationsError(null);
     try {
-      const result = await createTelegramLinkCode();
-      setTelegramLinkCode(result);
+      const result = await listUserIntegrations();
+      setIntegrations(result);
     } catch (err) {
-      setTelegramLinkCode(null);
-      setTelegramError(
-        err instanceof ApiError ? err.message : "Falha ao gerar código de vínculo"
+      setIntegrationsError(
+        err instanceof ApiError ? err.message : "Falha ao carregar integrações"
       );
     } finally {
-      setTelegramLoading(false);
+      setIntegrationsLoading(false);
     }
   }, []);
+
+  useEffect(() => {
+    loadIntegrations();
+  }, [loadIntegrations]);
+
+  const [deleteTarget, setDeleteTarget] = useState<UserIntegrationSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleAskDelete = useCallback((integration: UserIntegrationSummary) => {
+    setDeleteTarget(integration);
+  }, []);
+
+  const handleCancelDelete = useCallback(() => {
+    setDeleteTarget(null);
+  }, []);
+
+  const handleConfirmDelete = useCallback(async () => {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    try {
+      await deleteUserIntegration(deleteTarget.id);
+      setIntegrations((prev) =>
+        prev ? prev.filter((i) => i.id !== deleteTarget.id) : prev
+      );
+      toast.success("Integração excluída");
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : "Falha ao excluir integração"
+      );
+    } finally {
+      setDeleting(false);
+      setDeleteTarget(null);
+    }
+  }, [deleteTarget, deleting]);
+
+  const [addDialogOpen, setAddDialogOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-[720px] items-center gap-3 px-6 py-4">
-          <MessageCircle size={24} className="text-primary" aria-hidden="true" />
+        <div className="mx-auto flex max-w-[1000px] items-center gap-3 px-6 py-4">
+          <Plug size={24} className="text-primary" aria-hidden="true" />
           <h1 className="text-xl font-semibold">Integrações</h1>
+          <Button size="sm" className="ml-auto" onClick={() => setAddDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Adicionar integração
+          </Button>
         </div>
       </header>
 
-      <main className="mx-auto flex max-w-[720px] flex-col gap-6 px-6 py-8">
-        <section className="rounded-md border border-border bg-card p-4">
-          <h2 className="font-medium">WhatsApp</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Gere um código de vínculo e envie-o como primeira mensagem para o
-            número da Jeff AI no WhatsApp para conectar sua conta.
+      <main className="mx-auto max-w-[1000px] px-6 py-6">
+        {integrationsError && (
+          <p className="mb-4 text-sm text-destructive" role="alert">
+            {integrationsError}
           </p>
+        )}
 
-          <Button className="mt-4" onClick={handleGenerate} disabled={loading}>
-            {loading ? "Gerando..." : "Gerar código de vínculo"}
-          </Button>
+        {integrationsLoading && !integrations && (
+          <div className="space-y-3">
+            <Skeleton className="h-14 w-full" />
+            <Skeleton className="h-14 w-full" />
+          </div>
+        )}
 
-          {error && (
-            <p className="mt-3 text-sm text-destructive" role="alert">
-              {error}
-            </p>
-          )}
+        {!integrationsLoading && !integrationsError && integrations?.length === 0 && (
+          <div className="rounded-md border border-dashed border-border py-16 text-center text-muted-foreground">
+            <p>Você ainda não tem integrações configuradas</p>
+          </div>
+        )}
 
-          {linkCode && (
-            <LinkCodeCard code={linkCode.code} expiresAt={linkCode.expires_at} />
-          )}
-        </section>
+        {integrations && integrations.length > 0 && (
+          <>
+            {/* Desktop table */}
+            <div className="hidden overflow-x-auto rounded-md border border-border md:block">
+              <table className="w-full text-sm">
+                <thead className="border-b border-border bg-muted/40 text-left">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Tipo</th>
+                    <th className="px-3 py-2 font-medium">Criado em</th>
+                    <th className="px-3 py-2 font-medium">Atualizado em</th>
+                    <th className="px-3 py-2 font-medium">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {integrations.map((integration) => {
+                    const meta = getIntegrationTypeMeta(integration.integration_type);
+                    const Icon = meta.icon;
+                    return (
+                      <tr
+                        key={integration.id}
+                        className="border-b border-border last:border-0"
+                      >
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <Icon className="h-4 w-4 text-muted-foreground" />
+                            <span>{meta.label}</span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {new Date(integration.created_at).toLocaleString()}
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {new Date(integration.updated_at).toLocaleString()}
+                        </td>
+                        <td className="px-3 py-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Excluir ${meta.label}`}
+                            onClick={() => handleAskDelete(integration)}
+                          >
+                            Excluir
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
 
-        <section className="rounded-md border border-border bg-card p-4">
-          <h2 className="font-medium">Telegram</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Gere um código de vínculo e envie-o como <code>/start &lt;código&gt;</code>{" "}
-            para o bot da Jeff AI no Telegram para conectar sua conta.
-          </p>
-
-          <Button
-            className="mt-4"
-            onClick={handleGenerateTelegram}
-            disabled={telegramLoading}
-          >
-            {telegramLoading ? "Gerando..." : "Gerar código de vínculo"}
-          </Button>
-
-          {telegramError && (
-            <p className="mt-3 text-sm text-destructive" role="alert">
-              {telegramError}
-            </p>
-          )}
-
-          {telegramLinkCode && (
-            <LinkCodeCard
-              code={telegramLinkCode.code}
-              expiresAt={telegramLinkCode.expires_at}
-            />
-          )}
-        </section>
+            {/* Mobile cards */}
+            <ul className="flex flex-col gap-3 md:hidden">
+              {integrations.map((integration) => {
+                const meta = getIntegrationTypeMeta(integration.integration_type);
+                const Icon = meta.icon;
+                return (
+                  <li
+                    key={integration.id}
+                    className="rounded-md border border-border p-3"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Icon className="h-4 w-4 text-muted-foreground" />
+                      <span className="font-medium">{meta.label}</span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Atualizado {new Date(integration.updated_at).toLocaleString()}
+                    </p>
+                    <div className="mt-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        aria-label={`Excluir ${meta.label}`}
+                        onClick={() => handleAskDelete(integration)}
+                      >
+                        Excluir
+                      </Button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
       </main>
+
+      <Dialog
+        open={deleteTarget != null}
+        onOpenChange={(open) => {
+          if (!open) handleCancelDelete();
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Excluir integração?</DialogTitle>
+            <DialogDescription>
+              Isso remove a integração{" "}
+              {deleteTarget && getIntegrationTypeMeta(deleteTarget.integration_type).label}.
+              Esta ação não pode ser desfeita.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={handleCancelDelete}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleConfirmDelete}
+              disabled={deleting}
+            >
+              Excluir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AddIntegrationDialog
+        open={addDialogOpen}
+        onOpenChange={setAddDialogOpen}
+        onLinked={loadIntegrations}
+      />
     </div>
   );
 }

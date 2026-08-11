@@ -200,6 +200,37 @@ async def test_archive_contact_cascades_notes_and_deals() -> None:
     assert any(n.id == note.id and n.archived_at is not None for n in notes_archived)
 
 
+async def test_get_contact_by_email_returns_match_case_insensitive() -> None:
+    """email-client-imap-mvp-task-inbox-4-unit-1 (REQ-006): match exato
+    case-insensitive entre `Contact.email` (do user) e o email procurado."""
+    from src.infrastructure.persistence.crm_repository import PostgresCrmRepository
+
+    user_id = _insert_test_user()
+    other_user = _insert_test_user()
+    repo = PostgresCrmRepository(_uri())
+
+    owner_contact = _new_contact(user_id, email="jane@example.com")
+    other_contact = _new_contact(other_user, email="jane@example.com")
+    await repo.create_contact(owner_contact)
+    await repo.create_contact(other_contact)
+
+    matched = await repo.get_contact_by_email(user_id, "Jane@Example.com")
+    assert matched is not None
+    assert matched.id == owner_contact.id
+
+
+async def test_get_contact_by_email_returns_none_when_no_match() -> None:
+    """email-client-imap-mvp-task-inbox-4-unit-1 (REQ-006): sem match, None."""
+    from src.infrastructure.persistence.crm_repository import PostgresCrmRepository
+
+    user_id = _insert_test_user()
+    repo = PostgresCrmRepository(_uri())
+    await repo.create_contact(_new_contact(user_id, email="jane@example.com"))
+
+    matched = await repo.get_contact_by_email(user_id, "unknown@other.com")
+    assert matched is None
+
+
 async def test_create_field_definition_rejects_duplicate_key() -> None:
     """crm-ext-task-persistence-1-unit-3: duplicata (user, entity, key) falha."""
     from src.domain.crm import DuplicateFieldDefinitionError

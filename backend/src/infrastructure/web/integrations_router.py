@@ -240,6 +240,30 @@ async def create_whatsapp_link_code_endpoint(
     return WhatsAppLinkCodeResponse(code=link_code.code, expires_at=link_code.expires_at)
 
 
+class ChannelLinkConfigResponse(BaseModel):
+    """Contrato HTTP de `GET /api/integrations/channel-config` (channel-link-wiring)."""
+
+    telegram_bot_username: str | None
+    whatsapp_business_number: str | None
+
+
+# Registrado ANTES de `GET /api/integrations/{integration_id}` — caso contrário
+# `channel-config` seria capturado como `integration_id="channel-config"` pela
+# rota dinâmica (FastAPI casa rotas na ordem de registro).
+@router.get("/api/integrations/channel-config")
+async def get_channel_link_config_endpoint(
+    user: User | None = Depends(require_auth),
+) -> ChannelLinkConfigResponse:
+    """channel-link-deep-links REQ-002: valores públicos (não-segredo), `null` quando não configurados."""
+    if user is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    return ChannelLinkConfigResponse(
+        telegram_bot_username=os.environ.get("TELEGRAM_BOT_USERNAME") or None,
+        whatsapp_business_number=os.environ.get("WHATSAPP_BUSINESS_NUMBER") or None,
+    )
+
+
 @router.get("/api/integrations/{integration_id}")
 async def get_integration_endpoint(
     integration_id: str,

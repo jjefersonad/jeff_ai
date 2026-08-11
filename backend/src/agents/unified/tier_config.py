@@ -92,6 +92,11 @@ TIER_1_TOOLS: tuple[str, ...] = (
     "crm_search_contacts",
     "crm_list_deals",
     "crm_list_field_definitions",
+    # Email — leituras (email-client-imap-mvp).
+    "list_emails",
+    "read_email",
+    "search_emails",
+    "get_email_accounts",
 )
 
 # Tier 2 — Escrita de NOVOS arquivos (sem interrupt_on; notificação no front).
@@ -163,6 +168,8 @@ TIER_3_TOOLS: tuple[str, ...] = (
     # modifica/destrói dado que já existia, não cria dado novo — por isso Tier 3
     # e não Tier 2 (onde ficam `save_memory`/`log_episode`, que só criam).
     "delete_memory",
+    # Email — envio (email-client-imap-mvp); phishing/spam risk, requires approval.
+    "send_email",
 )
 
 # Tier 4 — Shell com denylist (interrupt_on + gate de segurança prévio).
@@ -212,6 +219,8 @@ TIER_DESCRIPTIONS: Mapping[object, str] = {
         "(roda `npx skills add` e o conteúdo é carregado ao vivo)."
     ),
     "delete_memory": "Aprovação humana antes de remover uma entrada da memória de longo prazo.",
+    # Email (email-client-imap-mvp).
+    "send_email": "Aprovação humana antes de enviar um email (risco de phishing/spam).",
     # Overrides por tool (Tier 4).
     "run_shell_command": "Aprovação humana antes de executar comando de shell (passa denylist).",
 }
@@ -397,6 +406,55 @@ def _diff_for_git_commit(args: Mapping[str, Any]) -> str | None:
     return f"{DIFF_MARKER}git_commit\n\nMensagem: `{safe_message}`\n\n```diff\n{body}```"
 
 
+def _diff_for_send_email(args: Mapping[str, Any]) -> str | None:
+    """`send_email(...)` — preview dos campos antes do dispatch SMTP.
+
+    Renderiza `to`/`cc`/`bcc`/`subject`/`body_text` num bloco ```diff para
+    que o usuário consiga revisar exatamente o que vai sair antes de
+    aprovar o `interrupt_on` (REQ-005 email-inbox — Decision 4 do design).
+
+    Falha silenciosa: se algum campo obrigatório estiver ausente ou com
+    tipo errado, devolve `None` e o callable `_interrupt_description_for`
+    cai na descrição estática — o interrupt NUNCA trava por causa do diff.
+    """
+    to_addresses = args.get("to_addresses")
+    subject = args.get("subject")
+    body_text = args.get("body_text")
+    if not isinstance(to_addresses, list) or not isinstance(subject, str) or not isinstance(body_text, str):
+        return None
+
+    cc_addresses = args.get("cc_addresses") or []
+    bcc_addresses = args.get("bcc_addresses") or []
+
+    # Escapa backticks em todos os campos textuais para não quebrar o
+    # bloco markdown (mesma defesa usada em `_diff_for_git_commit`).
+    def _escape(value: str) -> str:
+        return value.replace("`", "\\`")
+
+    def _fmt_addrs(values: list[object]) -> str:
+        if not values:
+            return "(vazio)"
+        return ", ".join(str(v) for v in values)
+
+    sections: list[str] = [
+        f"Para:     {_fmt_addrs(to_addresses)}",
+        f"Cc:       {_fmt_addrs(cc_addresses)}" if cc_addresses else "",
+        f"Bcc:      {_fmt_addrs(bcc_addresses)}" if bcc_addresses else "",
+        f"Assunto:  {_escape(subject)}",
+        "",
+        "--- corpo (texto) ---",
+        _escape(body_text),
+    ]
+    body = _truncate_diff("\n".join(s for s in sections if s != ""))
+
+    return (
+        f"{DIFF_MARKER}send_email\n\n"
+        f"Para: `{_escape(_fmt_addrs(to_addresses))}`\n\n"
+        f"Assunto: `{_escape(subject)}`\n\n"
+        f"```diff\n{body}```"
+    )
+
+
 # Mapa tool_name → nome do helper de diff. Usar `globals().get(name)` no
 # momento da chamada (em vez de armazenar a referência no dict) permite
 # monkey-patching em testes e hot-reload em dev — o callable sempre
@@ -406,6 +464,7 @@ _DIFF_HELPERS: Mapping[str, str] = {
     "patch_file": "_diff_for_patch_file",
     "multi_file_edit": "_diff_for_multi_file_edit",
     "git_commit": "_diff_for_git_commit",
+    "send_email": "_diff_for_send_email",
 }
 
 

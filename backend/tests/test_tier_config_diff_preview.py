@@ -286,6 +286,167 @@ class TestBuildInterruptOnWithDiff:
 
 
 # --------------------------------------------------------------------------- #
+# send_email (email-client-imap-mvp-task-tools-2 — REQ-005)
+# --------------------------------------------------------------------------- #
+class TestSendEmailDiff:
+    """Aprovação do `send_email` (Tier 3) mostra um preview dos campos
+    `to`/`cc`/`bcc`/subject/body antes do dispatch SMTP. Sem o preview, o
+    usuário não tem como revisar o que vai sair.
+    """
+
+    def test_returns_preview_containing_all_recipients_and_body(self):
+        from src.agents.unified.tier_config import _diff_for_send_email
+
+        result = _diff_for_send_email(
+            {
+                "account_id": "acc-1",
+                "to_addresses": ["a@example.com", "b@example.com"],
+                "cc_addresses": ["c@example.com"],
+                "bcc_addresses": ["d@example.com"],
+                "subject": "Hello",
+                "body_text": "Body content here",
+                "body_html": "<p>Body content here</p>",
+            }
+        )
+        assert result is not None
+        assert result.startswith(DIFF_MARKER)
+        assert "send_email" in result
+        # to/cc/bcc aparecem — recipients visíveis no approval.
+        assert "a@example.com" in result
+        assert "b@example.com" in result
+        assert "c@example.com" in result
+        assert "d@example.com" in result
+        # subject + body presentes.
+        assert "Hello" in result
+        assert "Body content here" in result
+        # Bloco ```diff presente (consistente com outros helpers).
+        assert "```diff" in result
+
+    def test_renders_only_to_when_cc_bcc_absent(self):
+        from src.agents.unified.tier_config import _diff_for_send_email
+
+        result = _diff_for_send_email(
+            {
+                "to_addresses": ["solo@example.com"],
+                "subject": "s",
+                "body_text": "b",
+            }
+        )
+        assert result is not None
+        assert "solo@example.com" in result
+        # cc/bcc podem ser omitidos do render (não há ninguém), mas subject
+        # e body devem aparecer.
+        assert "s" in result
+        assert "b" in result
+
+    def test_returns_none_for_missing_required_fields(self):
+        from src.agents.unified.tier_config import _diff_for_send_email
+
+        # Falta `to_addresses`.
+        assert (
+            _diff_for_send_email(
+                {"subject": "s", "body_text": "b"}
+            )
+            is None
+        )
+        # Tipos errados.
+        assert (
+            _diff_for_send_email(
+                {"to_addresses": "not a list", "subject": "s", "body_text": "b"}
+            )
+            is None
+        )
+        # `to_addresses` vazio não é "missing" — ainda assim não devemos
+        # renderizar um send sem destinatário, mas a função renderiza e o
+        # backend recusa o envio em outro lugar.
+
+    def test_truncates_very_long_body(self):
+        from src.agents.unified.tier_config import _diff_for_send_email
+
+        big = "x\n" * 500
+        result = _diff_for_send_email(
+            {
+                "to_addresses": ["a@example.com"],
+                "subject": "s",
+                "body_text": big,
+            }
+        )
+        assert result is not None
+        # O body grande deve ter sido truncado com aviso, consistente com
+        # `_diff_for_edit_file` (que produz "linhas omitidas").
+        assert "omitid" in result.lower() or "truncad" in result.lower()
+
+    def test_escapes_backticks_in_subject_or_body(self):
+        from src.agents.unified.tier_config import _diff_for_send_email
+
+        result = _diff_for_send_email(
+            {
+                "to_addresses": ["a@example.com"],
+                "subject": "feat: `code` here",
+                "body_text": "see `foo`",
+            }
+        )
+        assert result is not None
+        # Backticks no subject/body devem vir escapados para não quebrar o bloco markdown.
+        assert "\\`code\\`" in result
+        assert "\\`foo\\`" in result
+
+
+class TestSendEmailTierAndRegistration:
+    """`send_email` deve estar em Tier 3 e registrado em `_DIFF_HELPERS`."""
+
+    def test_send_email_is_tier_3(self):
+        from src.agents.unified.tier_config import TIER_3_TOOLS, TIER_REGISTRY
+
+        assert "send_email" in TIER_3_TOOLS
+        assert TIER_REGISTRY["send_email"] == 3
+
+    def test_send_email_is_in_diff_helpers(self):
+        from src.agents.unified.tier_config import _DIFF_HELPERS
+
+        assert "send_email" in _DIFF_HELPERS
+        # O nome do helper é resolvido via globals() — string, não callable.
+        assert _DIFF_HELPERS["send_email"] == "_diff_for_send_email"
+
+    def test_interrupt_description_for_send_email_returns_marked_preview(self):
+        # Quando o langchain invoca o callable com tool_call real, o helper
+        # deve produzir string prefixada com DIFF_MARKER (mesma forma que
+        # os outros helpers Tier 3 — frontend detecta pelo prefixo).
+        result = _interrupt_description_for(
+            {
+                "name": "send_email",
+                "args": {
+                    "to_addresses": ["a@example.com"],
+                    "subject": "hi",
+                    "body_text": "hello",
+                },
+            }
+        )
+        assert result.startswith(DIFF_MARKER)
+        assert "send_email" in result
+
+    def test_build_interrupt_on_gives_send_email_callable_description(self):
+        from src.agents.unified.tier_config import build_interrupt_on
+
+        out = build_interrupt_on(["send_email"])
+        assert "send_email" in out
+        desc = out["send_email"].get("description")
+        assert callable(desc), "send_email deveria ter description callable"
+        # Callable executa e produz preview marcado.
+        rendered = desc(
+            {
+                "name": "send_email",
+                "args": {
+                    "to_addresses": ["a@example.com"],
+                    "subject": "hi",
+                    "body_text": "hello",
+                },
+            }
+        )
+        assert rendered.startswith(DIFF_MARKER)
+
+
+# --------------------------------------------------------------------------- #
 # _read_text_safely — file reading helper
 # --------------------------------------------------------------------------- #
 class TestReadTextSafely:

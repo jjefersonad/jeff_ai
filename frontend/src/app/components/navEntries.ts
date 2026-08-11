@@ -7,6 +7,7 @@ import {
   BriefcaseBusiness,
   CalendarClock,
   ImageIcon,
+  Mail,
   MessageCircle,
   MessagesSquare,
   Plug,
@@ -83,6 +84,13 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     description: "Contacts, companies, and deals",
     icon: BriefcaseBusiness,
     match: (p) => p === "/crm" || p.startsWith("/crm/"),
+  },
+  {
+    label: "Email",
+    href: "/email",
+    description: "Inbox and connected IMAP/SMTP accounts",
+    icon: Mail,
+    match: (p) => p === "/email" || p.startsWith("/email/"),
   },
 ];
 
