@@ -86,30 +86,8 @@ from src.tools.code_editing_tools import (
 )
 from src.tools.create_docx_document_tool import create_docx_document
 from src.tools.create_pdf_document_tool import create_pdf_document
-from src.tools.preview_html_document_tool import preview_html_document
 from src.tools.create_pptx_presentation_tool import create_pptx_presentation
 from src.tools.create_xlsx_spreadsheet_tool import create_xlsx_spreadsheet
-from src.tools.deep_agent_tools import get_date_time_current
-from src.tools.document_memory_tools import ingest_document, search_documents
-from src.tools.fetch_reference_image_tool import (
-    check_reference_image,
-    fetch_reference_image,
-)
-from src.tools.git_tools import (
-    git_apply_commit,
-    git_branch,
-    git_commit,
-    git_diff,
-    git_status,
-)
-from src.tools.memory_tools import (
-    delete_memory,
-    list_memories,
-    log_episode,
-    save_memory,
-    search_memory,
-)
-from src.tools.read_document_tool import read_document
 from src.tools.crm_tools import (
     crm_add_note,
     crm_create_deal,
@@ -121,6 +99,39 @@ from src.tools.crm_tools import (
     crm_update_field_definition,
     crm_upsert_contact,
 )
+from src.tools.deep_agent_tools import get_date_time_current
+from src.tools.delivery_tools import send_message
+from src.tools.document_memory_tools import ingest_document, search_documents
+from src.tools.email_tools import (
+    get_email_accounts,
+    list_emails,
+    read_email,
+    search_emails,
+    send_email,
+)
+from src.tools.fetch_reference_image_tool import (
+    check_reference_image,
+    fetch_reference_image,
+)
+from src.tools.git_tools import (
+    git_apply_commit,
+    git_branch,
+    git_commit,
+    git_diff,
+    git_status,
+)
+from src.tools.list_mcp_servers_status import (
+    list_mcp_servers_status,
+)
+from src.tools.memory_tools import (
+    delete_memory,
+    list_memories,
+    log_episode,
+    save_memory,
+    search_memory,
+)
+from src.tools.preview_html_document_tool import preview_html_document
+from src.tools.read_document_tool import read_document
 from src.tools.scheduling_tools import (
     cancel_scheduled_task,
     create_scheduled_task,
@@ -134,10 +145,6 @@ from src.tools.sdd_tools import (
     load_template,
     validate_artifact,
 )
-from src.tools.list_mcp_servers_status import (
-    list_mcp_servers_status,
-    set_status_provider,
-)
 from src.tools.self_extension import (
     find_external_skills,
     install_external_skill,
@@ -150,14 +157,13 @@ from src.tools.self_extension import (
     save_generated_tool,
 )
 from src.tools.tavily_tool import internet_search
-from src.tools.web_fetch_tool import web_fetch
 from src.tools.technical_spec_tools import merge_generated_files
-from src.tools.delivery_tools import send_message
 from src.tools.telegram_tools import (
     send_telegram_document,
     send_telegram_photo,
 )
 from src.tools.test_runner_tools import run_tests
+from src.tools.web_fetch_tool import web_fetch
 
 load_env()
 
@@ -419,6 +425,12 @@ _UNIFIED_TOOLS: list = [
     crm_list_field_definitions,
     crm_create_field_definition,
     crm_update_field_definition,
+    # --- Email (email-client-imap-mvp; Tier 1 read / Tier 3 send) ------ #
+    list_emails,
+    read_email,
+    search_emails,
+    get_email_accounts,
+    send_email,
     # --- Self-extension (listagens, leitura, tools geradas) --------------- #
     list_project_files,
     read_project_file,

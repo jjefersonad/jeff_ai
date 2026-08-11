@@ -11,6 +11,8 @@ interface TooltipIconButtonProps {
   icon: React.ReactNode;
   onClick: () => void;
   tooltip: string;
+  /** Defaults to `tooltip` so the button always has an accessible name. */
+  ariaLabel?: string;
   disabled?: boolean;
 }
 
@@ -18,6 +20,7 @@ export function TooltipIconButton({
   icon,
   onClick,
   tooltip,
+  ariaLabel,
   disabled,
 }: TooltipIconButtonProps) {
   return (
@@ -29,6 +32,7 @@ export function TooltipIconButton({
             size="icon"
             onClick={onClick}
             disabled={disabled}
+            aria-label={ariaLabel ?? tooltip}
           >
             {icon}
           </Button>

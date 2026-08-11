@@ -163,13 +163,27 @@ def main() -> int:
     # passado.
     from telegram.ext import CommandHandler, MessageHandler, filters
 
+    from src.application.use_cases.redeem_telegram_link_code import (
+        RedeemTelegramLinkCode,
+    )
     from src.infrastructure.agent_runtime.checkpoint_schema import (
         ensure_langgraph_checkpoint_schema,
+    )
+    from src.infrastructure.persistence import (
+        telegram_link_codes_schema,
+        user_integrations_schema,
+    )
+    from src.infrastructure.persistence.telegram_link_codes_repository import (
+        PostgresTelegramLinkCodeRepository,
+    )
+    from src.infrastructure.persistence.user_integrations_repository import (
+        PostgresUserIntegrationRepository,
     )
     from src.infrastructure.telegram.approval import make_approval_callback_handler
     from src.infrastructure.telegram.authorization import make_message_handler
     from src.infrastructure.telegram.commands import make_command_dispatcher
     from src.infrastructure.telegram.schema import ensure_telegram_threads_schema
+    from src.infrastructure.telegram.start_command import make_start_command_handler
     from src.infrastructure.usage import schema as usage_schema
 
     ensure_telegram_threads_schema(postgres_uri)
@@ -179,6 +193,13 @@ def main() -> int:
     # Schema UUID legado do LangGraph API pode faltar colunas aditivas
     # (`task_path`). Fail-fast aqui — nunca iniciar polling sem o DDL.
     ensure_langgraph_checkpoint_schema(postgres_uri)
+    # `/start <code>` (account linking) precisa das duas tabelas abaixo.
+    # O lifespan do webapp já garante esse schema, mas o gateway é um
+    # processo separado que pode subir antes/independente dele — mesmo
+    # raciocínio fail-fast dos três `ensure_*` acima (channel-link-wiring
+    # Decision 1).
+    telegram_link_codes_schema.ensure_schema(postgres_uri)
+    user_integrations_schema.ensure_schema(postgres_uri)
     runner = build_runner(postgres_uri=postgres_uri)
 
     application = build_application(config)
@@ -197,6 +218,24 @@ def main() -> int:
             ["new", "title", "resume", "sessions"],
             make_command_dispatcher(
                 authorized_chat_id=config.authorized_chat_id,
+                bot=application.bot,
+            ),
+        )
+    )
+    # `/start <code>` NÃO aplica `is_authorized_chat` (ver docstring de
+    # `start_command.py`) — o próprio propósito é vincular um chat_id ainda
+    # não autorizado. Registrado como `CommandHandler` próprio, não misturado
+    # ao dispatcher de `new/title/resume/sessions` (que exige autorização).
+    application.add_handler(
+        CommandHandler(
+            ["start"],
+            make_start_command_handler(
+                redeem_use_case=RedeemTelegramLinkCode(
+                    link_code_repository=PostgresTelegramLinkCodeRepository(postgres_uri),
+                    user_integration_repository=PostgresUserIntegrationRepository(
+                        postgres_uri
+                    ),
+                ),
                 bot=application.bot,
             ),
         )

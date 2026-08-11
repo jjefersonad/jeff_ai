@@ -115,6 +115,60 @@ describe("NavSidebar — CRM entry (add-simple-crm-module-task-frontend-1 unit-1
   });
 });
 
+describe("NavSidebar — responsive rendering unaffected by hook extraction (mobile-conversations-drawer-task-hook-1 unit-2 / REQ-001)", () => {
+  beforeEach(() => {
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      isRehydrating: false,
+      user: { username: "alice", role: "user" },
+    });
+  });
+
+  it("WHEN viewport is mobile-width THEN the nav renders as a fixed overlay drawer with a close button", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: true,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    render(<NavSidebar />);
+
+    const nav = await screen.findByTestId("nav-sidebar");
+    expect(nav.className).toContain("fixed");
+    expect(
+      screen.getByRole("button", { name: /close navigation/i })
+    ).toBeInTheDocument();
+  });
+
+  it("WHEN viewport is desktop-width THEN the nav renders as an inline push panel with no close button", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+
+    render(<NavSidebar />);
+
+    const nav = await screen.findByTestId("nav-sidebar");
+    expect(nav.className).not.toContain("fixed");
+    expect(
+      screen.queryByRole("button", { name: /close navigation/i })
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("NavSidebar — Usuários entry hidden for non-admin (user-management-frontend-5 unit-2 / REQ-005)", () => {
   beforeEach(() => {
     mockUseAuth.mockReset();

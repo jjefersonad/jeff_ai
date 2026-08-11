@@ -20,6 +20,7 @@ import {
 import { ThreadList } from "@/app/components/ThreadList";
 import { ChatProvider } from "@/providers/ChatProvider";
 import { ChatInterface } from "@/app/components/ChatInterface";
+import { useIsMobile } from "@/app/hooks/useIsMobile";
 
 interface HomePageInnerProps {
   config: StandaloneConfig;
@@ -36,6 +37,7 @@ function ChatPageInner({ config }: HomePageInnerProps) {
   const client = useClient();
   const [threadId, setThreadId] = useQueryState("threadId");
   const [sidebar, setSidebar] = useQueryState("sidebar");
+  const isMobile = useIsMobile();
 
   const [mutateThreads, setMutateThreads] = useState<(() => void) | null>(null);
   const [interruptCount, setInterruptCount] = useState(0);
@@ -105,6 +107,35 @@ function ChatPageInner({ config }: HomePageInnerProps) {
     fetchAssistant();
   }, [fetchAssistant]);
 
+  // Close the mobile thread-history drawer on `Esc`. Only attached while the
+  // drawer is open on mobile — on desktop the panel is a persistent push
+  // panel, so `Esc` should not close it. Kept local rather than extracted
+  // into the shared `useIsMobile` hook module (design D3): it is a small,
+  // non-SSR-sensitive effect, unlike `useIsMobile` itself.
+  useEffect(() => {
+    if (!sidebar || !isMobile) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSidebar(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [sidebar, isMobile, setSidebar]);
+
+  const threadListElement = (
+    <ThreadList
+      onThreadSelect={async (id) => {
+        await setThreadId(id);
+      }}
+      onMutateReady={(fn) => setMutateThreads(() => fn)}
+      onClose={() => setSidebar(null)}
+      onInterruptCountChange={setInterruptCount}
+    />
+  );
+
   return (
     <div className="flex h-full flex-col">
       {/* Chat-specific toolbar: thread-history toggle + new-thread action.
@@ -139,11 +170,33 @@ function ChatPageInner({ config }: HomePageInnerProps) {
         </Button>
       </div>
       <div className="flex-1 overflow-hidden">
+        {sidebar && isMobile && (
+          <>
+            {/* Mobile overlay drawer for the thread-history panel — ported
+                from NavSidebar.tsx's mobile pattern (design D1/D2/D4 of
+                mobile-conversations-drawer). Rendered as a sibling of
+                ResizablePanelGroup, not nested inside it, so
+                ResizablePanel/ResizableHandle are never mounted on mobile. */}
+            <div
+              aria-hidden="true"
+              data-testid="thread-history-backdrop"
+              onClick={() => setSidebar(null)}
+              className="fixed inset-0 z-40 bg-black/50"
+            />
+            <div
+              data-testid="thread-history-drawer"
+              className="fixed inset-y-0 left-0 z-50 w-[85vw] max-w-sm bg-background shadow-lg"
+            >
+              {threadListElement}
+            </div>
+          </>
+        )}
+
         <ResizablePanelGroup
           direction="horizontal"
           autoSaveId="standalone-chat"
         >
-          {sidebar && (
+          {sidebar && !isMobile && (
             <>
               <ResizablePanel
                 id="thread-history"
@@ -152,14 +205,7 @@ function ChatPageInner({ config }: HomePageInnerProps) {
                 minSize={20}
                 className="relative md:min-w-[380px]"
               >
-                <ThreadList
-                  onThreadSelect={async (id) => {
-                    await setThreadId(id);
-                  }}
-                  onMutateReady={(fn) => setMutateThreads(() => fn)}
-                  onClose={() => setSidebar(null)}
-                  onInterruptCountChange={setInterruptCount}
-                />
+                {threadListElement}
               </ResizablePanel>
               <ResizableHandle />
             </>

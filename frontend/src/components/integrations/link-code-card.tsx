@@ -10,6 +10,12 @@ export interface LinkCodeCardProps {
   code: string;
   expiresAt: string;
   onCopy?: () => void;
+  /**
+   * Optional deep-link href (channel-link-deep-links REQ-001).
+   * When provided, a "Abrir chat" button is rendered next to the copy button.
+   * When `undefined`, nothing extra is rendered — graceful degradation per REQ-002.
+   */
+  deepLinkHref?: string;
 }
 
 /**
@@ -18,7 +24,7 @@ export interface LinkCodeCardProps {
  * the code-card layout stays in one place (design D2 of
  * telegram-integration-frontend-registration).
  */
-export function LinkCodeCard({ code, expiresAt, onCopy }: LinkCodeCardProps) {
+export function LinkCodeCard({ code, expiresAt, onCopy, deepLinkHref }: LinkCodeCardProps) {
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(code);
     toast.success("Código copiado");
@@ -33,14 +39,28 @@ export function LinkCodeCard({ code, expiresAt, onCopy }: LinkCodeCardProps) {
           Expira em {new Date(expiresAt).toLocaleString()}
         </p>
       </div>
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={handleCopy}
-        aria-label="Copiar código"
-      >
-        <Copy className="h-3.5 w-3.5" />
-      </Button>
+      <div className="flex items-center gap-2">
+        {deepLinkHref && (
+          <Button
+            variant="outline"
+            size="sm"
+            asChild
+            aria-label="Abrir chat para vincular"
+          >
+            <a href={deepLinkHref} target="_blank" rel="noopener noreferrer">
+              Abrir chat
+            </a>
+          </Button>
+        )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleCopy}
+          aria-label="Copiar código"
+        >
+          <Copy className="h-3.5 w-3.5" />
+        </Button>
+      </div>
     </div>
   );
 }

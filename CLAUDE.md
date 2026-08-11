@@ -193,6 +193,14 @@ Python tuning also live in the root file: `GOOGLE_API_KEY`, `TAVILY_API_KEY`,
 (`/api/webhooks/whatsapp/<token>`) — the route's real auth, since that path is in
 `PUBLIC_PATHS`.
 
+**`TELEGRAM_BOT_USERNAME`** / **`WHATSAPP_BUSINESS_NUMBER`** (both optional): public
+`@handle`/E.164 number used to build one-click deep links (`t.me/<username>?start=<code>`,
+`wa.me/<number>?text=<code>`) on the "Adicionar integração" flow. Read at runtime by
+`GET /api/integrations/channel-config` (`require_auth`) — deliberately **not**
+`NEXT_PUBLIC_*`, so rotating either value (e.g. after a WhatsApp number ban) only needs a
+backend restart, not a frontend rebuild. Missing either value just hides that channel's
+deep link; the copy-code fallback keeps working.
+
 See `./.env.example` for the full commented catalog.
 
 ### Production deploy

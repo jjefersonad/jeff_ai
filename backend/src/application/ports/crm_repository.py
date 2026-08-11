@@ -77,6 +77,17 @@ class CrmRepositoryPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_contact_by_email(self, user_id: str, email: str) -> Contact | None:
+        """Retorna o contato do user cujo `email` bate exatamente.
+
+        Match é case-insensitive. Usado pelo sync worker de email para
+        associar mensagens a contatos do CRM (`email-client-imap-mvp`
+        REQ-006) — escopado a `user_id` para nunca devolver contatos de
+        outro usuário. Retorna `None` se não houver match.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     async def list_contacts(
         self,
         user_id: str,

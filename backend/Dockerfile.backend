@@ -103,7 +103,13 @@ RUN pip install --no-cache-dir \
     # ser montado em `webapp.py`: `app.include_router(scheduling_router)`
     # derrubava o container inteiro com `ModuleNotFoundError: No module named
     # 'apscheduler'` no boot. Versão alinhada com o `.venv` local (2026-08-04).
-    "apscheduler==3.11.3"
+    "apscheduler==3.11.3" \
+    # Necessário para o cliente IMAP (`src/infrastructure/email/imap_client.py`).
+    "aioimaplib>=1.1.0" \
+    # Necessário para o cliente SMTP (`src/infrastructure/email/smtp_client.py`).
+    "aiosmtplib>=3.0.0" \
+    # Necessário para sanitização de HTML de email (`src/infrastructure/email/imap_client.py`).
+    "nh3>=0.2.0"
 
 ENV PYTHONPATH="/deps/backend:$PYTHONPATH"
 # `store` e `checkpointer` são lidos do `langgraph.json` (que resolve

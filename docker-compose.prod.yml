@@ -152,6 +152,41 @@ services:
     networks:
       - jeff_ia-network
 
+  # === Email Sync Worker (change email-client-imap-mvp) ===
+  # Mesma imagem do backend, entrypoint customizado para rodar o loop do
+  # `email_sync_worker` em vez do `uvicorn` herdado. `POSTGRES_URI` já é
+  # obrigatória no `.env` em produção (`docker-compose.prod.yml` falha
+  # rápido se estiver ausente), então aqui usamos `${VAR:?…}` para
+  # preservar o gate — mesmo padrão do `backend`/`telegram_gateway` neste
+  # compose. `EMAIL_SYNC_POLL_INTERVAL_SECONDS` é opcional com default
+  # conservador dentro do script Python; o operador pode tunar via `.env`
+  # sem rebuild.
+  email_sync_worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.backend
+    container_name: jeff_ia_email_sync_worker
+    restart: unless-stopped
+    environment:
+      POSTGRES_URI: ${POSTGRES_URI:?defina POSTGRES_URI em .env}
+      EMAIL_SYNC_POLL_INTERVAL_SECONDS: ${EMAIL_SYNC_POLL_INTERVAL_SECONDS:-60}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3002}
+      BASE_URL: ${BASE_URL:-}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?defina NEXT_PUBLIC_API_URL em .env}
+      JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
+      TZ: ${JEFF_AI_TZ:-UTC}
+    depends_on:
+      - backend
+    # Substitui o ENTRYPOINT da imagem langgraph-api (uvicorn) — ver nota
+    # completa em docker-compose.yml.
+    entrypoint: ["/bin/sh", "/deps/backend/email_sync_worker_entrypoint.sh"]
+    # Sem healthcheck: loop asyncio sem porta exposta. Mesmo tratamento
+    # do `telegram_gateway` neste compose.
+    healthcheck:
+      disable: true
+    networks:
+      - jeff_ia-network
+
 networks:
   jeff_ia-network:
     driver: bridge

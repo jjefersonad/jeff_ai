@@ -28,8 +28,10 @@ import pytest
 from telegram import Chat, Message, MessageEntity, Update
 from telegram.ext import CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
+from src.application.use_cases.redeem_telegram_link_code import RedeemTelegramLinkCode
 from src.infrastructure.telegram import approval as telegram_approval
 from src.infrastructure.telegram import schema as telegram_schema
+from src.infrastructure.telegram import start_command as telegram_start_command
 from src.infrastructure.telegram import telegram_gateway
 from src.infrastructure.usage import schema as usage_schema
 
@@ -207,6 +209,14 @@ def test_main_registers_message_and_command_handlers_before_polling(
         "src.infrastructure.agent_runtime.checkpoint_schema.ensure_langgraph_checkpoint_schema",
         lambda uri: None,
     )
+    monkeypatch.setattr(
+        "src.infrastructure.persistence.telegram_link_codes_schema.ensure_schema",
+        lambda uri: None,
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.persistence.user_integrations_schema.ensure_schema",
+        lambda uri: None,
+    )
     monkeypatch.setattr(telegram_gateway, "build_runner", lambda *, postgres_uri: object())
 
     recording_app = _RecordingApplication()
@@ -265,10 +275,11 @@ def test_main_registers_callback_query_handler_after_message_and_command(
 
     Given a `main()` run with valid env vars and a fake `Application` whose
     `add_handler` records each call, `main()` MUST call `add_handler`
-    exactly 3 times: one for `MessageHandler` (filters.TEXT & ~filters.COMMAND,
+    exactly 4 times: one for `MessageHandler` (filters.TEXT & ~filters.COMMAND,
     the existing message handler), one for `CommandHandler` (existing
-    /new /title /resume /sessions), and one for `CallbackQueryHandler`
-    (new — produced by `approval.make_approval_callback_handler`).
+    /new /title /resume /sessions), one for the `/start` `CommandHandler`
+    (`channel-link-wiring`, account linking), and one for `CallbackQueryHandler`
+    (produced by `approval.make_approval_callback_handler`).
 
     The CallbackQueryHandler MUST be the LAST one registered
     (handler-order invariant — the same order used by `python-telegram-bot`
@@ -281,6 +292,14 @@ def test_main_registers_callback_query_handler_after_message_and_command(
     monkeypatch.setattr(usage_schema, "ensure_schema", lambda uri: None)
     monkeypatch.setattr(
         "src.infrastructure.agent_runtime.checkpoint_schema.ensure_langgraph_checkpoint_schema",
+        lambda uri: None,
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.persistence.telegram_link_codes_schema.ensure_schema",
+        lambda uri: None,
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.persistence.user_integrations_schema.ensure_schema",
         lambda uri: None,
     )
     monkeypatch.setattr(telegram_gateway, "build_runner", lambda *, postgres_uri: object())
@@ -312,19 +331,21 @@ def test_main_registers_callback_query_handler_after_message_and_command(
 
     assert exit_code == 0
     assert recording_app.run_polling_called is True
-    assert len(recording_app.handlers) == 3, (
-        f"main() deve registrar exatamente 3 handlers "
-        f"(MessageHandler, CommandHandler, CallbackQueryHandler), "
+    assert len(recording_app.handlers) == 4, (
+        f"main() deve registrar exatamente 4 handlers "
+        f"(MessageHandler, CommandHandler, CommandHandler[start], CallbackQueryHandler), "
         f"registrou {len(recording_app.handlers)}: {recording_app.handlers!r}"
     )
 
     # Tipos esperados.
     assert isinstance(recording_app.handlers[0], MessageHandler)
     assert isinstance(recording_app.handlers[1], CommandHandler)
+    assert isinstance(recording_app.handlers[2], CommandHandler)
+    assert "start" in recording_app.handlers[2].commands
     # O CallbackQueryHandler é o ÚLTIMO registrado.
-    assert isinstance(recording_app.handlers[2], CallbackQueryHandler), (
+    assert isinstance(recording_app.handlers[3], CallbackQueryHandler), (
         "CallbackQueryHandler deve ser registrado por ÚLTIMO "
-        "(após MessageHandler e CommandHandler)."
+        "(após MessageHandler e os dois CommandHandler)."
     )
 
     # A fábrica foi invocada com os args corretos.
@@ -355,6 +376,14 @@ def test_main_calls_checkpoint_schema_ensure_before_run_polling(
     monkeypatch.setattr(
         "src.infrastructure.agent_runtime.checkpoint_schema.ensure_langgraph_checkpoint_schema",
         lambda uri: call_order.append(f"ensure:{uri}"),
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.persistence.telegram_link_codes_schema.ensure_schema",
+        lambda uri: None,
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.persistence.user_integrations_schema.ensure_schema",
+        lambda uri: None,
     )
     monkeypatch.setattr(
         telegram_gateway, "build_runner", lambda *, postgres_uri: object()
@@ -398,3 +427,112 @@ def test_main_calls_checkpoint_schema_ensure_before_run_polling(
 
     assert recording_app.run_polling_called is False
     assert "run_polling" not in call_order
+
+
+def test_main_registers_start_command_handler(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit 'gateway registers /start handler' (channel-link-wiring-task-gateway-1
+    unit-1 / telegram-start-command-wiring REQ-001).
+
+    main() MUST register a CommandHandler covering "start", wired to
+    make_start_command_handler backed by a RedeemTelegramLinkCode instance.
+    """
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "123")
+    monkeypatch.setenv("POSTGRES_URI", "postgresql://fake")
+    monkeypatch.setattr(telegram_schema, "ensure_telegram_threads_schema", lambda uri: None)
+    monkeypatch.setattr(usage_schema, "ensure_schema", lambda uri: None)
+    monkeypatch.setattr(
+        "src.infrastructure.agent_runtime.checkpoint_schema.ensure_langgraph_checkpoint_schema",
+        lambda uri: None,
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.persistence.telegram_link_codes_schema.ensure_schema",
+        lambda uri: None,
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.persistence.user_integrations_schema.ensure_schema",
+        lambda uri: None,
+    )
+    monkeypatch.setattr(telegram_gateway, "build_runner", lambda *, postgres_uri: object())
+
+    factory_called_with: dict[str, Any] = {}
+
+    def _fake_start_factory(*, redeem_use_case: Any, bot: Any) -> Any:
+        factory_called_with["redeem_use_case"] = redeem_use_case
+        factory_called_with["bot"] = bot
+
+        async def _noop(update: Any, context: Any) -> None:
+            return None
+
+        return _noop
+
+    monkeypatch.setattr(
+        telegram_start_command, "make_start_command_handler", _fake_start_factory
+    )
+
+    recording_app = _RecordingApplication()
+    monkeypatch.setattr(telegram_gateway, "build_application", lambda _cfg: recording_app)
+
+    exit_code = telegram_gateway.main()
+
+    assert exit_code == 0
+    command_handlers = [h for h in recording_app.handlers if isinstance(h, CommandHandler)]
+    start_handlers = [h for h in command_handlers if "start" in h.commands]
+    assert len(start_handlers) == 1, (
+        "expected exactly one CommandHandler covering 'start', found command "
+        f"handlers: {[getattr(h, 'commands', None) for h in command_handlers]}"
+    )
+    assert isinstance(factory_called_with.get("redeem_use_case"), RedeemTelegramLinkCode)
+    assert factory_called_with.get("bot") is recording_app.bot
+
+
+def test_main_ensures_telegram_link_codes_and_user_integrations_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unit 'gateway ensures telegram_link_codes/user_integrations schema'
+    (channel-link-wiring-task-gateway-1 unit-2 / telegram-start-command-wiring REQ-001).
+
+    Both schema-ensure calls MUST happen before run_polling(), mirroring the
+    gateway's existing fail-fast pattern for its other three schemas.
+    """
+    call_order: list[str] = []
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-token")
+    monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "123")
+    monkeypatch.setenv("POSTGRES_URI", "postgresql://schema-test")
+    monkeypatch.setattr(telegram_schema, "ensure_telegram_threads_schema", lambda uri: None)
+    monkeypatch.setattr(usage_schema, "ensure_schema", lambda uri: None)
+    monkeypatch.setattr(
+        "src.infrastructure.agent_runtime.checkpoint_schema.ensure_langgraph_checkpoint_schema",
+        lambda uri: None,
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.persistence.telegram_link_codes_schema.ensure_schema",
+        lambda uri: call_order.append(f"telegram_link_codes:{uri}"),
+    )
+    monkeypatch.setattr(
+        "src.infrastructure.persistence.user_integrations_schema.ensure_schema",
+        lambda uri: call_order.append(f"user_integrations:{uri}"),
+    )
+    monkeypatch.setattr(telegram_gateway, "build_runner", lambda *, postgres_uri: object())
+
+    recording_app = _RecordingApplication()
+    monkeypatch.setattr(telegram_gateway, "build_application", lambda _cfg: recording_app)
+
+    def _run_polling(*_a: Any, **_k: Any) -> None:
+        call_order.append("run_polling")
+        recording_app.run_polling_called = True
+
+    monkeypatch.setattr(recording_app, "run_polling", _run_polling)
+
+    exit_code = telegram_gateway.main()
+
+    assert exit_code == 0
+    assert "telegram_link_codes:postgresql://schema-test" in call_order
+    assert "user_integrations:postgresql://schema-test" in call_order
+    assert call_order.index("telegram_link_codes:postgresql://schema-test") < call_order.index(
+        "run_polling"
+    )
+    assert call_order.index("user_integrations:postgresql://schema-test") < call_order.index(
+        "run_polling"
+    )

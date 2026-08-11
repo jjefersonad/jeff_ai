@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, within, act } from "@testing-library/react";
 
@@ -5,8 +6,28 @@ import { ChatInterface } from "./ChatInterface";
 
 const mockUseChatContext = vi.fn();
 
+// `ChatInterface` is `React.memo`-wrapped. In the real app `useChatContext`
+// subscribes to a real React Context, and Context updates always propagate
+// through a memo boundary regardless of prop equality. A plain mocked
+// function call does NOT reproduce that — RTL's `rerender()` with identical
+// props hits the memo bailout and the component body never re-executes. This
+// `useSyncExternalStore`-backed mock restores the "internal subscription
+// update bypasses memo" behavior so `chat-empty-state-input` REQ-002's
+// same-mount transition can be tested faithfully (see task-empty-2).
+const chatContextListeners = new Set<() => void>();
+function notifyChatContextChange() {
+  chatContextListeners.forEach((listener) => listener());
+}
+
 vi.mock("@/providers/ChatProvider", () => ({
-  useChatContext: () => mockUseChatContext(),
+  useChatContext: () =>
+    useSyncExternalStore(
+      (listener) => {
+        chatContextListeners.add(listener);
+        return () => chatContextListeners.delete(listener);
+      },
+      () => mockUseChatContext()
+    ),
 }));
 
 vi.mock("use-stick-to-bottom", () => ({
@@ -314,5 +335,67 @@ describe("ChatInterface — chat-viewport-docking (task-mobile-2)", () => {
     
     expect(visualViewport.removeEventListener).toHaveBeenCalledWith("resize", expect.any(Function));
     expect(visualViewport.removeEventListener).toHaveBeenCalledWith("scroll", expect.any(Function));
+  });
+});
+
+describe("ChatInterface — chat-empty-state-input (task-empty-2)", () => {
+  beforeEach(() => {
+    mockUseChatContext.mockReset();
+  });
+
+  it("REQ-002: transitions from centered to docked when the first message arrives, without unmounting", () => {
+    mockUseChatContext.mockReturnValue(baseChatContext({ messages: [] }));
+    render(<ChatInterface assistant={null} assistantId="unified" />);
+
+    const before = screen.getByTestId("chat-input-dock");
+    expect(before.className).toMatch(/\bitems-center\b/);
+
+    mockUseChatContext.mockReturnValue(
+      baseChatContext({
+        messages: [{ id: "1", type: "human", content: "hi" }],
+      })
+    );
+    // Simulates a real Context update (the same mount receiving new
+    // `messages` from `useChatContext`), not a remount.
+    act(() => {
+      notifyChatContextChange();
+    });
+
+    const after = screen.getByTestId("chat-input-dock");
+    expect(after).toBe(before); // same DOM node — no unmount/remount
+    expect(after.className).toMatch(/\bfixed\b/);
+    expect(after.className).not.toMatch(/\bitems-center\b/);
+  });
+});
+
+describe("ChatInterface — chat-empty-state-input (task-empty-3)", () => {
+  beforeEach(() => {
+    mockUseChatContext.mockReset();
+  });
+
+  it("REQ-003: a thread loaded with existing messages renders docked on the first render, never centered", () => {
+    mockUseChatContext.mockReturnValue(
+      baseChatContext({
+        messages: [
+          { id: "1", type: "human", content: "hi" },
+          { id: "2", type: "ai", content: "hello" },
+        ],
+      })
+    );
+    render(<ChatInterface assistant={null} assistantId="unified" />);
+
+    const wrapper = screen.getByTestId("chat-input-dock");
+    expect(wrapper.className).toMatch(/\bfixed\b/);
+    expect(wrapper.className).not.toMatch(/\bitems-center\b/);
+  });
+
+  it("REQ-003: a thread still loading (isThreadLoading) does not show the centered empty state either", () => {
+    mockUseChatContext.mockReturnValue(
+      baseChatContext({ messages: [], isThreadLoading: true })
+    );
+    render(<ChatInterface assistant={null} assistantId="unified" />);
+
+    const wrapper = screen.getByTestId("chat-input-dock");
+    expect(wrapper.className).not.toMatch(/\bitems-center\b/);
   });
 });

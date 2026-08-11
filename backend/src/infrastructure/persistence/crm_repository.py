@@ -378,6 +378,27 @@ class PostgresCrmRepository(CrmRepositoryPort):
                 row = await cur.fetchone()
         return _row_to_contact(row) if row is not None else None
 
+    async def get_contact_by_email(self, user_id: str, email: str) -> Contact | None:
+        """Match exato case-insensitive de `email` para um contato do user.
+
+        Filtra por `user_id` para nunca devolver contato de outro usuário
+        (`email-client-imap-mvp` REQ-006). Em caso de múltiplos matches
+        (sem UNIQUE constraint em `email`), retorna o mais recentemente
+        atualizado (`updated_at DESC`) — escolha estável e alinhada ao
+        ordenamento default de `list_contacts_page`.
+        """
+        async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"SELECT {_CONTACT_COLUMNS} FROM crm_contacts "
+                    "WHERE user_id = %s AND email IS NOT NULL "
+                    "AND LOWER(email) = LOWER(%s) "
+                    "ORDER BY updated_at DESC LIMIT 1",
+                    (user_id, email),
+                )
+                row = await cur.fetchone()
+        return _row_to_contact(row) if row is not None else None
+
     def _contact_filters(
         self,
         user_id: str,
@@ -744,7 +765,7 @@ class PostgresCrmRepository(CrmRepositoryPort):
     ) -> list[Note]:
         if target_column not in {"contact_id", "company_id", "deal_id"}:
             raise ValueError(f"coluna de alvo inválida: {target_column}")
-        clauses = [f"user_id = %s", f"{target_column} = %s"]
+        clauses = ["user_id = %s", f"{target_column} = %s"]
         params: list[object] = [user_id, target_id]
         if not include_archived:
             clauses.append("archived_at IS NULL")

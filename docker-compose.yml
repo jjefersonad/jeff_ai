@@ -261,6 +261,49 @@ services:
     networks:
       - jeff_ia-network
 
+  # === Email Sync Worker (change email-client-imap-mvp) ===
+  # Container dedicado de vida longa que poll as `email_accounts.is_active=true`
+  # em intervalos configuráveis e persiste mensagens em Postgres. Modelado em
+  # `telegram_gateway` (design Decision 2 de `email-client-imap-mvp`):
+  # independente do processo da API HTTP, `restart: unless-stopped` para
+  # sobreviver a crashes.
+  #
+  # Reaproveita a imagem do `backend` com entrypoint customizado — o ENTRYPOINT
+  # da imagem `langchain/langgraph-api:3.11` é `/storage/entrypoint.sh` que
+  # termina com `exec uvicorn …`, então `entrypoint:` precisa ser **substituído**
+  # (não `command:`, ver nota em `telegram_gateway` logo acima).
+  #
+  # `EMAIL_SYNC_POLL_INTERVAL_SECONDS` é opcional; default conservador de 60s
+  # dentro do script Python. Não redeclarar `POSTGRES_*` aqui fora do bloco
+  # `environment:` quebraria a resolução quando o `.env` não exporta no shell
+  # do host (mesma armadilha registrada para o `telegram_gateway`).
+  email_sync_worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.backend
+    container_name: jeff_ia_email_sync_worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_URI: ${POSTGRES_URI:-postgresql://${POSTGRES_USER:-jeff_ia}:${POSTGRES_PASSWORD:-jeff_ia}@jeff_ia_postgres:5432/${POSTGRES_DB:-jeff_ia}}
+      EMAIL_SYNC_POLL_INTERVAL_SECONDS: ${EMAIL_SYNC_POLL_INTERVAL_SECONDS:-60}
+      JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
+      TZ: ${JEFF_AI_TZ:-UTC}
+    depends_on:
+      jeff_ia_postgres:
+        condition: service_healthy
+    # Mesmo motivo do `telegram_gateway`: monta `src` para DEV/teste sem
+    # rebuild. Em produção real esse mount é dispensável.
+    volumes:
+      - ./backend/src:/deps/backend/src
+    entrypoint: ["/bin/sh", "/deps/backend/email_sync_worker_entrypoint.sh"]
+    # Sem healthcheck: o worker é um loop asyncio, não expõe porta. O
+    # `restart: unless-stopped` + `docker compose ps` cobrem detecção de
+    # crash. Mesmo tratamento do `telegram_gateway`.
+    networks:
+      - jeff_ia-network
+
 volumes:
   postgres_data:
     driver: local

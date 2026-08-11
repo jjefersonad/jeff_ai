@@ -4,9 +4,10 @@
  * Primary navigation sidebar for the authenticated layout.
  *
  * Renders **Chat**, **Images**, **MCP Servers**, **Integrações**,
- * **Agendamentos**, **CRM**, and (for `role=admin` only) **Consumo** and
- * **Usuários** — linking to `/`, `/images`, `/mcp-servers`, `/integrations`,
- * `/scheduling`, `/crm`, `/usage`, and `/admin/users`.
+ * **Agendamentos**, **CRM**, **Email**, and (for `role=admin` only) **Consumo**
+ * and **Usuários** — linking to `/`, `/images`, `/mcp-servers`,
+ * `/integrations`, `/scheduling`, `/crm`, `/email`, `/usage`, and
+ * `/admin/users`.
  * **Chat** exists because the top-bar "JEFF AI" link back to `/` isn't an
  * obvious return path once a user has navigated into a full sidebar
  * destination. The active entry (matching the current pathname) is
@@ -32,43 +33,20 @@
  * `?sidebar=` query state (left untouched by this component).
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { usePathname } from "next/navigation";
 import { XIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useNavSidebar } from "@/app/components/NavSidebarProvider";
+import { useIsMobile } from "@/app/hooks/useIsMobile";
 import {
   getVisibleNavEntries,
   NAV_ENTRIES,
   type NavEntry,
 } from "@/app/components/navEntries";
 import { useAuth } from "@/providers/AuthProvider";
-
-const MOBILE_BREAKPOINT = 768; // px — see D4 of the design.
-
-function useIsMobile(): boolean {
-  // SSR-safe: starts `false` (desktop) on both server and client, then
-  // syncs to the real value in the effect. This avoids hydration mismatch
-  // and keeps the desktop default behaviour during the first paint.
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
-    const onChange = (event: MediaQueryListEvent) => {
-      setIsMobile(event.matches);
-    };
-    setIsMobile(mql.matches);
-    mql.addEventListener("change", onChange);
-    return () => {
-      mql.removeEventListener("change", onChange);
-    };
-  }, []);
-
-  return isMobile;
-}
 
 /**
  * Close the sidebar on `Esc`. Only attached when the sidebar is open and the

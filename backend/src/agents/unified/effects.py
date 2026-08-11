@@ -407,6 +407,20 @@ TOOL_EFFECTS: Final[Mapping[str, tuple[Any, ...]]] = {
     "install_external_skill": _network_write_new_shell(),
     # --- Execução de testes (Tier 1) -------------------------------------
     "run_tests": _read_only(),
+    # --- Email (Tier 1 read / Tier 3 send; `email-client-imap-mvp`) ------
+    # Faltavam do registry: sem entrada, `classify()` caía em `UNKNOWN`
+    # (não é `UNKNOWN` do piso) e o `EnvelopeMiddleware` escondia as 5
+    # tools do modelo em `wrap_model_call` — o agente ficava sem acesso
+    # a email mesmo com as tools registradas em `_UNIFIED_TOOLS` e
+    # classificadas em `tier_config.py`. Leituras são `READ` (piso, sem
+    # atrito); `send_email` é `NETWORK` (piso) — a aprovação continua
+    # vindo do `interrupt_on` de Tier 3 (risco de phishing/spam), gate
+    # independente do envelope.
+    "list_emails": _read_only(),
+    "read_email": _read_only(),
+    "search_emails": _read_only(),
+    "get_email_accounts": _read_only(),
+    "send_email": _network(),
 }
 
 

@@ -118,6 +118,16 @@ EXPECTED_AGENT_TOOLS: frozenset[str] = frozenset(
         "git_branch",
         # Envelope (plano de controle, task envelope-7)
         "propose_envelope",
+        # Email (Tier 1 read / Tier 3 send; `email-client-imap-mvp`) —
+        # ausentes até 2026-08-11: sem entrada aqui, o teste (1) não
+        # pegava que faltavam em `TOOL_EFFECTS`, e o envelope escondia
+        # as 5 tools do modelo (classificadas como `unknown`, fora do
+        # piso).
+        "list_emails",
+        "read_email",
+        "search_emails",
+        "get_email_accounts",
+        "send_email",
     }
 )
 
@@ -141,8 +151,8 @@ def test_every_agent_tool_has_an_effect_entry() -> None:
     # tool nova e atualizou `EXPECTED_AGENT_TOOLS` MAS esqueceu o
     # registry, o teste (1) pega. Se esqueceu AMBOS, este teste
     # falha por "agent snapshot desatualizado".
-    assert len(EXPECTED_AGENT_TOOLS) == 44, (
-        f"EXPECTED_AGENT_TOOLS deveria ter 44 tools; tem "
+    assert len(EXPECTED_AGENT_TOOLS) == 49, (
+        f"EXPECTED_AGENT_TOOLS deveria ter 49 tools; tem "
         f"{len(EXPECTED_AGENT_TOOLS)}. Atualize o snapshot ao adicionar "
         "ou remover tools do agente."
     )

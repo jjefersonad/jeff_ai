@@ -149,6 +149,35 @@ services:
     networks:
       - jeff_ia-network
 
+  # === Email Sync Worker (change email-client-imap-mvp) ===
+  # Espelha o serviço do `docker-compose.yml` — ver nota completa lá. Em
+  # `docker-compose.all.yml` (self-contained, com Ollama/Evolution dentro
+  # do stack) a imagem base já traz `aioimaplib`/`aiosmtplib` via
+  # `pyproject.toml`, então o entrypoint é o wrapper simples sem
+  # `pip install` extra (diferente do `telegram_gateway`, que precisava
+  # de `python-telegram-bot`).
+  email_sync_worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.backend
+    container_name: jeff_ia_email_sync_worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_URI: ${POSTGRES_URI:-postgresql://${POSTGRES_USER:-jeff_ia}:${POSTGRES_PASSWORD:-jeff_ia}@jeff_ia_postgres:5432/${POSTGRES_DB:-jeff_ia}}
+      EMAIL_SYNC_POLL_INTERVAL_SECONDS: ${EMAIL_SYNC_POLL_INTERVAL_SECONDS:-60}
+      JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
+      TZ: ${JEFF_AI_TZ:-UTC}
+    depends_on:
+      jeff_ia_postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend/src:/deps/backend/src
+    entrypoint: ["/bin/sh", "/deps/backend/email_sync_worker_entrypoint.sh"]
+    networks:
+      - jeff_ia-network
+
   ollama:
     image: ollama/ollama:latest
     container_name: jeff_ia_ollama

@@ -264,3 +264,49 @@ def test_create_rejects_invalid_config_for_integration_type(client: TestClient) 
     )
 
     assert resp.status_code == 422
+
+
+# ===========================================================================
+# GET /api/integrations/channel-config (channel-link-wiring-task-config-endpoint-1)
+# ===========================================================================
+
+
+def test_channel_config_returns_configured_values(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unit 'channel-config returns configured values' (channel-link-deep-links REQ-002)."""
+    monkeypatch.setenv("TELEGRAM_BOT_USERNAME", "jeff_ai_bot")
+    monkeypatch.setenv("WHATSAPP_BUSINESS_NUMBER", "5511999999999")
+    _as(_USER_A)
+
+    resp = client.get("/api/integrations/channel-config")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "telegram_bot_username": "jeff_ai_bot",
+        "whatsapp_business_number": "5511999999999",
+    }
+
+
+def test_channel_config_requires_auth(client: TestClient) -> None:
+    """Unit 'channel-config requires auth' (channel-link-deep-links REQ-002)."""
+    resp = client.get("/api/integrations/channel-config")
+
+    assert resp.status_code == 401
+
+
+def test_channel_config_nulls_unset_values(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unit 'channel-config nulls unset values' (channel-link-deep-links REQ-002)."""
+    monkeypatch.delenv("TELEGRAM_BOT_USERNAME", raising=False)
+    monkeypatch.delenv("WHATSAPP_BUSINESS_NUMBER", raising=False)
+    _as(_USER_A)
+
+    resp = client.get("/api/integrations/channel-config")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "telegram_bot_username": None,
+        "whatsapp_business_number": None,
+    }
