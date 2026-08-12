@@ -9,9 +9,9 @@
 import { ApiError, apiFetch, parseErrorMessage } from "@/lib/api";
 
 export type DealStage =
-  | "lead"
   | "qualified"
   | "proposal"
+  | "negotiation"
   | "won"
   | "lost";
 

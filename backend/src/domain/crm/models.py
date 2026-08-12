@@ -14,11 +14,16 @@ from typing import Any
 
 
 class DealStage(str, Enum):
-    """Estágios fixos do funil (REQ-001 crm-deals). Ordem = ordem do funil."""
+    """Estágios fixos do funil (REQ-001 deal-pipeline-state-machine).
 
-    LEAD = "lead"
+    Ordem = ordem do funil. Deal nasce sempre em `QUALIFIED` — só existe via
+    conversão de um `crm_leads` (REQ-005 lead-triage-pipeline); `lead` deixou
+    de ser um estágio de deal (virou entidade própria).
+    """
+
     QUALIFIED = "qualified"
     PROPOSAL = "proposal"
+    NEGOTIATION = "negotiation"
     WON = "won"
     LOST = "lost"
 
@@ -33,6 +38,26 @@ class NoteSource(str, Enum):
 
     USER = "user"
     AGENT = "agent"
+
+
+class LeadStatus(str, Enum):
+    """Status de triagem do lead (REQ-001 lead-triage-pipeline)."""
+
+    NEW = "new"
+    CONTACTED = "contacted"
+    QUALIFIED = "qualified"
+    DISCARDED = "discarded"
+
+
+class LeadSource(str, Enum):
+    """Origem de captação do lead (REQ-001 lead-triage-pipeline)."""
+
+    MANUAL = "manual"
+    FORM = "form"
+    REFERRAL = "referral"
+    INSTAGRAM = "instagram"
+    IMPORT = "import"
+    OTHER = "other"
 
 
 class FieldEntity(str, Enum):
@@ -79,6 +104,7 @@ class Company:
     city: str | None = None
     state: str | None = None
     custom_values: dict[str, Any] = field(default_factory=dict)
+    source_lead_id: str | None = None
     archived_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -99,6 +125,7 @@ class Contact:
     city: str | None = None
     state: str | None = None
     custom_values: dict[str, Any] = field(default_factory=dict)
+    source_lead_id: str | None = None
     archived_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -111,12 +138,46 @@ class Deal:
     id: str
     user_id: str
     title: str
-    stage: DealStage = DealStage.LEAD
+    stage: DealStage = DealStage.QUALIFIED
     value: Decimal | None = None
     currency: str | None = None
     contact_id: str | None = None
     company_id: str | None = None
     custom_values: dict[str, Any] = field(default_factory=dict)
+    source_lead_id: str | None = None
+    archived_at: datetime | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+@dataclass
+class Lead:
+    """Lead em triagem, isolado de Contato/Empresa/Deal (REQ-001 lead-triage-pipeline).
+
+    Só vira Contato/Empresa/Deal via conversão atômica explícita
+    (`sales_pipeline.convert_lead`) — nunca é confundido com um Contato em
+    estágio "lead".
+    """
+
+    id: str
+    user_id: str
+    name: str
+    email: str | None = None
+    phone: str | None = None
+    company_name: str | None = None
+    interest: str | None = None
+    estimated_value: Decimal | None = None
+    currency: str | None = None
+    qualification_score: int | None = None
+    notes: str | None = None
+    status: LeadStatus = LeadStatus.NEW
+    tags: list[str] = field(default_factory=list)
+    custom_values: dict[str, Any] = field(default_factory=dict)
+    source: LeadSource | None = None
+    converted_at: datetime | None = None
+    converted_contact_id: str | None = None
+    converted_company_id: str | None = None
+    converted_deal_id: str | None = None
     archived_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))

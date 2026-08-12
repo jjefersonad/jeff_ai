@@ -31,7 +31,10 @@ from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 import aioimaplib
 import nh3
 
-from src.application.integrations.config_schemas import ImapIntegrationConfig
+from src.application.integrations.config_schemas import (
+    GmailIntegrationConfig,
+    ImapIntegrationConfig,
+)
 from src.domain.email.models import ParsedMessage
 
 _FETCH_LINE_RE = re.compile(rb"^\d+ FETCH \(")
@@ -61,6 +64,21 @@ async def verify_imap_login(config: ImapIntegrationConfig) -> None:
         await client.logout()
 
 
+async def _authenticate(
+    client: aioimaplib.IMAP4_SSL, config: ImapIntegrationConfig | GmailIntegrationConfig
+) -> None:
+    """Autentica `client` — XOAUTH2 para contas Gmail, LOGIN para as demais.
+
+    `aioimaplib` já suporta XOAUTH2 nativamente (`IMAP4.xoauth2`), então não
+    é preciso montar a string SASL na mão (design Decision 1 de
+    `gmail-account-oauth-connection`).
+    """
+    if isinstance(config, GmailIntegrationConfig):
+        await client.xoauth2(config.imap_username, config.access_token.encode())
+    else:
+        await client.login(config.imap_username, config.imap_password)
+
+
 def sanitize_body_html(raw_html: str) -> str:
     """Remove tags/atributos perigosos (`<script>`, `onclick`, ...) de HTML de email.
 
@@ -71,7 +89,7 @@ def sanitize_body_html(raw_html: str) -> str:
 
 
 async def fetch_new_messages(
-    config: ImapIntegrationConfig, folder: str, watermark: int
+    config: ImapIntegrationConfig | GmailIntegrationConfig, folder: str, watermark: int
 ) -> list[ParsedMessage]:
     """Busca mensagens de `folder` com UID acima de `watermark`.
 
@@ -82,11 +100,14 @@ async def fetch_new_messages(
     `IMAP4.search(..., by_uid=...)` não expõe `by_uid` no client de alto
     nível, só no `IMAP4ClientProtocol`, então `uid_search` é a API
     documentada), então o próprio servidor filtra o que é novo.
+
+    Autentica via `_authenticate` — XOAUTH2 para `GmailIntegrationConfig`,
+    LOGIN para `ImapIntegrationConfig` (gmail-account-oauth-connection).
     """
     client = aioimaplib.IMAP4_SSL(host=config.imap_host, port=config.imap_port)
     await client.wait_hello_from_server()
     try:
-        await client.login(config.imap_username, config.imap_password)
+        await _authenticate(client, config)
         await client.select(folder)
         search_response = await client.uid_search(f"UID {watermark + 1}:*")
         uids = _extract_search_uids(search_response.lines)

@@ -1,10 +1,12 @@
 """SendEmail use case — envio de email via SMTP da conta configurada."""
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from src.application.integrations.config_schemas import (
+    GmailIntegrationConfig,
     ImapIntegrationConfig,
     validate_config,
 )
@@ -16,12 +18,20 @@ from src.application.ports.user_integration_repository import (
     UserIntegrationRepositoryPort,
 )
 from src.domain.email import ParsedMessage
+from src.domain.integrations import UserIntegration
+from src.infrastructure.email.gmail_oauth import (
+    ensure_fresh_token as _real_ensure_fresh_token,
+)
 from src.infrastructure.email.smtp_client import send_email_via_smtp
 
 _SENT_FOLDER = "Sent"
 
 _INTEGRATION_TYPE = "imap"
 _RE_PREFIX = "Re: "
+
+EnsureFreshToken = Callable[
+    [UserIntegration, UserIntegrationRepositoryPort], Awaitable[GmailIntegrationConfig]
+]
 
 
 def _prefixed_subject(subject: str) -> str:
@@ -49,6 +59,7 @@ class SendEmail:
         email_account_repository: EmailAccountRepositoryPort,
         integration_repository: UserIntegrationRepositoryPort,
         email_repository: EmailRepositoryPort,
+        ensure_fresh_token: EnsureFreshToken = _real_ensure_fresh_token,
     ) -> None:
         """Recebe as portas de repositório por injeção.
 
@@ -57,10 +68,15 @@ class SendEmail:
         `thread_id` e prefixa o `subject` com `Re:` quando ainda não estiver
         prefixado — REQ-005 email-inbox) e para persistir a mensagem enviada
         na pasta `Sent`, sem o que ela nunca apareceria em `list_emails`.
+
+        `ensure_fresh_token` tem default = implementação real
+        (`gmail_oauth.ensure_fresh_token`), só sobrescrita em teste — mesmo
+        padrão de `EmailSyncWorker` (gmail-account-oauth-connection).
         """
         self._email_account_repository = email_account_repository
         self._integration_repository = integration_repository
         self._email_repository = email_repository
+        self._ensure_fresh_token = ensure_fresh_token
 
     async def execute(
         self,
@@ -101,9 +117,17 @@ class SendEmail:
         if integration is None:
             raise ValueError("Email account integration credentials not found")
 
-        config_dict = integration.config
-        config = validate_config(_INTEGRATION_TYPE, config_dict)
-        assert isinstance(config, ImapIntegrationConfig)
+        config: ImapIntegrationConfig | GmailIntegrationConfig
+        if integration.integration_type == "gmail":
+            # REQ-003 (gmail-account-oauth-connection): refresca e persiste
+            # o access_token ANTES do envio, se expirado.
+            config = await self._ensure_fresh_token(
+                integration, self._integration_repository
+            )
+        else:
+            validated = validate_config(_INTEGRATION_TYPE, integration.config)
+            assert isinstance(validated, ImapIntegrationConfig)
+            config = validated
 
         thread_id: str | None = None
         smtp_in_reply_to: str | None = None

@@ -13,7 +13,7 @@ from src.domain.shared.errors import DomainError
 
 
 class CreateCrmDeal:
-    """Cria um deal escopado ao usuário; stage default = lead."""
+    """Cria um deal escopado ao usuário; stage default = qualified."""
 
     def __init__(self, *, repository: CrmRepositoryPort) -> None:
         """Recebe a porta de repositório por injeção."""
@@ -65,7 +65,7 @@ class CreateCrmDeal:
             id=str(uuid.uuid4()),
             user_id=user_id,
             title=cleaned_title,
-            stage=stage or DealStage.LEAD,
+            stage=stage or DealStage.QUALIFIED,
             value=value,
             currency=resolved_currency,
             contact_id=contact_id,

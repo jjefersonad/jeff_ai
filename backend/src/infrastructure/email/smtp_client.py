@@ -10,15 +10,34 @@ from email.utils import formataddr, make_msgid
 
 from aiosmtplib import SMTP, SMTPAuthenticationError
 
-from src.application.integrations.config_schemas import ImapIntegrationConfig
+from src.application.integrations.config_schemas import (
+    GmailIntegrationConfig,
+    ImapIntegrationConfig,
+)
 
 
 class SmtpAuthError(Exception):
     """Servidor SMTP recusou a autenticação."""
 
 
+async def _authenticate(smtp: SMTP, config: ImapIntegrationConfig | GmailIntegrationConfig) -> None:
+    """Autentica `smtp` — XOAUTH2 para contas Gmail, LOGIN para as demais.
+
+    Gmail não tem `smtp_password`/`imap_password` (não existe senha — só
+    `access_token`), então o branch por tipo evita acessar um atributo que
+    `GmailIntegrationConfig` não tem (design Decision 1 de
+    `gmail-account-oauth-connection`).
+    """
+    smtp_user = config.smtp_username or config.imap_username
+    if isinstance(config, GmailIntegrationConfig):
+        await smtp.auth_xoauth2(smtp_user, config.access_token)
+    else:
+        smtp_password = config.smtp_password or config.imap_password
+        await smtp.login(smtp_user, smtp_password)
+
+
 async def send_email_via_smtp(
-    config: ImapIntegrationConfig,
+    config: ImapIntegrationConfig | GmailIntegrationConfig,
     from_name: str,
     to_addresses: list[str],
     cc_addresses: list[str],
@@ -88,12 +107,11 @@ async def send_email_via_smtp(
     smtp_host = config.smtp_host or config.imap_host
     smtp_port = config.smtp_port or 587
     smtp_user = config.smtp_username or config.imap_username
-    smtp_password = config.smtp_password or config.imap_password
 
     smtp = SMTP(hostname=smtp_host, port=smtp_port)
     await smtp.connect()
     try:
-        await smtp.login(smtp_user, smtp_password)
+        await _authenticate(smtp, config)
         await smtp.send_message(msg, sender=smtp_user, recipients=all_recipients)
     except SMTPAuthenticationError as exc:
         raise SmtpAuthError(f"SMTP authentication failed: {exc}") from exc

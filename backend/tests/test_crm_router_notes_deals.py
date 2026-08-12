@@ -190,9 +190,9 @@ def test_get_deal_stages_returns_five_ordered() -> None:
     response = client.get("/api/crm/deals/stages")
     assert response.status_code == 200
     assert response.json() == [
-        "lead",
         "qualified",
         "proposal",
+        "negotiation",
         "won",
         "lost",
     ]
@@ -206,12 +206,12 @@ def test_patch_note_unsupported() -> None:
 
 
 def test_create_deal_and_move() -> None:
-    """REQ deals: create default lead + move."""
+    """REQ deals: create default qualified + move."""
     client = _client(_FakeCrmRepository())
     created = client.post("/api/crm/deals", json={"title": "Deal Acme"})
     assert created.status_code == 201
     body = created.json()
-    assert body["stage"] == "lead"
+    assert body["stage"] == "qualified"
     deal_id = body["id"]
 
     moved = client.post(f"/api/crm/deals/{deal_id}/move", json={"stage": "won"})

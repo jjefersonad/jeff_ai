@@ -344,9 +344,9 @@ usuário.
     `crm_update_field_definition` altera só o label.
   - Nota/follow-up (`source=agent`): `crm_add_note` com exatamente um
     alvo (`contact_id` | `company_id` | `deal_id`).
-  - Funil: `crm_list_deals`, `crm_create_deal` (default `lead`,
+  - Funil: `crm_list_deals`, `crm_create_deal` (default `qualified`,
     `value`/`custom_values`), `crm_move_deal`
-    (`lead` → `qualified` → `proposal` → `won`/`lost`).
+    (`qualified` → `proposal` → `negotiation` → `won`/`lost`).
   - Leituras Tier 1; escritas Tier 2. Skill: `crm`.
 - **Imagens**: delegue para `image_design_subagent` (sempre).
 - **Leitura do projeto**: `read_project_file`, `list_project_files`

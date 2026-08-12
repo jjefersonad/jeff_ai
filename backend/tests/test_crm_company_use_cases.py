@@ -249,6 +249,28 @@ async def test_get_company_cross_user_returns_none() -> None:
     )
 
 
+async def test_update_company_preserves_source_lead_id() -> None:
+    """REQ-003 (sales-pipeline-via-agent): update não apaga a origem via lead."""
+    from src.application.use_cases.update_crm_company import UpdateCrmCompany
+
+    repo = _FakeCrmRepository()
+    company = Company(
+        id="company-1",
+        user_id="user-a",
+        name="Acme",
+        source_lead_id="lead-1",
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    repo.companies[company.id] = company
+
+    updated = await UpdateCrmCompany(repository=repo).execute(
+        user_id="user-a", company_id=company.id, website="https://acme.test"
+    )
+    assert updated is not None
+    assert updated.source_lead_id == "lead-1"
+
+
 async def test_archive_company_hides_from_default_list() -> None:
     """REQ-002/003: archive soft-delete."""
     from src.application.use_cases.archive_crm_company import ArchiveCrmCompany

@@ -1,12 +1,13 @@
 """Mixins stubs para fakes de `CrmRepositoryPort` nos testes unitários."""
 from __future__ import annotations
 
-from src.application.ports.crm_repository import ContactPage
-from src.domain.crm import Contact, FieldDefinition, FieldEntity
+from src.application.ports.crm_repository import ContactPage, LeadConversionResult
+from src.domain.crm import Company, Contact, FieldDefinition, FieldEntity, Lead
 
 
 class CrmRepositoryPortExtensions:
-    """Implementações mínimas dos métodos novos do port (extend-crm-fields)."""
+    """Implementações mínimas dos métodos novos do port (extend-crm-fields +
+    sales-pipeline-via-agent)."""
 
     async def list_contacts_page(
         self,
@@ -53,3 +54,24 @@ class CrmRepositoryPortExtensions:
     ) -> Contact | None:
         """Default: sem match — testes que precisam de comportamento sobrescrevem."""
         return None
+
+    async def get_company_by_name(self, user_id: str, name: str) -> Company | None:
+        """Default: sem match — testes que precisam de comportamento sobrescrevem."""
+        return None
+
+    async def create_lead(self, lead: Lead) -> Lead:
+        raise NotImplementedError
+
+    async def list_leads(
+        self,
+        user_id: str,
+        *,
+        converted: bool = False,
+    ) -> list[Lead]:
+        return []
+
+    async def get_lead(self, user_id: str, lead_id: str) -> Lead | None:
+        return None
+
+    async def convert_lead(self, lead: Lead) -> LeadConversionResult:
+        raise NotImplementedError

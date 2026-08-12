@@ -238,9 +238,9 @@ async def crm_list_deals(
 ) -> list[dict[str, Any]] | dict[str, Any]:
     """[CRM Jeff AI] `crm_list_deals` — lista deals do funil nativo.
 
-    `stage` opcional: lead, qualified, proposal, won, lost. Este é o funil
-    do módulo `/crm` — não existe equivalente em MCP `contacts_*`/`lead_gen_*`.
-    `user_id` do modelo é IGNORADO.
+    `stage` opcional: qualified, proposal, negotiation, won, lost. Este é o
+    funil do módulo `/crm` — não existe equivalente em MCP
+    `contacts_*`/`lead_gen_*`. `user_id` do modelo é IGNORADO.
     """
     del user_id
     resolved = await _require_user_id()
@@ -267,11 +267,11 @@ async def crm_create_deal(
     custom_values: dict[str, Any] | None = None,
     user_id: str | None = None,
 ) -> dict[str, Any]:
-    r"""[CRM Jeff AI] `crm_create_deal` — cria deal no funil nativo (default lead).
+    r"""[CRM Jeff AI] `crm_create_deal` — cria deal no funil nativo (default qualified).
 
-    Use para LEADs no CRM Jeff AI (`/crm`). `value` string decimal (ex. "1500.00");
-    moeda default BRL se value presente. Aceita `custom_values`. Não usar MCP
-    `lead_gen_*` no lugar. `user_id` do modelo é IGNORADO.
+    `value` string decimal (ex. "1500.00"); moeda default BRL se value
+    presente. Aceita `custom_values`. Não usar MCP `lead_gen_*` no lugar.
+    `user_id` do modelo é IGNORADO.
     """
     del user_id
     resolved = await _require_user_id()
@@ -313,8 +313,8 @@ async def crm_move_deal(
 ) -> dict[str, Any]:
     """[CRM Jeff AI] `crm_move_deal` — move deal no funil nativo.
 
-    Estágios: lead, qualified, proposal, won, lost. CRM Jeff AI apenas —
-    não confundir com MCP. `user_id` do modelo é IGNORADO.
+    Estágios: qualified, proposal, negotiation, won, lost. CRM Jeff AI
+    apenas — não confundir com MCP. `user_id` do modelo é IGNORADO.
     """
     del user_id
     resolved = await _require_user_id()

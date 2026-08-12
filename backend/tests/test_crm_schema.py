@@ -19,6 +19,7 @@ _CRM_TABLES = (
     "crm_deals",
     "crm_notes",
     "crm_field_definitions",
+    "crm_leads",
 )
 
 
@@ -123,6 +124,63 @@ def test_ensure_crm_schema_adds_location_and_custom_values_columns(
         "ALTER TABLE crm_notes ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ"
         in executed_sql
     )
+
+
+def test_crm_leads_require_email_or_phone_or_company(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_conn = _FakeConnection()
+    monkeypatch.setattr(schema.psycopg, "connect", lambda *a, **kw: fake_conn)
+
+    schema.ensure_crm_schema("postgresql://fake")
+    executed_sql = " ".join("\n".join(fake_conn._cursor.executed).split())
+    assert (
+        "email IS NOT NULL OR phone IS NOT NULL OR company_name IS NOT NULL"
+        in executed_sql
+    )
+
+
+def test_ensure_crm_schema_adds_source_lead_id_columns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_conn = _FakeConnection()
+    monkeypatch.setattr(schema.psycopg, "connect", lambda *a, **kw: fake_conn)
+
+    schema.ensure_crm_schema("postgresql://fake")
+    executed_sql = "\n".join(fake_conn._cursor.executed)
+
+    assert (
+        "ALTER TABLE crm_deals "
+        "ADD COLUMN IF NOT EXISTS source_lead_id UUID REFERENCES crm_leads(id)"
+        in executed_sql
+    )
+    assert (
+        "ALTER TABLE crm_contacts "
+        "ADD COLUMN IF NOT EXISTS source_lead_id UUID REFERENCES crm_leads(id)"
+        in executed_sql
+    )
+    assert (
+        "ALTER TABLE crm_companies "
+        "ADD COLUMN IF NOT EXISTS source_lead_id UUID REFERENCES crm_leads(id)"
+        in executed_sql
+    )
+
+
+def test_crm_deals_stage_check_rejects_lead_accepts_new_domain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_conn = _FakeConnection()
+    monkeypatch.setattr(schema.psycopg, "connect", lambda *a, **kw: fake_conn)
+
+    schema.ensure_crm_schema("postgresql://fake")
+    executed_sql = " ".join("\n".join(fake_conn._cursor.executed).split())
+
+    assert "crm_deals_stage_check" in executed_sql
+    assert (
+        "stage IN ('qualified', 'proposal', 'negotiation', 'won', 'lost')"
+        in executed_sql
+    )
+    assert "DEFAULT 'qualified'" in executed_sql
 
 
 def test_crm_field_definitions_unique_user_entity_key(

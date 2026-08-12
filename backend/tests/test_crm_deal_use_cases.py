@@ -1,6 +1,6 @@
 """Testes dos use cases de deals CRM (add-simple-crm-module-task-usecases-4).
 
-Unit-1: create_deal defaults to lead
+Unit-1: create_deal defaults to qualified
 Unit-2: move_deal rejects invalid stage
 """
 from __future__ import annotations
@@ -154,16 +154,16 @@ class _FakeCrmRepository(CrmRepositoryPortExtensions, CrmRepositoryPort):
         return []
 
 
-async def test_create_deal_defaults_to_lead() -> None:
-    """unit-1 (REQ-002): create sem stage → lead."""
+async def test_create_deal_defaults_to_qualified() -> None:
+    """unit-1 (REQ-002): create sem stage → qualified."""
     from src.application.use_cases.create_crm_deal import CreateCrmDeal
 
     repo = _FakeCrmRepository()
     deal = await CreateCrmDeal(repository=repo).execute(
         user_id="user-a", title="Proposta Acme"
     )
-    assert deal.stage == DealStage.LEAD
-    assert repo.deals[deal.id].stage == DealStage.LEAD
+    assert deal.stage == DealStage.QUALIFIED
+    assert repo.deals[deal.id].stage == DealStage.QUALIFIED
 
 
 async def test_move_deal_rejects_invalid_stage() -> None:
@@ -235,7 +235,7 @@ async def test_list_deals_filter_and_archive() -> None:
 
     repo = _FakeCrmRepository()
     await CreateCrmDeal(repository=repo).execute(
-        user_id="user-a", title="A", stage=DealStage.LEAD
+        user_id="user-a", title="A", stage=DealStage.QUALIFIED
     )
     proposal = await CreateCrmDeal(repository=repo).execute(
         user_id="user-a", title="B", stage=DealStage.PROPOSAL

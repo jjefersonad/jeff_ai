@@ -205,6 +205,29 @@ async def test_update_contact_bumps_updated_at() -> None:
     assert updated.updated_at >= before
 
 
+async def test_update_contact_preserves_source_lead_id() -> None:
+    """REQ-003 (sales-pipeline-via-agent): update não apaga a origem via lead."""
+    from src.application.use_cases.update_crm_contact import UpdateCrmContact
+
+    repo = _FakeCrmRepository()
+    contact = Contact(
+        id="contact-1",
+        user_id="user-a",
+        name="Ana",
+        email="a@x.com",
+        source_lead_id="lead-1",
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    repo.contacts[contact.id] = contact
+
+    updated = await UpdateCrmContact(repository=repo).execute(
+        user_id="user-a", contact_id=contact.id, phone="+5511999999999"
+    )
+    assert updated is not None
+    assert updated.source_lead_id == "lead-1"
+
+
 async def test_archive_hides_from_default_list() -> None:
     """REQ-004: archive oculta da listagem padrão."""
     from src.application.use_cases.archive_crm_contact import ArchiveCrmContact

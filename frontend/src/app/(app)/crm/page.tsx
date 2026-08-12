@@ -57,9 +57,9 @@ export default function CrmPage() {
   const [companies, setCompanies] = useState<CrmCompany[]>([]);
   const [deals, setDeals] = useState<CrmDeal[]>([]);
   const [stages, setStages] = useState<string[]>([
-    "lead",
     "qualified",
     "proposal",
+    "negotiation",
     "won",
     "lost",
   ]);
@@ -74,7 +74,7 @@ export default function CrmPage() {
   const [notes, setNotes] = useState<CrmNote[]>([]);
 
   const [dealTitle, setDealTitle] = useState("");
-  const [dealStage, setDealStage] = useState("lead");
+  const [dealStage, setDealStage] = useState("qualified");
   const [dealValue, setDealValue] = useState("");
   const [dealCurrency, setDealCurrency] = useState("BRL");
   const [dealLinkContactId, setDealLinkContactId] = useState<string>("none");

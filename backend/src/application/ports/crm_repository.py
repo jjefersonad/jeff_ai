@@ -16,6 +16,7 @@ from src.domain.crm import (
     DealStage,
     FieldDefinition,
     FieldEntity,
+    Lead,
     Note,
 )
 
@@ -26,6 +27,16 @@ class ContactPage:
 
     items: list[Contact]
     total: int
+
+
+@dataclass(frozen=True)
+class LeadConversionResult:
+    """Entidades criadas/atualizadas por `convert_lead` numa única transação."""
+
+    lead: Lead
+    contact: Contact
+    company: Company | None
+    deal: Deal
 
 
 class CrmRepositoryPort(ABC):
@@ -52,6 +63,15 @@ class CrmRepositoryPort(ABC):
         include_archived: bool = False,
     ) -> list[Company]:
         """Lista empresas do user; busca opcional por nome/domínio."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_company_by_name(self, user_id: str, name: str) -> Company | None:
+        """Retorna empresa ativa do user cujo nome bate (case-insensitive).
+
+        Usado por `convert_lead`/preview de conversão para decidir reaproveitar
+        vs. criar uma empresa nova (`sales-pipeline-via-agent` REQ-003).
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -161,6 +181,37 @@ class CrmRepositoryPort(ABC):
         self, user_id: str, deal_id: str, stage: DealStage
     ) -> Deal | None:
         """Atualiza só o estágio do deal; None se miss."""
+        raise NotImplementedError
+
+    # --- Leads -----------------------------------------------------------------
+
+    @abstractmethod
+    async def create_lead(self, lead: Lead) -> Lead:
+        """Cria um novo lead."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def list_leads(
+        self,
+        user_id: str,
+        *,
+        converted: bool = False,
+    ) -> list[Lead]:
+        """Lista leads não-arquivados do user; `converted` alterna ativos/convertidos."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_lead(self, user_id: str, lead_id: str) -> Lead | None:
+        """Retorna o lead do user ou ``None`` (inclui miss cross-user)."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def convert_lead(self, lead: Lead) -> LeadConversionResult:
+        """Cria Contato + Empresa (opcional) + Deal a partir do lead.
+
+        Tudo numa única transação atômica; stampa `source_lead_id` nos três
+        e marca o lead como convertido. Reverte tudo se qualquer etapa falhar.
+        """
         raise NotImplementedError
 
     # --- Notes ---------------------------------------------------------------
