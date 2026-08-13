@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from src.application.ports.crm_repository import ContactPage
-from src.domain.crm import Contact, FieldDefinition, FieldEntity
+from src.domain.crm import Company, Contact, Deal, FieldDefinition, FieldEntity
 
 
 class CrmRepositoryPortExtensions:
-    """Implementações mínimas dos métodos novos do port (extend-crm-fields)."""
+    """Implementações mínimas dos métodos novos do port (extend-crm-fields +
+    sales-pipeline-via-agent)."""
 
     async def list_contacts_page(
         self,
@@ -52,4 +53,14 @@ class CrmRepositoryPortExtensions:
         self, user_id: str, email: str
     ) -> Contact | None:
         """Default: sem match — testes que precisam de comportamento sobrescrevem."""
+        return None
+
+    async def get_company_by_name(self, user_id: str, name: str) -> Company | None:
+        """Default: sem match — testes que precisam de comportamento sobrescrevem."""
+        return None
+
+    async def get_active_deal_by_contact(
+        self, user_id: str, contact_id: str
+    ) -> Deal | None:
+        """Default: sem deal ativo — testes que precisam de comportamento sobrescrevem."""
         return None

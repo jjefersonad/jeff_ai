@@ -217,7 +217,7 @@ async def send_email(
     account_id: str,
     to_addresses: list[str],
     subject: str,
-    body_text: str,
+    body_text: str | None = None,
     body_html: str | None = None,
     cc_addresses: list[str] | None = None,
     bcc_addresses: list[str] | None = None,
@@ -227,13 +227,14 @@ async def send_email(
     """Send an email via one of the user's connected accounts.
 
     Requires approval (Tier 3) — previews as a diff before sending.
+    Prefer `body_html`; `body_text` is optional. At least one body is required.
 
     Args:
         account_id: UUID of the email account to send from.
         to_addresses: List of recipient email addresses.
         subject: Email subject line.
-        body_text: Plain text body.
-        body_html: Optional HTML body.
+        body_text: Optional plain text body (legacy / plain-only callers).
+        body_html: Optional HTML body (preferred).
         cc_addresses: Optional CC recipients.
         bcc_addresses: Optional BCC recipients.
         in_reply_to: UUID of the email being replied to. When set, the

@@ -1,6 +1,6 @@
 """Testes do domínio CRM (`add-simple-crm-module-task-domain-1`).
 
-Unit-1: DealStage order — lead → qualified → proposal → won → lost.
+Unit-1: DealStage order — lead → qualified → proposal → negotiation → won → lost
 """
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ def test_default_deal_stages_order() -> None:
         DealStage.LEAD,
         DealStage.QUALIFIED,
         DealStage.PROPOSAL,
+        DealStage.NEGOTIATION,
         DealStage.WON,
         DealStage.LOST,
     ]
@@ -31,6 +32,7 @@ def test_default_deal_stages_order() -> None:
         "lead",
         "qualified",
         "proposal",
+        "negotiation",
         "won",
         "lost",
     ]

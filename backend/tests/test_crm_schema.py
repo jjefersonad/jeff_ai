@@ -125,6 +125,76 @@ def test_ensure_crm_schema_adds_location_and_custom_values_columns(
     )
 
 
+def test_crm_deals_stage_check_includes_lead(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_conn = _FakeConnection()
+    monkeypatch.setattr(schema.psycopg, "connect", lambda *a, **kw: fake_conn)
+
+    schema.ensure_crm_schema("postgresql://fake")
+    executed_sql = " ".join("\n".join(fake_conn._cursor.executed).split())
+
+    assert "crm_deals_stage_check" in executed_sql
+    assert "'lead'" in executed_sql
+    assert "'qualified'" in executed_sql
+    assert "'negotiation'" in executed_sql
+    assert "DEFAULT 'lead'" in executed_sql
+
+
+def test_ensure_crm_schema_drops_crm_leads_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """unit-1: DROP TABLE crm_leads; never CREATE TABLE crm_leads."""
+    fake_conn = _FakeConnection()
+    monkeypatch.setattr(schema.psycopg, "connect", lambda *a, **kw: fake_conn)
+
+    schema.ensure_crm_schema("postgresql://fake")
+    executed_sql = "\n".join(fake_conn._cursor.executed)
+    assert "DROP TABLE IF EXISTS crm_leads" in executed_sql
+    assert "CREATE TABLE IF NOT EXISTS crm_leads" not in executed_sql
+
+
+def test_ensure_crm_schema_drops_source_lead_id_on_all_entities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """unit-2: DROP COLUMN source_lead_id on deals, contacts, companies."""
+    fake_conn = _FakeConnection()
+    monkeypatch.setattr(schema.psycopg, "connect", lambda *a, **kw: fake_conn)
+
+    schema.ensure_crm_schema("postgresql://fake")
+    executed_sql = "\n".join(fake_conn._cursor.executed)
+    assert "ALTER TABLE crm_deals DROP COLUMN IF EXISTS source_lead_id" in executed_sql
+    assert (
+        "ALTER TABLE crm_contacts DROP COLUMN IF EXISTS source_lead_id" in executed_sql
+    )
+    assert (
+        "ALTER TABLE crm_companies DROP COLUMN IF EXISTS source_lead_id" in executed_sql
+    )
+
+
+def test_ensure_crm_schema_drop_leads_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """unit-3: second ensure_crm_schema run still emits DROP IF EXISTS."""
+    fake_conn = _FakeConnection()
+    monkeypatch.setattr(schema.psycopg, "connect", lambda *a, **kw: fake_conn)
+
+    schema.ensure_crm_schema("postgresql://fake")
+    first_run = list(fake_conn._cursor.executed)
+    schema.ensure_crm_schema("postgresql://fake")
+    second_run = fake_conn._cursor.executed[len(first_run) :]
+
+    second_sql = "\n".join(second_run)
+    assert "DROP TABLE IF EXISTS crm_leads" in second_sql
+    assert "ALTER TABLE crm_deals DROP COLUMN IF EXISTS source_lead_id" in second_sql
+    assert (
+        "ALTER TABLE crm_contacts DROP COLUMN IF EXISTS source_lead_id" in second_sql
+    )
+    assert (
+        "ALTER TABLE crm_companies DROP COLUMN IF EXISTS source_lead_id" in second_sql
+    )
+
+
 def test_crm_field_definitions_unique_user_entity_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

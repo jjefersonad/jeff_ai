@@ -144,6 +144,13 @@ TIER_2_TOOLS: tuple[str, ...] = (
     "crm_move_deal",
     "crm_create_field_definition",
     "crm_update_field_definition",
+    # Agent-driven deal actions (sales-pipeline-via-agent-task-backend-agent-actions-1,
+    # REQ-002 agent-driven-deal-actions). Só gera/devolve o rascunho de
+    # follow-up (preview) — sem efeito colateral externo.
+    "request_followup",
+    # sales-pipeline-via-agent-task-backend-agent-actions-2, REQ-003. Mesma
+    # classe de risco de `crm_add_note` (mesmo use case, `CreateCrmNote`).
+    "add_deal_note",
 )
 
 # Tier 3 — Edição de EXISTENTES + commit (interrupt_on com diff preview).
@@ -409,9 +416,12 @@ def _diff_for_git_commit(args: Mapping[str, Any]) -> str | None:
 def _diff_for_send_email(args: Mapping[str, Any]) -> str | None:
     """`send_email(...)` — preview dos campos antes do dispatch SMTP.
 
-    Renderiza `to`/`cc`/`bcc`/`subject`/`body_text` num bloco ```diff para
+    Renderiza `to`/`cc`/`bcc`/`subject`/corpo num bloco ```diff para
     que o usuário consiga revisar exatamente o que vai sair antes de
     aprovar o `interrupt_on` (REQ-005 email-inbox — Decision 4 do design).
+
+    Preferência de corpo: `body_text` quando presente; senão `body_html`
+    (contrato HTML-first — `body_text` é opcional).
 
     Falha silenciosa: se algum campo obrigatório estiver ausente ou com
     tipo errado, devolve `None` e o callable `_interrupt_description_for`
@@ -420,7 +430,23 @@ def _diff_for_send_email(args: Mapping[str, Any]) -> str | None:
     to_addresses = args.get("to_addresses")
     subject = args.get("subject")
     body_text = args.get("body_text")
-    if not isinstance(to_addresses, list) or not isinstance(subject, str) or not isinstance(body_text, str):
+    body_html = args.get("body_html")
+    body_for_preview: str | None
+    body_label: str
+    if isinstance(body_text, str):
+        body_for_preview = body_text
+        body_label = "texto"
+    elif isinstance(body_html, str):
+        body_for_preview = body_html
+        body_label = "html"
+    else:
+        body_for_preview = None
+        body_label = "texto"
+    if (
+        not isinstance(to_addresses, list)
+        or not isinstance(subject, str)
+        or body_for_preview is None
+    ):
         return None
 
     cc_addresses = args.get("cc_addresses") or []
@@ -442,8 +468,8 @@ def _diff_for_send_email(args: Mapping[str, Any]) -> str | None:
         f"Bcc:      {_fmt_addrs(bcc_addresses)}" if bcc_addresses else "",
         f"Assunto:  {_escape(subject)}",
         "",
-        "--- corpo (texto) ---",
-        _escape(body_text),
+        f"--- corpo ({body_label}) ---",
+        _escape(body_for_preview),
     ]
     body = _truncate_diff("\n".join(s for s in sections if s != ""))
 

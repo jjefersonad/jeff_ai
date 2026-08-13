@@ -19,6 +19,7 @@ from src.domain.crm import Company, Contact, Deal, DealStage, Note, NoteSource
 class _FakeCrmRepository(CrmRepositoryPortExtensions, CrmRepositoryPort):
     def __init__(self) -> None:
         self.contacts: dict[str, Contact] = {}
+        self.deals: dict[str, Deal] = {}
         self.notes: dict[str, Note] = {}
         self.list_contacts_calls: list[str] = []
 
@@ -75,10 +76,14 @@ class _FakeCrmRepository(CrmRepositoryPortExtensions, CrmRepositoryPort):
         return None
 
     async def create_deal(self, deal: Deal) -> Deal:
-        raise NotImplementedError
+        self.deals[deal.id] = deal
+        return deal
 
     async def get_deal(self, user_id: str, deal_id: str) -> Deal | None:
-        return None
+        deal = self.deals.get(deal_id)
+        if deal is None or deal.user_id != user_id:
+            return None
+        return deal
 
     async def list_deals(
         self,
@@ -98,7 +103,12 @@ class _FakeCrmRepository(CrmRepositoryPortExtensions, CrmRepositoryPort):
     async def move_deal(
         self, user_id: str, deal_id: str, stage: DealStage
     ) -> Deal | None:
-        return None
+        deal = await self.get_deal(user_id, deal_id)
+        if deal is None:
+            return None
+        deal.stage = stage
+        self.deals[deal.id] = deal
+        return deal
 
     async def create_note(self, note: Note) -> Note:
         self.notes[note.id] = note
@@ -194,3 +204,29 @@ async def test_crm_tool_ignores_model_user_id(
     saved = repo.notes[note["id"]]
     assert saved.user_id == session_user
     assert saved.source == NoteSource.AGENT
+
+
+async def test_crm_move_deal_writes_note_with_source_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """unit-2 (REQ-002/REQ-004 deal-pipeline-state-machine): crm_move_deal
+    (tool do agente) grava crm_notes com source='agent'."""
+    from src.application.use_cases.move_crm_deal import MoveCrmDeal
+
+    session_user = "user-a"
+    _stub_resolved_user_id(monkeypatch, session_user)
+    repo = _FakeCrmRepository()
+    deal = Deal(id="deal-1", user_id=session_user, title="Deal", stage=DealStage.QUALIFIED)
+    repo.deals[deal.id] = deal
+    monkeypatch.setattr(
+        ct, "build_move_crm_deal", lambda: MoveCrmDeal(repository=repo)
+    )
+
+    result = await ct.crm_move_deal.ainvoke({"deal_id": deal.id, "stage": "proposal"})
+
+    assert result["stage"] == "proposal"
+    assert len(repo.notes) == 1
+    saved_note = next(iter(repo.notes.values()))
+    assert saved_note.deal_id == deal.id
+    assert saved_note.body == "qualified → proposal"
+    assert saved_note.source == NoteSource.AGENT

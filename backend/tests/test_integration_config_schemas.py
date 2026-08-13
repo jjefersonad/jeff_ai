@@ -97,6 +97,41 @@ def test_validate_config_imap_smtp_credentials_default_to_imap_credentials() -> 
     assert result.smtp_password == "secret"
 
 
+def test_validate_config_accepts_valid_gmail_payload() -> None:
+    """gmail-account-oauth-connection-task-config-1-unit-1 (REQ-002)."""
+    result = config_schemas.validate_config(
+        "gmail",
+        {
+            "email_address": "user@gmail.com",
+            "access_token": "ya29.token",
+            "refresh_token": "1//refresh",
+            "token_expiry": "2026-01-01T00:00:00+00:00",
+            "imap_host": "evil.example.com",
+            "imap_port": 1,
+        },
+    )
+
+    assert result.imap_host == "imap.gmail.com"
+    assert result.imap_port == 993
+    assert result.smtp_host == "smtp.gmail.com"
+    assert result.smtp_port == 587
+    assert result.imap_username == "user@gmail.com"
+    assert result.smtp_username == "user@gmail.com"
+
+
+def test_validate_config_rejects_gmail_payload_missing_access_token() -> None:
+    """gmail-account-oauth-connection-task-config-1-unit-2 (REQ-002)."""
+    with pytest.raises(ValidationError):
+        config_schemas.validate_config(
+            "gmail",
+            {
+                "email_address": "user@gmail.com",
+                "refresh_token": "1//refresh",
+                "token_expiry": "2026-01-01T00:00:00+00:00",
+            },
+        )
+
+
 def test_register_new_integration_type_validates_immediately() -> None:
     class _ThrowawayConfig(BaseModel):
         foo: str

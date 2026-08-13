@@ -8,5 +8,5 @@ class ListCrmDealStages:
     """Expõe os estágios padrão do funil em ordem fixa."""
 
     async def execute(self) -> list[DealStage]:
-        """Retorna lead → qualified → proposal → won → lost."""
+        """Retorna qualified → proposal → negotiation → won → lost."""
         return default_deal_stages()

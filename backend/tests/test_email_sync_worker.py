@@ -13,11 +13,12 @@ insensitive) e passa o `contact_id` para `upsert_email`. Sem match,
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from crm_repository_fakes import CrmRepositoryPortExtensions
 
+from src.application.integrations.config_schemas import GmailIntegrationConfig
 from src.application.ports.crm_repository import CrmRepositoryPort
 from src.application.ports.email_account_repository import (
     EmailAccountRepositoryPort,
@@ -37,6 +38,7 @@ from src.domain.crm import (
 )
 from src.domain.email import Email, EmailAccount, EmailAccountStatus, ParsedMessage
 from src.domain.integrations import UserIntegration
+from src.infrastructure.email.gmail_oauth import RefreshTokenRevokedError
 from src.infrastructure.email.imap_client import ImapAuthError
 from src.infrastructure.email.sync_worker import EmailSyncWorker
 
@@ -306,6 +308,23 @@ def _integration() -> UserIntegration:
         user_id="user-a",
         integration_type="imap",
         config=dict(_CONFIG),
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _gmail_integration(*, token_expiry: datetime) -> UserIntegration:
+    now = datetime.now(UTC)
+    return UserIntegration(
+        id=str(uuid.uuid4()),
+        user_id="user-a",
+        integration_type="gmail",
+        config={
+            "email_address": "user@gmail.com",
+            "access_token": "ya29.old",
+            "refresh_token": "1//refresh",
+            "token_expiry": token_expiry.isoformat(),
+        },
         created_at=now,
         updated_at=now,
     )
@@ -600,6 +619,83 @@ async def test_poll_once_continues_after_marking_error_on_one_account() -> None:
     await worker.poll_once()  # NÃO deve levantar
 
     assert account_repo.accounts[bad_account.id].status == EmailAccountStatus.ERROR
+    assert account_repo.accounts[good_account.id].status == EmailAccountStatus.CONNECTED
+    assert len(email_repo.upsert_calls) == 1
+    assert email_repo.upsert_calls[0][0] == good_account.id
+
+
+@pytest.mark.asyncio
+async def test_poll_once_calls_ensure_fresh_token_before_fetch_for_gmail_account() -> None:
+    """gmail-account-oauth-connection-task-sync-3-unit-1 (REQ-003)."""
+    integration = _gmail_integration(token_expiry=datetime.now(UTC) + timedelta(hours=1))
+    account = _account(is_active=True, integration_id=integration.id)
+
+    account_repo = _FakeEmailAccountRepository([account])
+    integration_repo = _FakeUserIntegrationRepository([integration])
+    email_repo = _FakeEmailRepository()
+    crm_repo = _FakeCrmRepository()
+
+    call_order: list[str] = []
+
+    async def fake_ensure_fresh_token(integ, repo):
+        call_order.append("ensure_fresh_token")
+        return GmailIntegrationConfig(**integ.config)
+
+    async def fake_fetch(config, folder, watermark):
+        call_order.append("fetch_messages")
+        return []
+
+    worker = EmailSyncWorker(
+        account_repository=account_repo,
+        integration_repository=integration_repo,
+        email_repository=email_repo,
+        crm_repository=crm_repo,
+        fetch_messages=fake_fetch,
+        ensure_fresh_token=fake_ensure_fresh_token,
+    )
+
+    await worker.poll_once()
+
+    assert call_order == ["ensure_fresh_token", "fetch_messages"]
+    assert account_repo.accounts[account.id].status == EmailAccountStatus.CONNECTED
+
+
+@pytest.mark.asyncio
+async def test_poll_once_marks_error_on_revoked_token_and_continues_other_accounts() -> None:
+    """gmail-account-oauth-connection-task-sync-3-unit-2 (REQ-003)."""
+    revoked_integration = _gmail_integration(
+        token_expiry=datetime.now(UTC) - timedelta(minutes=1)
+    )
+    revoked_account = _account(is_active=True, integration_id=revoked_integration.id)
+
+    good_integration = _integration()
+    good_account = _account(is_active=True, integration_id=good_integration.id)
+
+    account_repo = _FakeEmailAccountRepository([revoked_account, good_account])
+    integration_repo = _FakeUserIntegrationRepository(
+        [revoked_integration, good_integration]
+    )
+    email_repo = _FakeEmailRepository()
+    crm_repo = _FakeCrmRepository()
+
+    async def fake_ensure_fresh_token(integ, repo):
+        raise RefreshTokenRevokedError("revoked")
+
+    async def fake_fetch(config, folder, watermark):
+        return [_message()]
+
+    worker = EmailSyncWorker(
+        account_repository=account_repo,
+        integration_repository=integration_repo,
+        email_repository=email_repo,
+        crm_repository=crm_repo,
+        fetch_messages=fake_fetch,
+        ensure_fresh_token=fake_ensure_fresh_token,
+    )
+
+    await worker.poll_once()  # NÃO deve levantar
+
+    assert account_repo.accounts[revoked_account.id].status == EmailAccountStatus.ERROR
     assert account_repo.accounts[good_account.id].status == EmailAccountStatus.CONNECTED
     assert len(email_repo.upsert_calls) == 1
     assert email_repo.upsert_calls[0][0] == good_account.id

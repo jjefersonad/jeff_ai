@@ -13,7 +13,10 @@ from typing import Any
 import psycopg
 from psycopg.errors import UniqueViolation
 
-from src.application.ports.crm_repository import ContactPage, CrmRepositoryPort
+from src.application.ports.crm_repository import (
+    ContactPage,
+    CrmRepositoryPort,
+)
 from src.domain.crm import (
     Company,
     Contact,
@@ -249,6 +252,19 @@ class PostgresCrmRepository(CrmRepositoryPort):
                     f"SELECT {_COMPANY_COLUMNS} FROM crm_companies "
                     "WHERE id = %s AND user_id = %s",
                     (company_id, user_id),
+                )
+                row = await cur.fetchone()
+        return _row_to_company(row) if row is not None else None
+
+    async def get_company_by_name(self, user_id: str, name: str) -> Company | None:
+        """Match exato case-insensitive de `name` para uma empresa ativa do user."""
+        async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"SELECT {_COMPANY_COLUMNS} FROM crm_companies "
+                    "WHERE user_id = %s AND archived_at IS NULL "
+                    "AND LOWER(name) = LOWER(%s) LIMIT 1",
+                    (user_id, name),
                 )
                 row = await cur.fetchone()
         return _row_to_company(row) if row is not None else None
@@ -591,6 +607,29 @@ class PostgresCrmRepository(CrmRepositoryPort):
                     f"SELECT {_DEAL_COLUMNS} FROM crm_deals "
                     "WHERE id = %s AND user_id = %s",
                     (deal_id, user_id),
+                )
+                row = await cur.fetchone()
+        return _row_to_deal(row) if row is not None else None
+
+    async def get_active_deal_by_contact(
+        self, user_id: str, contact_id: str
+    ) -> Deal | None:
+        """Deal ativo (`stage NOT IN ('won','lost')`) mais recente do contato.
+
+        `sales-pipeline-via-agent` REQ-005 — usado por
+        `classify_email_by_contact` para decidir se um email recebido gera
+        nota automática. Em caso de múltiplos deals ativos, devolve o mais
+        recentemente atualizado (mesma escolha estável de
+        `get_contact_by_email`).
+        """
+        async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"SELECT {_DEAL_COLUMNS} FROM crm_deals "
+                    "WHERE user_id = %s AND contact_id = %s "
+                    "AND archived_at IS NULL AND stage NOT IN ('won', 'lost') "
+                    "ORDER BY updated_at DESC LIMIT 1",
+                    (user_id, contact_id),
                 )
                 row = await cur.fetchone()
         return _row_to_deal(row) if row is not None else None

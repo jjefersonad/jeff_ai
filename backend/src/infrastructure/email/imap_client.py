@@ -31,7 +31,10 @@ from email.utils import getaddresses, parseaddr, parsedate_to_datetime
 import aioimaplib
 import nh3
 
-from src.application.integrations.config_schemas import ImapIntegrationConfig
+from src.application.integrations.config_schemas import (
+    GmailIntegrationConfig,
+    ImapIntegrationConfig,
+)
 from src.domain.email.models import ParsedMessage
 
 _FETCH_LINE_RE = re.compile(rb"^\d+ FETCH \(")
@@ -61,6 +64,28 @@ async def verify_imap_login(config: ImapIntegrationConfig) -> None:
         await client.logout()
 
 
+async def _authenticate(
+    client: aioimaplib.IMAP4_SSL, config: ImapIntegrationConfig | GmailIntegrationConfig
+) -> None:
+    """Autentica `client` — XOAUTH2 para contas Gmail, LOGIN para as demais.
+
+    `aioimaplib` já suporta XOAUTH2 nativamente (`IMAP4.xoauth2`), então não
+    é preciso montar a string SASL na mão (design Decision 1 de
+    `gmail-account-oauth-connection`).
+    """
+    if isinstance(config, GmailIntegrationConfig):
+        # `IMAP4ClientProtocol.xoauth2` tipa `token: str` e monta o SASL com
+        # `f"...{token}...".encode("ascii")`. Passar `bytes` (via `.encode()`)
+        # corrompe o Bearer no f-string (`b'ya29...'`) — o Gmail não responde
+        # OK e o `wait_for(..., timeout=10)` vira `TimeoutError`, marcando a
+        # conta como `error` no sync worker (produção 2026-08-12).
+        # O wrapper `IMAP4.xoauth2` tipa `token: bytes`, mas só repassa ao
+        # protocolo; o tipo efetivo exigido é `str`.
+        await client.xoauth2(config.imap_username, config.access_token)
+    else:
+        await client.login(config.imap_username, config.imap_password)
+
+
 def sanitize_body_html(raw_html: str) -> str:
     """Remove tags/atributos perigosos (`<script>`, `onclick`, ...) de HTML de email.
 
@@ -70,8 +95,20 @@ def sanitize_body_html(raw_html: str) -> str:
     return nh3.clean(raw_html)
 
 
+#: Teto por poll — evita que um catch-up de milhares de UIDs trave o
+#: worker por horas (e atrase o mail novo). Polls seguintes continuam
+#: de onde o watermark parou.
+_FETCH_BATCH_SIZE = 50
+
+#: No primeiro sync (`watermark == 0`), não reprocessa o histórico
+#: inteiro da caixa: só as N mensagens mais recentes. Caixas Gmail
+#: típicas têm milhares de UIDs; baixar tudo um-a-um bloqueia o poll
+#: e o `EXISTS` de mail novo fica só como log ignorado do aioimaplib.
+_INITIAL_SYNC_LIMIT = 100
+
+
 async def fetch_new_messages(
-    config: ImapIntegrationConfig, folder: str, watermark: int
+    config: ImapIntegrationConfig | GmailIntegrationConfig, folder: str, watermark: int
 ) -> list[ParsedMessage]:
     """Busca mensagens de `folder` com UID acima de `watermark`.
 
@@ -82,14 +119,27 @@ async def fetch_new_messages(
     `IMAP4.search(..., by_uid=...)` não expõe `by_uid` no client de alto
     nível, só no `IMAP4ClientProtocol`, então `uid_search` é a API
     documentada), então o próprio servidor filtra o que é novo.
+
+    Autentica via `_authenticate` — XOAUTH2 para `GmailIntegrationConfig`,
+    LOGIN para `ImapIntegrationConfig` (gmail-account-oauth-connection).
+
+    Limita o lote: no primeiro sync (`watermark == 0`) fica com as
+    `_INITIAL_SYNC_LIMIT` mais recentes; nos polls seguintes processa no
+    máximo `_FETCH_BATCH_SIZE` UIDs (os mais antigos pendentes), para o
+    watermark avançar sem monopolizar o worker.
     """
-    client = aioimaplib.IMAP4_SSL(host=config.imap_host, port=config.imap_port)
+    # Timeout > default (10s): XOAUTH2 + SELECT em Gmail ocasionalmente
+    # passam de 10s sob carga; o worker então marcava a conta `error`.
+    client = aioimaplib.IMAP4_SSL(
+        host=config.imap_host, port=config.imap_port, timeout=30.0
+    )
     await client.wait_hello_from_server()
     try:
-        await client.login(config.imap_username, config.imap_password)
+        await _authenticate(client, config)
         await client.select(folder)
         search_response = await client.uid_search(f"UID {watermark + 1}:*")
-        uids = _extract_search_uids(search_response.lines)
+        uids = sorted(_extract_search_uids(search_response.lines))
+        uids = _limit_uids_for_poll(uids, watermark=watermark)
 
         messages = []
         for uid in uids:
@@ -99,6 +149,19 @@ async def fetch_new_messages(
         return messages
     finally:
         await client.logout()
+
+
+def _limit_uids_for_poll(uids: list[int], *, watermark: int) -> list[int]:
+    """Recorta a lista de UIDs ao lote do poll (ver `_FETCH_BATCH_SIZE`)."""
+    if not uids:
+        return uids
+    if watermark == 0 and len(uids) > _INITIAL_SYNC_LIMIT:
+        # Mais recentes — inbox fica utilizável; histórico antigo fica de fora.
+        return uids[-_INITIAL_SYNC_LIMIT:]
+    if len(uids) > _FETCH_BATCH_SIZE:
+        # Catch-up contínuo: mais antigos primeiro, watermark sobe monotônico.
+        return uids[:_FETCH_BATCH_SIZE]
+    return uids
 
 
 def _extract_rfc822_bytes(lines: list[bytes]) -> bytes:

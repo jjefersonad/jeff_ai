@@ -11,24 +11,13 @@ import { toast } from "sonner";
 
 import { CompaniesPanel } from "./CompaniesPanel";
 import { ContactsPanel } from "./ContactsPanel";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { FunilPanel, type CreateDealPayload } from "./FunilPanel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiError } from "@/lib/api";
 import {
   archiveDeal,
   createDeal,
   createNote,
-  formatCrmTimestamp,
   listCompanies,
   listContacts,
   listDealStages,
@@ -36,12 +25,15 @@ import {
   listNotes,
   moveDeal,
   resolveNotesTarget,
+  updateDeal,
   type CrmCompany,
   type CrmContact,
   type CrmDeal,
   type CrmNote,
   type CrmUiTab,
 } from "@/lib/crm";
+import { suggestFollowupDraft } from "@/lib/crm-next-best-action";
+import { isStale } from "@/lib/crm-stagnation";
 
 type TabId = CrmUiTab;
 
@@ -60,6 +52,7 @@ export default function CrmPage() {
     "lead",
     "qualified",
     "proposal",
+    "negotiation",
     "won",
     "lost",
   ]);
@@ -72,35 +65,10 @@ export default function CrmPage() {
   );
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [notes, setNotes] = useState<CrmNote[]>([]);
-
-  const [dealTitle, setDealTitle] = useState("");
-  const [dealStage, setDealStage] = useState("lead");
-  const [dealValue, setDealValue] = useState("");
-  const [dealCurrency, setDealCurrency] = useState("BRL");
-  const [dealLinkContactId, setDealLinkContactId] = useState<string>("none");
-  const [dealLinkCompanyId, setDealLinkCompanyId] = useState<string>("none");
   const [noteBody, setNoteBody] = useState("");
-
-  const selectedDeal = useMemo(
-    () => deals.find((d) => d.id === selectedDealId) ?? null,
-    [deals, selectedDealId]
-  );
-
-  const selectedDealContact = useMemo(
-    () =>
-      selectedDeal?.contact_id
-        ? (contacts.find((c) => c.id === selectedDeal.contact_id) ?? null)
-        : null,
-    [contacts, selectedDeal]
-  );
-
-  const selectedDealCompany = useMemo(
-    () =>
-      selectedDeal?.company_id
-        ? (companies.find((c) => c.id === selectedDeal.company_id) ?? null)
-        : null,
-    [companies, selectedDeal]
-  );
+  const [lastNoteAtByDealId, setLastNoteAtByDealId] = useState<
+    Record<string, string | null>
+  >({});
 
   const refreshShared = useCallback(async () => {
     const [c, co, d, st] = await Promise.all([
@@ -152,32 +120,107 @@ export default function CrmPage() {
     loadNotesFor,
   ]);
 
-  const onCreateDeal = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!dealTitle.trim()) return;
-    const linkContactId =
-      dealLinkContactId !== "none" ? dealLinkContactId : null;
-    const linkCompanyId =
-      dealLinkCompanyId !== "none" ? dealLinkCompanyId : null;
+  useEffect(() => {
+    // `GET /api/crm/notes` exige exatamente um alvo — não há listagem
+    // agregada. Fan-out paralelo por deal para alimentar `isStale`
+    // (notes[0] é a mais recente). Sem isso o badge cairia só em
+    // `created_at` e marcaria deals ativos como estagnados.
+    if (tab !== "pipeline" || deals.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      const entries = await Promise.all(
+        deals.map(async (deal) => {
+          try {
+            const dealNotes = await listNotes({ deal_id: deal.id });
+            return [deal.id, dealNotes[0]?.created_at ?? null] as const;
+          } catch {
+            return [deal.id, null] as const;
+          }
+        })
+      );
+      if (!cancelled) {
+        setLastNoteAtByDealId(Object.fromEntries(entries));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, deals]);
+
+  // Handler de criar lead — recebe os campos já resolvidos pelo
+  // FunilPanel (form interno). Encaminha `contact` aninhado, grava
+  // descrição/indicação como nota inicial e recarrega via `refreshShared`.
+  const onCreateDeal = async (payload: CreateDealPayload) => {
+    if (!payload.title.trim()) return;
     try {
       const created = await createDeal({
-        title: dealTitle,
-        stage: dealStage,
-        contact_id: linkContactId,
-        company_id: linkCompanyId,
-        value: dealValue.trim() ? dealValue.trim() : null,
-        currency: dealValue.trim() ? dealCurrency || "BRL" : null,
+        title: payload.title,
+        stage: payload.stage,
+        contact_id: payload.contactId,
+        company_id: payload.companyId,
+        value: payload.value.trim() ? payload.value.trim() : null,
+        currency: payload.value.trim() ? "BRL" : null,
+        contact: payload.contact,
       });
-      setDeals((prev) => [created, ...prev]);
-      setDealTitle("");
-      setDealValue("");
-      setDealLinkContactId("none");
-      setDealLinkCompanyId("none");
+      const referrer = payload.referredByContactId
+        ? contacts.find((c) => c.id === payload.referredByContactId)
+        : undefined;
+      const noteParts: string[] = [];
+      if (payload.description?.trim()) {
+        noteParts.push(payload.description.trim());
+      }
+      if (referrer) {
+        noteParts.push(`Indicado por: ${referrer.name}`);
+      } else if (payload.referredByContactId) {
+        noteParts.push(`Indicado por contato ${payload.referredByContactId}`);
+      }
+      if (noteParts.length > 0) {
+        await createNote({
+          body: noteParts.join("\n\n"),
+          source: "user",
+          deal_id: created.id,
+        });
+      }
+      await refreshShared();
       setSelectedContactId(null);
       setSelectedCompanyId(null);
       setSelectedDealId(created.id);
       setTab("pipeline");
-      toast.success("Deal criado");
+      toast.success("Lead criado");
+    } catch (err) {
+      setError(errMessage(err));
+    }
+  };
+
+  const onUpdateDeal = async (payload: CreateDealPayload) => {
+    if (!selectedDealId || !payload.title.trim()) return;
+    try {
+      await updateDeal(selectedDealId, {
+        title: payload.title,
+        stage: payload.stage,
+        company_id: payload.companyId,
+        clear_company: payload.companyId == null,
+        value: payload.value.trim() ? payload.value.trim() : null,
+        currency: payload.value.trim() ? "BRL" : null,
+        contact: payload.contact,
+      });
+      const referrer = payload.referredByContactId
+        ? contacts.find((c) => c.id === payload.referredByContactId)
+        : undefined;
+      if (referrer) {
+        const already = notes.some(
+          (note) => note.body === `Indicado por: ${referrer.name}`
+        );
+        if (!already) {
+          await createNote({
+            body: `Indicado por: ${referrer.name}`,
+            source: "user",
+            deal_id: selectedDealId,
+          });
+        }
+      }
+      await refreshShared();
+      toast.success("Lead atualizado");
     } catch (err) {
       setError(errMessage(err));
     }
@@ -187,16 +230,21 @@ export default function CrmPage() {
     try {
       const updated = await moveDeal(dealId, stage);
       setDeals((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+      setLastNoteAtByDealId((prev) => ({
+        ...prev,
+        [dealId]: new Date().toISOString(),
+      }));
+      toast.success(`Deal movido para ${stage}`);
     } catch (err) {
       setError(errMessage(err));
     }
   };
 
   const onArchiveDeal = async () => {
-    if (!selectedDeal) return;
+    if (!selectedDealId) return;
     try {
-      await archiveDeal(selectedDeal.id);
-      setDeals((prev) => prev.filter((d) => d.id !== selectedDeal.id));
+      await archiveDeal(selectedDealId);
+      setDeals((prev) => prev.filter((d) => d.id !== selectedDealId));
       setSelectedDealId(null);
     } catch (err) {
       setError(errMessage(err));
@@ -221,21 +269,26 @@ export default function CrmPage() {
       });
       setNotes((prev) => [created, ...prev]);
       setNoteBody("");
+      if (selectedDealId) {
+        setLastNoteAtByDealId((prev) => ({
+          ...prev,
+          [selectedDealId]: created.created_at,
+        }));
+        toast.success("Nota adicionada");
+      }
     } catch (err) {
       setError(errMessage(err));
     }
   };
 
-  const dealsByStage = useMemo(() => {
-    const map: Record<string, CrmDeal[]> = {};
-    for (const stage of stages) map[stage] = [];
-    for (const deal of deals) {
-      const key = String(deal.stage);
-      if (!map[key]) map[key] = [];
-      map[key].push(deal);
-    }
-    return map;
-  }, [deals, stages]);
+  const followupSuggestion = useMemo(() => {
+    if (!selectedDealId) return null;
+    const deal = deals.find((d) => d.id === selectedDealId);
+    if (!deal) return null;
+    const lastNoteAt = lastNoteAtByDealId[deal.id] ?? null;
+    if (!isStale(deal, lastNoteAt)) return null;
+    return { editable_text: suggestFollowupDraft(notes) };
+  }, [selectedDealId, deals, lastNoteAtByDealId, notes]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -302,232 +355,52 @@ export default function CrmPage() {
           </TabsContent>
 
           <TabsContent value="pipeline" className="mt-4">
-            <form
-              onSubmit={onCreateDeal}
-              className="mb-6 flex flex-wrap items-end gap-3 rounded-md border border-border p-3"
-            >
-              <div className="flex min-w-[200px] flex-1 flex-col gap-1">
-                <Label htmlFor="deal-title">Novo deal</Label>
-                <Input
-                  id="deal-title"
-                  value={dealTitle}
-                  onChange={(e) => setDealTitle(e.target.value)}
-                />
-              </div>
-              <div className="flex w-40 flex-col gap-1">
-                <Label>Estágio</Label>
-                <Select value={dealStage} onValueChange={setDealStage}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {stages.map((stage) => (
-                      <SelectItem key={stage} value={stage}>
-                        {stage}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex w-32 flex-col gap-1">
-                <Label htmlFor="deal-value">Valor</Label>
-                <Input
-                  id="deal-value"
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  value={dealValue}
-                  onChange={(e) => setDealValue(e.target.value)}
-                />
-              </div>
-              <div className="flex w-24 flex-col gap-1">
-                <Label htmlFor="deal-currency">Moeda</Label>
-                <Input
-                  id="deal-currency"
-                  value={dealCurrency}
-                  onChange={(e) => setDealCurrency(e.target.value)}
-                />
-              </div>
-              <div className="flex w-48 flex-col gap-1">
-                <Label>Contato (opcional)</Label>
-                <Select
-                  value={dealLinkContactId}
-                  onValueChange={setDealLinkContactId}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Sem contato" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Sem contato</SelectItem>
-                    {contacts.map((contact) => (
-                      <SelectItem key={contact.id} value={contact.id}>
-                        {contact.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex w-48 flex-col gap-1">
-                <Label>Empresa (opcional)</Label>
-                <Select
-                  value={dealLinkCompanyId}
-                  onValueChange={setDealLinkCompanyId}
-                >
-                  <SelectTrigger className="h-9 bg-transparent">
-                    <SelectValue placeholder="Sem empresa" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Sem empresa</SelectItem>
-                    {companies.map((company) => (
-                      <SelectItem key={company.id} value={company.id}>
-                        {company.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button type="submit">Criar</Button>
-            </form>
-
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-              {stages.map((stage) => (
-                <div
-                  key={stage}
-                  className="flex min-h-[200px] flex-col gap-2 rounded-md border border-border p-3"
-                >
-                  <h3 className="text-sm font-semibold capitalize">{stage}</h3>
-                  {(dealsByStage[stage] ?? []).map((deal) => (
-                    <button
-                      key={deal.id}
-                      type="button"
-                      className={`rounded-md border border-border px-2 py-2 text-left text-sm hover:bg-accent ${
-                        selectedDealId === deal.id ? "bg-accent" : ""
-                      }`}
-                      onClick={() => {
-                        setSelectedDealId(deal.id);
-                        setSelectedContactId(null);
-                        setSelectedCompanyId(null);
-                      }}
-                    >
-                      <span className="font-medium">{deal.title}</span>
-                      {deal.value != null && (
-                        <span className="mt-1 block text-xs text-muted-foreground">
-                          {deal.currency ?? "BRL"} {deal.value}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              ))}
-            </div>
-
-            {selectedDeal && (
-              <section className="mt-6 rounded-md border border-border p-4">
-                <h2 className="font-medium">{selectedDeal.title}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Contato: {selectedDealContact?.name ?? "—"} · Empresa:{" "}
-                  {selectedDealCompany?.name ?? "—"}
-                </p>
-                <p className="mt-1 text-sm">
-                  Valor:{" "}
-                  {selectedDeal.value != null
-                    ? `${selectedDeal.currency ?? "BRL"} ${selectedDeal.value}`
-                    : "—"}
-                </p>
-                <dl className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
-                  <div>
-                    <dt>Criado</dt>
-                    <dd>{formatCrmTimestamp(selectedDeal.created_at)}</dd>
-                  </div>
-                  <div>
-                    <dt>Atualizado</dt>
-                    <dd>{formatCrmTimestamp(selectedDeal.updated_at)}</dd>
-                  </div>
-                </dl>
-                <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <Label>Mover para</Label>
-                  <Select
-                    value={String(selectedDeal.stage)}
-                    onValueChange={(stage) =>
-                      onMoveDeal(selectedDeal.id, stage)
-                    }
-                  >
-                    <SelectTrigger className="w-44">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {stages.map((stage) => (
-                        <SelectItem key={stage} value={stage}>
-                          {stage}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={onArchiveDeal}
-                  >
-                    Arquivar
-                  </Button>
-                </div>
-                <div className="mt-4">
-                  <NotesBlock
-                    notes={notes}
-                    noteBody={noteBody}
-                    setNoteBody={setNoteBody}
-                    onAddNote={onAddNote}
-                  />
-                </div>
-              </section>
-            )}
+            <FunilPanel
+              deals={deals}
+              stages={stages}
+              contacts={contacts}
+              companies={companies}
+              selectedDealId={selectedDealId}
+              onSelectDeal={(id) => {
+                setSelectedDealId(id);
+                setSelectedContactId(null);
+                setSelectedCompanyId(null);
+              }}
+              notes={notes}
+              noteBody={noteBody}
+              setNoteBody={setNoteBody}
+              onAddNote={onAddNote}
+              onCreateDeal={onCreateDeal}
+              onUpdateDeal={onUpdateDeal}
+              onMoveDeal={onMoveDeal}
+              onArchiveDeal={onArchiveDeal}
+              lastNoteAtByDealId={lastNoteAtByDealId}
+              followupSuggestion={followupSuggestion}
+              onConfirmFollowup={async (draft) => {
+                if (!selectedDealId) return;
+                try {
+                  const created = await createNote({
+                    body: draft,
+                    source: "user",
+                    deal_id: selectedDealId,
+                  });
+                  setNotes((prev) => [created, ...prev]);
+                  setLastNoteAtByDealId((prev) => ({
+                    ...prev,
+                    [selectedDealId]: created.created_at,
+                  }));
+                  toast.success("Follow-up registrado");
+                } catch (err) {
+                  setError(errMessage(err));
+                }
+              }}
+              onDealsChanged={() => {
+                refreshShared().catch((err) => setError(errMessage(err)));
+              }}
+            />
           </TabsContent>
         </Tabs>
       </main>
-    </div>
-  );
-}
-
-function NotesBlock({
-  notes,
-  noteBody,
-  setNoteBody,
-  onAddNote,
-}: {
-  notes: CrmNote[];
-  noteBody: string;
-  setNoteBody: (value: string) => void;
-  onAddNote: (event: FormEvent) => void | Promise<void>;
-}) {
-  return (
-    <div className="flex flex-col gap-3 border-t border-border pt-4">
-      <h3 className="text-sm font-medium">Notas</h3>
-      <form onSubmit={onAddNote} className="flex flex-col gap-2">
-        <Textarea
-          value={noteBody}
-          onChange={(e) => setNoteBody(e.target.value)}
-          placeholder="Adicionar nota…"
-          rows={3}
-        />
-        <Button type="submit" className="self-start">
-          Adicionar nota
-        </Button>
-      </form>
-      <ul className="flex flex-col gap-2">
-        {notes.map((note) => (
-          <li
-            key={note.id}
-            className="rounded-md border border-border px-3 py-2 text-sm"
-          >
-            <p>{note.body}</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {note.source} · {formatCrmTimestamp(note.created_at)}
-            </p>
-          </li>
-        ))}
-        {notes.length === 0 && (
-          <li className="text-sm text-muted-foreground">Nenhuma nota ainda.</li>
-        )}
-      </ul>
     </div>
   );
 }

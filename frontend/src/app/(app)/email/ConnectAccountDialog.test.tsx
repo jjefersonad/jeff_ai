@@ -1,6 +1,8 @@
 /**
  * Tests for the `mode="edit"` extension of `ConnectAccountDialog`
- * (email-account-edit-connection-task-frontend-form-1).
+ * (email-account-edit-connection-task-frontend-form-1) and the
+ * "Continuar com Google" OAuth entry point
+ * (gmail-account-oauth-connection-task-frontend-1-unit-1).
  *
  * The dialog is reused for both the create flow and the new connection-
  * edit flow. In edit mode the form is prefilled with the current
@@ -9,6 +11,14 @@
  * Submission in edit mode calls the new
  * `updateEmailAccountConfig(id, payload)` client (PATCH) instead of
  * `connectEmailAccount` (POST).
+ *
+ * In create mode the dialog now also exposes a "Continuar com Google"
+ * button that delegates to `startGmailOAuth()` (POST
+ * /api/email/accounts/gmail/authorize) and navigates `window.location` to
+ * the returned `authorize_url`. Only `vi.mock("@/lib/email", ...)` is
+ * declared here (top-level) and is shared by both describe blocks — a
+ * second mock re-declaration in a sibling describe would override the
+ * first and break unrelated tests in this file.
  *
  * Mirrors the `vi.mock("@/lib/email", ...)` pattern from
  * `InboxPanel.test.tsx`.
@@ -22,6 +32,7 @@ import type { EmailAccount } from "@/lib/email";
 
 const mockUpdateEmailAccountConfig = vi.fn();
 const mockConnectEmailAccount = vi.fn();
+const mockStartGmailOAuth = vi.fn();
 
 vi.mock("@/lib/email", async () => {
   const actual = await vi.importActual<typeof import("@/lib/email")>("@/lib/email");
@@ -30,6 +41,7 @@ vi.mock("@/lib/email", async () => {
     connectEmailAccount: (...args: unknown[]) => mockConnectEmailAccount(...args),
     updateEmailAccountConfig: (...args: unknown[]) =>
       mockUpdateEmailAccountConfig(...args),
+    startGmailOAuth: (...args: unknown[]) => mockStartGmailOAuth(...args),
   };
 });
 
@@ -224,5 +236,80 @@ describe("ConnectAccountDialog edit mode (email-account-edit-connection-task-fro
     );
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onAccountsChanged).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ===========================================================================
+// gmail-account-oauth-connection-task-frontend-1-unit-1 (REQ-001)
+//
+// "Continuar com Google" button inside `ConnectAccountDialog`: clicking
+// it calls the new `startGmailOAuth()` client (POST
+// /api/email/accounts/gmail/authorize) and navigates `window.location` to
+// the returned `authorize_url`. Only present in `mode="create"` (in
+// `mode="edit"` the account is already connected, so a second OAuth flow
+// makes no sense).
+// ===========================================================================
+
+describe('ConnectAccountDialog "Continuar com Google" (gmail-account-oauth-connection-task-frontend-1)', () => {
+  beforeEach(() => {
+    mockStartGmailOAuth.mockReset();
+  });
+
+  // ----- unit-1 (REQ-001): clicking "Continuar com Google" calls startGmailOAuth + navigates -----
+  it('unit-1: clicking "Continuar com Google" calls startGmailOAuth and navigates window.location to the returned authorize_url', async () => {
+    // Mock `window.location` so the dialog can do `window.location.href = ...`
+    // without actually navigating the jsdom (which would crash the test).
+    const originalLocation = window.location;
+    const hrefSetter = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        // jsdom's `Location` is mostly read-only; `href` is settable via
+        // assignment but we route through a setter so the test can assert
+        // what the dialog tried to navigate to.
+        set href(value: string) {
+          hrefSetter(value);
+        },
+        get href() {
+          return "";
+        },
+        assign: vi.fn(),
+        replace: vi.fn(),
+        reload: vi.fn(),
+      },
+    });
+
+    mockStartGmailOAuth.mockResolvedValue({
+      authorize_url: "https://accounts.google.com/o/oauth2/v2/auth?client_id=stub&state=abc",
+    });
+
+    const onOpenChange = vi.fn();
+    const onSubmit = vi.fn();
+    render(
+      <ConnectAccountDialog
+        open
+        onOpenChange={onOpenChange}
+        onSubmit={onSubmit}
+      />
+    );
+
+    const dialog = within(screen.getByRole("dialog"));
+    const googleButton = dialog.getByRole("button", {
+      name: /continuar com google/i,
+    });
+    await userEvent.click(googleButton);
+
+    await vi.waitFor(() => {
+      expect(mockStartGmailOAuth).toHaveBeenCalledTimes(1);
+    });
+    expect(hrefSetter).toHaveBeenCalledWith(
+      "https://accounts.google.com/o/oauth2/v2/auth?client_id=stub&state=abc"
+    );
+
+    // Restore jsdom's `window.location` for subsequent tests in this file.
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: originalLocation,
+    });
   });
 });

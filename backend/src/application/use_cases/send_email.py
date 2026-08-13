@@ -1,10 +1,12 @@
 """SendEmail use case — envio de email via SMTP da conta configurada."""
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from src.application.integrations.config_schemas import (
+    GmailIntegrationConfig,
     ImapIntegrationConfig,
     validate_config,
 )
@@ -16,12 +18,20 @@ from src.application.ports.user_integration_repository import (
     UserIntegrationRepositoryPort,
 )
 from src.domain.email import ParsedMessage
-from src.infrastructure.email.smtp_client import send_email_via_smtp
+from src.domain.integrations import UserIntegration
+from src.infrastructure.email.gmail_oauth import (
+    ensure_fresh_token as _real_ensure_fresh_token,
+)
+from src.infrastructure.email.smtp_client import resolve_bodies, send_email_via_smtp
 
 _SENT_FOLDER = "Sent"
 
 _INTEGRATION_TYPE = "imap"
 _RE_PREFIX = "Re: "
+
+EnsureFreshToken = Callable[
+    [UserIntegration, UserIntegrationRepositoryPort], Awaitable[GmailIntegrationConfig]
+]
 
 
 def _prefixed_subject(subject: str) -> str:
@@ -49,6 +59,7 @@ class SendEmail:
         email_account_repository: EmailAccountRepositoryPort,
         integration_repository: UserIntegrationRepositoryPort,
         email_repository: EmailRepositoryPort,
+        ensure_fresh_token: EnsureFreshToken = _real_ensure_fresh_token,
     ) -> None:
         """Recebe as portas de repositório por injeção.
 
@@ -57,10 +68,15 @@ class SendEmail:
         `thread_id` e prefixa o `subject` com `Re:` quando ainda não estiver
         prefixado — REQ-005 email-inbox) e para persistir a mensagem enviada
         na pasta `Sent`, sem o que ela nunca apareceria em `list_emails`.
+
+        `ensure_fresh_token` tem default = implementação real
+        (`gmail_oauth.ensure_fresh_token`), só sobrescrita em teste — mesmo
+        padrão de `EmailSyncWorker` (gmail-account-oauth-connection).
         """
         self._email_account_repository = email_account_repository
         self._integration_repository = integration_repository
         self._email_repository = email_repository
+        self._ensure_fresh_token = ensure_fresh_token
 
     async def execute(
         self,
@@ -69,7 +85,7 @@ class SendEmail:
         account_id: str,
         to_addresses: list[str],
         subject: str,
-        body_text: str,
+        body_text: str | None = None,
         body_html: str | None = None,
         cc_addresses: list[str] | None = None,
         bcc_addresses: list[str] | None = None,
@@ -78,6 +94,12 @@ class SendEmail:
         attachments: list[tuple[str, bytes, str]] | None = None,
     ) -> SendEmailResult:
         """Envia email via SMTP usando as credenciais da conta.
+
+        `body_text` é opcional (email-send-html-only-by-default, REQ-010):
+        pode ser `None` quando `body_html` é fornecido. Se ambos forem
+        ausentes/vazios, levanta `ValueError("Send body required")` ANTES
+        de chamar o SMTP e ANTES de upsertar a Sent row (mirror da regra
+        422 do HTTP route).
 
         Args:
             in_reply_to: ID de um email do próprio `user_id` ao qual esta
@@ -89,10 +111,17 @@ class SendEmail:
 
         Raises:
             ValueError: conta não encontrada, não pertence ao usuário,
-                ou `in_reply_to` referencia email de outro user/inexistente.
+                `in_reply_to` referencia email de outro user/inexistente,
+                ou ambos `body_text` e `body_html` ausentes.
             SmtpAuthError: autenticação SMTP recusada.
             Exception: falhas de rede/timeout propagam sem embrulho.
         """
+        # Resolve o par de bodies ANTES de qualquer side-effect (SMTP /
+        # DB write) — uma única fonte de verdade para o que vai pro wire
+        # e para o Sent row (design Decision 5 de
+        # `email-send-html-only-by-default`).
+        resolved_text, resolved_html = resolve_bodies(body_text, body_html)
+
         account = await self._email_account_repository.get(user_id, account_id)
         if account is None:
             raise ValueError("Email account not found")
@@ -101,9 +130,17 @@ class SendEmail:
         if integration is None:
             raise ValueError("Email account integration credentials not found")
 
-        config_dict = integration.config
-        config = validate_config(_INTEGRATION_TYPE, config_dict)
-        assert isinstance(config, ImapIntegrationConfig)
+        config: ImapIntegrationConfig | GmailIntegrationConfig
+        if integration.integration_type == "gmail":
+            # REQ-003 (gmail-account-oauth-connection): refresca e persiste
+            # o access_token ANTES do envio, se expirado.
+            config = await self._ensure_fresh_token(
+                integration, self._integration_repository
+            )
+        else:
+            validated = validate_config(_INTEGRATION_TYPE, integration.config)
+            assert isinstance(validated, ImapIntegrationConfig)
+            config = validated
 
         thread_id: str | None = None
         smtp_in_reply_to: str | None = None
@@ -137,8 +174,8 @@ class SendEmail:
             cc_addresses=cc_addresses or [],
             bcc_addresses=bcc_addresses or [],
             subject=final_subject,
-            body_text=body_text,
-            body_html=body_html,
+            body_text=resolved_text,
+            body_html=resolved_html,
             in_reply_to=smtp_in_reply_to,
             references=smtp_references,
             attachments=attachments,
@@ -149,6 +186,10 @@ class SendEmail:
         # folder — without this, `send_email` reports success but the email
         # is invisible to `list_emails`/`GET /api/email?folder=Sent` until
         # (if ever) the provider round-trips it back via IMAP sync.
+        # Persiste o par RESOLVIDO (não os valores brutos do caller) para
+        # que o Sent row reflita o que efetivamente foi enviado
+        # (REQ-011 — body_text=None quando só HTML, body_text+html
+        # gerado quando só plain).
         sender_address = config.smtp_username or config.imap_username
         sent_message = ParsedMessage(
             uid=message_id,
@@ -158,8 +199,8 @@ class SendEmail:
             from_name=account.display_name,
             to_addresses=to_addresses,
             subject=final_subject,
-            body_html=body_html,
-            body_text=body_text,
+            body_html=resolved_html,
+            body_text=resolved_text,
             received_at=sent_at,
         )
         saved = await self._email_repository.upsert_email(account.id, sent_message)

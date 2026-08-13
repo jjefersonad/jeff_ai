@@ -9,6 +9,8 @@ uma chamada a `register_integration_type` — nunca uma migração da tabela
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -53,6 +55,46 @@ class ImapIntegrationConfig(BaseModel):
             self.smtp_password = self.imap_password
 
 
+class GmailIntegrationConfig(BaseModel):
+    """`config` de uma conta Gmail conectada via OAuth2 (gmail-account-oauth-connection).
+
+    Ao contrário de `ImapIntegrationConfig`, não há usuário/senha: os
+    segredos são `access_token`/`refresh_token`/`token_expiry` obtidos pelo
+    fluxo OAuth (design Decision 1). Host/porta IMAP/SMTP são fixos ao Gmail
+    — expostos como `@property`, nunca como `Field`, para que nenhum valor
+    de payload possa sobrescrevê-los.
+    """
+
+    email_address: str = Field(min_length=1)
+    access_token: str = Field(min_length=1)
+    refresh_token: str = Field(min_length=1)
+    token_expiry: datetime
+
+    @property
+    def imap_host(self) -> str:
+        return "imap.gmail.com"
+
+    @property
+    def imap_port(self) -> int:
+        return 993
+
+    @property
+    def imap_username(self) -> str:
+        return self.email_address
+
+    @property
+    def smtp_host(self) -> str:
+        return "smtp.gmail.com"
+
+    @property
+    def smtp_port(self) -> int:
+        return 587
+
+    @property
+    def smtp_username(self) -> str:
+        return self.email_address
+
+
 class UnknownIntegrationTypeError(ValueError):
     """`integration_type` sem schema registrado em `validate_config`."""
 
@@ -62,6 +104,7 @@ _REGISTRY: dict[str, type[BaseModel]] = {
     "whatsapp_business": WhatsAppBusinessIntegrationConfig,
     "smtp": SmtpIntegrationConfig,
     "imap": ImapIntegrationConfig,
+    "gmail": GmailIntegrationConfig,
 }
 
 

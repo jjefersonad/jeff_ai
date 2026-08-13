@@ -167,7 +167,7 @@ async def test_archive_contact_cascades_notes_and_deals() -> None:
         id=str(uuid.uuid4()),
         user_id=user_id,
         title="Opp",
-        stage=DealStage.LEAD,
+        stage=DealStage.QUALIFIED,
         contact_id=contact.id,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),

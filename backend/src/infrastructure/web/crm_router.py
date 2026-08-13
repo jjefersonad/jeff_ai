@@ -38,6 +38,7 @@ from src.application.use_cases.list_crm_notes import ListCrmNotes
 from src.application.use_cases.move_crm_deal import MoveCrmDeal
 from src.application.use_cases.update_crm_company import UpdateCrmCompany
 from src.application.use_cases.update_crm_contact import UpdateCrmContact
+from src.application.use_cases.update_crm_deal import UpdateCrmDeal
 from src.application.use_cases.update_crm_field_definition import (
     UpdateCrmFieldDefinition,
 )
@@ -641,8 +642,24 @@ async def list_notes_endpoint(
 # --- Deals -------------------------------------------------------------------
 
 
+class DealContactRequest(BaseModel):
+    """Contato aninhado em `POST /api/crm/deals` (campos opcionais)."""
+
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    city: str | None = None
+    state: str | None = None
+    tags: list[str] | None = None
+    status: str | None = None
+    custom_values: dict[str, Any] | None = None
+
+
 class DealCreateRequest(BaseModel):
-    """Corpo de `POST /api/crm/deals`."""
+    """Corpo de `POST /api/crm/deals`.
+
+    `custom_values` no topo é do deal; `contact.custom_values` é do contato.
+    """
 
     title: str
     stage: str | None = None
@@ -651,6 +668,19 @@ class DealCreateRequest(BaseModel):
     contact_id: str | None = None
     company_id: str | None = None
     custom_values: dict[str, Any] | None = None
+    contact: DealContactRequest | None = None
+
+
+class DealUpdateRequest(BaseModel):
+    """Corpo de `PATCH /api/crm/deals/{id}`."""
+
+    title: str | None = None
+    stage: str | None = None
+    value: Decimal | None = None
+    currency: str | None = None
+    company_id: str | None = None
+    clear_company: bool = False
+    contact: DealContactRequest | None = None
 
 
 class DealMoveRequest(BaseModel):
@@ -709,7 +739,7 @@ async def create_deal_endpoint(
     user: User | None = Depends(require_auth),
     repository: CrmRepositoryPort = Depends(_crm_repository),
 ) -> DealResponse:
-    """Cria deal (stage default lead)."""
+    """Cria deal (stage default lead); `contact` aninhado é opcional."""
     actor = _require_user(user)
     stage: DealStage | None = None
     if body.stage is not None:
@@ -719,6 +749,7 @@ async def create_deal_endpoint(
             raise HTTPException(
                 status_code=422, detail=f"stage inválido: {body.stage}"
             ) from exc
+    nested = body.contact
     try:
         deal = await CreateCrmDeal(repository=repository).execute(
             user_id=actor.id,
@@ -729,6 +760,14 @@ async def create_deal_endpoint(
             contact_id=body.contact_id,
             company_id=body.company_id,
             custom_values=body.custom_values,
+            contact_name=nested.name if nested else None,
+            email=nested.email if nested else None,
+            phone=nested.phone if nested else None,
+            city=nested.city if nested else None,
+            state=nested.state if nested else None,
+            tags=nested.tags if nested else None,
+            status=nested.status if nested else None,
+            contact_custom_values=nested.custom_values if nested else None,
         )
     except DomainError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -758,6 +797,52 @@ async def list_deals_endpoint(
     return [_deal_response(d) for d in deals]
 
 
+@router.patch("/api/crm/deals/{deal_id}")
+async def update_deal_endpoint(
+    deal_id: str,
+    body: DealUpdateRequest,
+    user: User | None = Depends(require_auth),
+    repository: CrmRepositoryPort = Depends(_crm_repository),
+) -> DealResponse:
+    """Atualiza deal próprio; `contact` aninhado é opcional."""
+    actor = _require_user(user)
+    stage: DealStage | None = None
+    if body.stage is not None:
+        try:
+            stage = DealStage(body.stage)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail=f"stage inválido: {body.stage}"
+            ) from exc
+    nested = body.contact
+    try:
+        deal = await UpdateCrmDeal(repository=repository).execute(
+            user_id=actor.id,
+            deal_id=deal_id,
+            title=body.title,
+            stage=stage,
+            value=body.value,
+            set_value="value" in body.model_fields_set,
+            currency=body.currency,
+            company_id=body.company_id,
+            clear_company=body.clear_company,
+            contact_name=nested.name if nested else None,
+            email=nested.email if nested else None,
+            phone=nested.phone if nested else None,
+            city=nested.city if nested else None,
+            state=nested.state if nested else None,
+            tags=nested.tags if nested else None,
+            status=nested.status if nested else None,
+            contact_custom_values=nested.custom_values if nested else None,
+            apply_contact=nested is not None,
+        )
+    except DomainError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if deal is None:
+        raise HTTPException(status_code=404, detail="Deal not found")
+    return _deal_response(deal)
+
+
 @router.get("/api/crm/deals/{deal_id}")
 async def get_deal_endpoint(
     deal_id: str,
@@ -781,11 +866,14 @@ async def move_deal_endpoint(
     user: User | None = Depends(require_auth),
     repository: CrmRepositoryPort = Depends(_crm_repository),
 ) -> DealResponse:
-    """Move deal para outro estágio."""
+    """Move deal para outro estágio; grava nota de transição com source='user'."""
     actor = _require_user(user)
     try:
         deal = await MoveCrmDeal(repository=repository).execute(
-            user_id=actor.id, deal_id=deal_id, stage=body.stage
+            user_id=actor.id,
+            deal_id=deal_id,
+            stage=body.stage,
+            source=NoteSource.USER,
         )
     except DomainError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

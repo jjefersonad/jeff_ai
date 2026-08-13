@@ -200,6 +200,31 @@ def _build_account(*, user_id: str, account_id: str) -> tuple[EmailAccount, User
     return account, integration
 
 
+def _build_gmail_account(
+    *, user_id: str, account_id: str
+) -> tuple[EmailAccount, UserIntegration]:
+    integration = UserIntegration(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        integration_type="gmail",
+        config={
+            "email_address": "user@gmail.com",
+            "access_token": "ya29.old",
+            "refresh_token": "1//refresh",
+            "token_expiry": datetime.now(UTC).isoformat(),
+        },
+    )
+    account = EmailAccount(
+        id=account_id,
+        user_id=user_id,
+        user_integration_id=integration.id,
+        display_name="user@gmail.com",
+        provider="gmail",
+        status=EmailAccountStatus.CONNECTED,
+    )
+    return account, integration
+
+
 def _build_email(
     *,
     user_id: str,
@@ -510,3 +535,53 @@ async def test_send_email_reply_resolves_target_by_message_id_not_db_id(
     assert call["subject"] == "Re: Reply"
     # O SMTP `In-Reply-To:` carrega o Message-ID IMAP original.
     assert call["in_reply_to"] == original_message_id
+
+
+async def test_send_email_gmail_account_calls_ensure_fresh_token_before_smtp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """gmail-account-oauth-connection-task-sync-4-unit-1 (REQ-003)."""
+    from src.application.integrations.config_schemas import GmailIntegrationConfig
+    from src.application.use_cases import send_email as send_email_module
+    from src.application.use_cases.send_email import SendEmail
+
+    user_id = "user-a"
+    account_id = "acc-gmail-1"
+    account, integration = _build_gmail_account(user_id=user_id, account_id=account_id)
+
+    accounts_repo = _FakeEmailAccountRepository()
+    accounts_repo.accounts[account.id] = account
+    integrations_repo = _FakeUserIntegrationRepository()
+    integrations_repo.integrations[integration.id] = integration
+    email_repo = _FakeEmailRepository()
+
+    call_order: list[str] = []
+
+    async def fake_ensure_fresh_token(integ, repo):
+        call_order.append("ensure_fresh_token")
+        return GmailIntegrationConfig(**integ.config)
+
+    recorder = _SmtpCallRecorder()
+
+    async def recording_send(**kwargs):
+        call_order.append("send_email_via_smtp")
+        return await recorder(**kwargs)
+
+    monkeypatch.setattr(send_email_module, "send_email_via_smtp", recording_send)
+
+    use_case = SendEmail(
+        email_account_repository=accounts_repo,
+        integration_repository=integrations_repo,
+        email_repository=email_repo,
+        ensure_fresh_token=fake_ensure_fresh_token,
+    )
+
+    await use_case.execute(
+        user_id=user_id,
+        account_id=account_id,
+        to_addresses=["alice@example.com"],
+        subject="Hello",
+        body_text="Hi",
+    )
+
+    assert call_order == ["ensure_fresh_token", "send_email_via_smtp"]

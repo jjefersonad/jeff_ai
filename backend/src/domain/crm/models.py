@@ -14,11 +14,16 @@ from typing import Any
 
 
 class DealStage(str, Enum):
-    """Estágios fixos do funil (REQ-001 crm-deals). Ordem = ordem do funil."""
+    """Estágios fixos do funil (REQ-001 deal-pipeline-state-machine).
+
+    Ordem = ordem do funil. O card do Funil é o lead; colunas = status.
+    Novos cards entram em `lead`.
+    """
 
     LEAD = "lead"
     QUALIFIED = "qualified"
     PROPOSAL = "proposal"
+    NEGOTIATION = "negotiation"
     WON = "won"
     LOST = "lost"
 
@@ -29,10 +34,16 @@ def default_deal_stages() -> list[DealStage]:
 
 
 class NoteSource(str, Enum):
-    """Origem da nota (usuário na UI vs agente)."""
+    """Origem da nota (usuário na UI, agente, ou sistema automático).
+
+    `SYSTEM` é usada por gravações automáticas sem ação humana/agente
+    explícita — ex.: `classify_email_by_contact` (`sales-pipeline-via-agent`
+    REQ-005) ao vincular um email recebido a um deal ativo.
+    """
 
     USER = "user"
     AGENT = "agent"
+    SYSTEM = "system"
 
 
 class FieldEntity(str, Enum):

@@ -184,8 +184,8 @@ def _client(repo: _FakeCrmRepository) -> TestClient:
     return TestClient(app)
 
 
-def test_get_deal_stages_returns_five_ordered() -> None:
-    """unit-1: GET /api/crm/deals/stages → 200 com 5 estágios."""
+def test_get_deal_stages_returns_ordered() -> None:
+    """unit-1: GET /api/crm/deals/stages → 200 com estágios ordenados."""
     client = _client(_FakeCrmRepository())
     response = client.get("/api/crm/deals/stages")
     assert response.status_code == 200
@@ -193,6 +193,7 @@ def test_get_deal_stages_returns_five_ordered() -> None:
         "lead",
         "qualified",
         "proposal",
+        "negotiation",
         "won",
         "lost",
     ]
@@ -217,6 +218,21 @@ def test_create_deal_and_move() -> None:
     moved = client.post(f"/api/crm/deals/{deal_id}/move", json={"stage": "won"})
     assert moved.status_code == 200
     assert moved.json()["stage"] == "won"
+
+
+def test_move_deal_via_endpoint_writes_note_with_source_user() -> None:
+    """unit-1 (REQ-002/REQ-004): mover via endpoint -> crm_notes source='user'."""
+    repo = _FakeCrmRepository()
+    client = _client(repo)
+    created = client.post("/api/crm/deals", json={"title": "Deal Acme"})
+    deal_id = created.json()["id"]
+
+    client.post(f"/api/crm/deals/{deal_id}/move", json={"stage": "proposal"})
+
+    assert len(repo.notes) == 1
+    assert repo.notes[0].deal_id == deal_id
+    assert repo.notes[0].body == "lead → proposal"
+    assert repo.notes[0].source.value == "user"
 
 
 def test_create_note_on_contact() -> None:

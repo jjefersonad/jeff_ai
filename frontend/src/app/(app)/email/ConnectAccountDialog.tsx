@@ -40,6 +40,7 @@ import { Label } from "@/components/ui/label";
 import { ApiError } from "@/lib/api";
 import {
   type EmailAccountConnectPayload,
+  startGmailOAuth,
   updateEmailAccountConfig,
 } from "@/lib/email";
 
@@ -141,6 +142,7 @@ export function ConnectAccountDialog({
 }: ConnectAccountDialogProps) {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [googleStarting, setGoogleStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -152,8 +154,30 @@ export function ConnectAccountDialog({
       }
       setError(null);
       setSaving(false);
+      setGoogleStarting(false);
     }
   }, [open, mode, prefill, prefillDisplayName]);
+
+  const handleGmailOAuth = async () => {
+    setError(null);
+    setGoogleStarting(true);
+    try {
+      const { authorize_url } = await startGmailOAuth();
+      // Top-level navigation to Google — o cookie de `state` é setado
+      // server-side na resposta do authorize e viaja de volta no
+      // callback. Não fecha o dialog: o navegador vai sair da página.
+      window.location.href = authorize_url;
+    } catch (err) {
+      setGoogleStarting(false);
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Falha ao iniciar conexão com Google."
+      );
+    }
+  };
 
   const handleSubmit = async () => {
     setError(null);
@@ -446,6 +470,16 @@ export function ConnectAccountDialog({
           >
             Cancelar
           </Button>
+          {!isEdit && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleGmailOAuth}
+              disabled={saving || googleStarting}
+            >
+              {googleStarting ? "Abrindo Google..." : "Continuar com Google"}
+            </Button>
+          )}
           <Button type="button" onClick={handleSubmit} disabled={saving}>
             {submitLabel}
           </Button>

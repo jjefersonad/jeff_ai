@@ -13,11 +13,15 @@ Unit-1/2 (email-client-imap-mvp-task-sync-1):
 from __future__ import annotations
 
 from collections import namedtuple
+from datetime import UTC, datetime
 
 import aioimaplib
 import pytest
 
-from src.application.integrations.config_schemas import ImapIntegrationConfig
+from src.application.integrations.config_schemas import (
+    GmailIntegrationConfig,
+    ImapIntegrationConfig,
+)
 from src.infrastructure.email.imap_client import (
     ImapAuthError,
     fetch_new_messages,
@@ -34,6 +38,13 @@ _CONFIG = ImapIntegrationConfig(
     imap_password="s3cr3t-password",
     smtp_host="smtp.example.com",
     smtp_port=587,
+)
+
+_GMAIL_CONFIG = GmailIntegrationConfig(
+    email_address="user@gmail.com",
+    access_token="ya29.access",
+    refresh_token="1//refresh",
+    token_expiry=datetime.now(UTC),
 )
 
 
@@ -100,11 +111,18 @@ class _FakeImapServer:
     def __init__(self, messages: dict[int, bytes]) -> None:
         self._messages = messages
         self.logged_out = False
+        self.login_calls: list[tuple[str, str]] = []
+        self.xoauth2_calls: list[tuple[str, str]] = []
 
     async def wait_hello_from_server(self) -> None:
         return None
 
     async def login(self, user: str, password: str) -> _Response:
+        self.login_calls.append((user, password))
+        return _Response("OK", [])
+
+    async def xoauth2(self, user: str, token: str) -> _Response:
+        self.xoauth2_calls.append((user, token))
         return _Response("OK", [])
 
     async def select(self, folder: str) -> _Response:
@@ -163,6 +181,58 @@ async def test_fetch_new_messages_returns_only_messages_newer_than_watermark(
 
     assert {message.subject for message in messages} == {"New One", "New Two"}
     assert server.logged_out is True
+
+
+def test_limit_uids_for_poll_initial_sync_keeps_newest_only() -> None:
+    from src.infrastructure.email.imap_client import (
+        _INITIAL_SYNC_LIMIT,
+        _limit_uids_for_poll,
+    )
+
+    uids = list(range(1, _INITIAL_SYNC_LIMIT + 50))
+    limited = _limit_uids_for_poll(uids, watermark=0)
+    assert limited == uids[-_INITIAL_SYNC_LIMIT:]
+    assert limited[0] == 50
+    assert limited[-1] == _INITIAL_SYNC_LIMIT + 49
+
+
+def test_limit_uids_for_poll_catchup_takes_oldest_batch() -> None:
+    from src.infrastructure.email.imap_client import (
+        _FETCH_BATCH_SIZE,
+        _limit_uids_for_poll,
+    )
+
+    uids = list(range(100, 100 + _FETCH_BATCH_SIZE + 20))
+    limited = _limit_uids_for_poll(uids, watermark=99)
+    assert limited == uids[:_FETCH_BATCH_SIZE]
+    assert limited[0] == 100
+    assert limited[-1] == 100 + _FETCH_BATCH_SIZE - 1
+
+
+async def test_fetch_new_messages_with_gmail_config_uses_xoauth2(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """gmail-account-oauth-connection-task-sync-1-unit-1 (REQ-003)."""
+    server = _FakeImapServer({101: _raw_message(subject="New One")})
+    monkeypatch.setattr(aioimaplib, "IMAP4_SSL", lambda **kwargs: server)
+
+    await fetch_new_messages(_GMAIL_CONFIG, folder="INBOX", watermark=100)
+
+    assert server.xoauth2_calls == [("user@gmail.com", "ya29.access")]
+    assert server.login_calls == []
+
+
+async def test_fetch_new_messages_with_imap_config_still_uses_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """gmail-account-oauth-connection-task-sync-1-unit-2 (REQ-003) — regressão."""
+    server = _FakeImapServer({101: _raw_message(subject="New One")})
+    monkeypatch.setattr(aioimaplib, "IMAP4_SSL", lambda **kwargs: server)
+
+    await fetch_new_messages(_CONFIG, folder="INBOX", watermark=100)
+
+    assert server.login_calls == [("user@example.com", "s3cr3t-password")]
+    assert server.xoauth2_calls == []
 
 
 async def test_extract_search_uids_strips_keyword_and_handles_empty() -> None:

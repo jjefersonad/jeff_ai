@@ -12,6 +12,7 @@ export type DealStage =
   | "lead"
   | "qualified"
   | "proposal"
+  | "negotiation"
   | "won"
   | "lost";
 
@@ -142,6 +143,17 @@ export interface CompanyUpdatePayload {
   custom_values?: Record<string, unknown> | null;
 }
 
+export interface DealContactPayload {
+  name?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  city?: string | null;
+  state?: string | null;
+  tags?: string[] | null;
+  status?: string | null;
+  custom_values?: Record<string, unknown> | null;
+}
+
 export interface DealCreatePayload {
   title: string;
   stage?: string | null;
@@ -150,6 +162,17 @@ export interface DealCreatePayload {
   contact_id?: string | null;
   company_id?: string | null;
   custom_values?: Record<string, unknown> | null;
+  contact?: DealContactPayload | null;
+}
+
+export interface DealUpdatePayload {
+  title?: string | null;
+  stage?: string | null;
+  value?: string | number | null;
+  currency?: string | null;
+  company_id?: string | null;
+  clear_company?: boolean;
+  contact?: DealContactPayload | null;
 }
 
 export interface NoteCreatePayload {
@@ -370,6 +393,17 @@ export async function getDeal(id: string): Promise<CrmDeal> {
 export async function createDeal(payload: DealCreatePayload): Promise<CrmDeal> {
   const response = await apiFetch("/api/crm/deals", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return parseJsonOrThrow<CrmDeal>(response);
+}
+
+export async function updateDeal(
+  id: string,
+  payload: DealUpdatePayload
+): Promise<CrmDeal> {
+  const response = await apiFetch(`/api/crm/deals/${id}`, {
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
   return parseJsonOrThrow<CrmDeal>(response);

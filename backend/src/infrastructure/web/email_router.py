@@ -19,11 +19,14 @@ pelo servidor vira 400, nenhum dos dois casos deixa `email_accounts` ou
 from __future__ import annotations
 
 import os
+import secrets
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ValidationError
+from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.requests import Request
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, ValidationError, model_validator
 
 from src.application.integrations.config_schemas import UnknownIntegrationTypeError
 from src.application.ports.email_account_repository import (
@@ -44,6 +47,11 @@ from src.application.use_cases.list_email_accounts import ListEmailAccounts
 from src.application.use_cases.list_emails import ListEmails
 from src.application.use_cases.search_emails import SearchEmails
 from src.application.use_cases.send_email import SendEmail
+from src.application.use_cases.complete_gmail_oauth import (
+    CompleteGmailOAuth,
+    ExchangeCodeForTokens,
+)
+from src.application.use_cases.start_gmail_oauth import BuildAuthorizeUrl, StartGmailOAuth
 from src.application.use_cases.update_email_account import UpdateEmailAccount
 from src.application.use_cases.update_email_account_config import (
     UpdateEmailAccountConfig,
@@ -51,6 +59,8 @@ from src.application.use_cases.update_email_account_config import (
 from src.domain.email import Email, EmailAccount
 from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.users import User
+from src.infrastructure.email import gmail_oauth
+from src.infrastructure.email.gmail_oauth import MissingRefreshTokenError
 from src.infrastructure.email.imap_client import ImapAuthError, verify_imap_login
 from src.infrastructure.email.smtp_client import SmtpAuthError
 from src.infrastructure.persistence.email_account_repository import (
@@ -60,8 +70,17 @@ from src.infrastructure.persistence.email_repository import PostgresEmailReposit
 from src.infrastructure.persistence.user_integrations_repository import (
     PostgresUserIntegrationRepository,
 )
+from src.infrastructure.web.auth_router import _cookie_kwargs
 
 router = APIRouter()
+
+# Cookie de double-submit para o `state` do fluxo OAuth Gmail (design Decision
+# 2 de `gmail-account-oauth-connection`): vive só o tempo do round-trip até o
+# Google (5 min), por isso tem `max_age` explícito — diferente do cookie de
+# sessão, que não define `max_age` (expira só ao fechar o browser; a
+# expiração real é server-side, via `sessions.expires_at`).
+GMAIL_OAUTH_STATE_COOKIE_NAME = "gmail_oauth_state"
+_GMAIL_OAUTH_STATE_MAX_AGE_SECONDS = 300
 
 
 def _email_account_repository() -> EmailAccountRepositoryPort:
@@ -82,6 +101,32 @@ def _verify_imap_login() -> VerifyLogin:
 def _email_repository() -> EmailRepositoryPort:
     """Constrói o repositório de emails a partir de `POSTGRES_URI`."""
     return PostgresEmailRepository(os.environ["POSTGRES_URI"])
+
+
+def _gmail_build_authorize_url() -> BuildAuthorizeUrl:
+    """Devolve o builder real da URL OAuth do Google (sobrescrito por fakes em teste)."""
+    return gmail_oauth.build_authorize_url
+
+
+def _gmail_exchange_code_for_tokens() -> ExchangeCodeForTokens:
+    """Devolve o exchanger real de `code` por tokens (sobrescrito por fakes em teste)."""
+    return gmail_oauth.exchange_code_for_tokens
+
+
+def _frontend_origin() -> str:
+    """Origem do frontend para onde o callback OAuth redireciona o browser.
+
+    Distinto de `BASE_URL` (origem pública do BACKEND, usada por
+    `composition/public_url.py` para URLs de mídia) — aqui o browser
+    precisa ser redirecionado para a página `/email` do FRONTEND.
+    """
+    return (os.getenv("FRONTEND_ORIGIN") or "http://localhost:3000").rstrip("/")
+
+
+class GmailAuthorizeResponse(BaseModel):
+    """Corpo de `POST /api/email/accounts/gmail/authorize`."""
+
+    authorize_url: str
 
 
 class EmailAccountConnectRequest(BaseModel):
@@ -133,17 +178,33 @@ class SendEmailRequest(BaseModel):
     `in_reply_to` é o ID (UUID) de um email já sincronizado do próprio
     user; o use case propaga `thread_id` e prefixa `subject` com `Re:`
     automaticamente (REQ-005 email-inbox).
+
+    `body_text` é opcional (email-send-html-only-by-default, REQ-010):
+    ao menos um entre `body_text` e `body_html` deve ser fornecido —
+    caso contrário o `model_validator` levanta 422. Isso espelha a
+    regra do `SendEmail.execute`, que levanta `ValueError("Send body
+    required")` se ambos forem vazios (defesa em profundidade: o
+    HTTP route é a primeira linha, o use case é a segunda).
     """
 
     account_id: str
     to_addresses: list[str]
     subject: str
-    body_text: str
+    body_text: str | None = None
     body_html: str | None = None
     cc_addresses: list[str] | None = None
     bcc_addresses: list[str] | None = None
     in_reply_to: str | None = None
     references: str | None = None
+
+    @model_validator(mode="after")
+    def _require_at_least_one_body(self) -> "SendEmailRequest":
+        """REQ-010 scenario 2: 422 quando `body_text` E `body_html` são vazios."""
+        text_empty = not (self.body_text and self.body_text.strip())
+        html_empty = not (self.body_html and self.body_html.strip())
+        if text_empty and html_empty:
+            raise ValueError("Send body required")
+        return self
 
 
 class SendEmailResponse(BaseModel):
@@ -494,6 +555,104 @@ async def delete_email_account_endpoint(
         raise HTTPException(status_code=404, detail="Email account not found")
 
 
+# ── Gmail OAuth endpoints (gmail-account-oauth-connection) ───────────────────
+
+
+@router.post("/api/email/accounts/gmail/authorize")
+async def start_gmail_oauth_endpoint(
+    response: Response,
+    user: User | None = Depends(require_auth),
+    build_authorize_url: BuildAuthorizeUrl = Depends(_gmail_build_authorize_url),
+) -> GmailAuthorizeResponse:
+    """REQ-001: monta a URL de consentimento do Google e seta o cookie de `state`.
+
+    O `state` é um valor de alta entropia (`secrets.token_urlsafe`) guardado
+    num cookie double-submit (`GMAIL_OAUTH_STATE_COOKIE_NAME`) — não numa
+    tabela nova (design Decision 2: mesma filosofia "sessão opaca, sem
+    assinatura" de `sessions.py`, aplicada a um valor que só precisa viver 5
+    minutos). O callback (`gmail_callback_endpoint`, task-routes-2) compara
+    esse cookie ao `state` devolvido pelo Google.
+    """
+    if user is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    state = secrets.token_urlsafe(32)
+    authorize_url = StartGmailOAuth(build_authorize_url=build_authorize_url).execute(
+        state
+    )
+
+    response.set_cookie(
+        key=GMAIL_OAUTH_STATE_COOKIE_NAME,
+        value=state,
+        max_age=_GMAIL_OAUTH_STATE_MAX_AGE_SECONDS,
+        **_cookie_kwargs(),
+    )
+    return GmailAuthorizeResponse(authorize_url=authorize_url)
+
+
+@router.get("/api/email/accounts/gmail/callback")
+async def gmail_oauth_callback_endpoint(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    user: User | None = Depends(require_auth),
+    repo: EmailAccountRepositoryPort = Depends(_email_account_repository),
+    integration_repo: UserIntegrationRepositoryPort = Depends(
+        _user_integration_repository
+    ),
+    exchange_code_for_tokens: ExchangeCodeForTokens = Depends(
+        _gmail_exchange_code_for_tokens
+    ),
+) -> RedirectResponse:
+    """REQ-002/REQ-004: valida o `state` double-submit, troca `code`, redireciona.
+
+    Ordem (todas as checagens antes de qualquer persistência):
+      1. `state` do query param DEVE bater com o cookie `gmail_oauth_state`
+         (`secrets.compare_digest`) — mismatch ou cookie ausente vira 400,
+         `CompleteGmailOAuth` nunca é chamado (REQ-002).
+      2. `error` do Google (usuário negou consentimento) vira 302 para
+         `.../email?gmail_connected=0`, também sem chamar o use case
+         (REQ-004).
+      3. Callback válido chama `CompleteGmailOAuth.execute` — sucesso ou
+         `MissingRefreshTokenError` (mapeada para `gmail_connected=0`)
+         ambos redirecionam; o cookie de state é sempre limpo na resposta.
+    """
+    if user is None:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    cookie_state = request.cookies.get(GMAIL_OAUTH_STATE_COOKIE_NAME)
+    if not state or not cookie_state or not secrets.compare_digest(state, cookie_state):
+        raise HTTPException(status_code=400, detail="Invalid or missing OAuth state")
+
+    frontend_email_url = f"{_frontend_origin()}/email"
+
+    def _redirect(gmail_connected: str) -> RedirectResponse:
+        redirect = RedirectResponse(
+            url=f"{frontend_email_url}?gmail_connected={gmail_connected}",
+            status_code=302,
+        )
+        redirect.delete_cookie(GMAIL_OAUTH_STATE_COOKIE_NAME, **_cookie_kwargs())
+        return redirect
+
+    if error is not None:
+        return _redirect("0")
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing authorization code")
+
+    use_case = CompleteGmailOAuth(
+        repository=repo,
+        integration_repository=integration_repo,
+        exchange_code_for_tokens=exchange_code_for_tokens,
+    )
+    try:
+        await use_case.execute(user_id=user.id, code=code)
+    except MissingRefreshTokenError:
+        return _redirect("0")
+
+    return _redirect("1")
+
+
 # ── Email inbox endpoints (inbox-2) ───────────────────────────────────────────
 
 
@@ -638,7 +797,7 @@ async def send_email_endpoint(
     integration_repo: UserIntegrationRepositoryPort = Depends(_user_integration_repository),
     email_repo: EmailRepositoryPort = Depends(_email_repository),
 ) -> SendEmailResponse:
-    """Envia email via SMTP usando as credenciais da conta IMAP do usuário."""
+    """Envia email via SMTP usando as credenciais da conta (IMAP ou Gmail) do usuário."""
     if user is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
     if not body.to_addresses:

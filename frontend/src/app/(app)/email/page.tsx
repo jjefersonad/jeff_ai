@@ -16,10 +16,21 @@
  * Mirrors the `(app)/crm/page.tsx` pattern: shared state lives here so
  * the "Contas" tab can notify the inbox of account changes when accounts
  * are connected/edited/removed.
+ *
+ * OAuth callback handling (gmail-account-oauth-connection REQ-002 /
+ * REQ-004): the backend redirects the browser back to
+ * `{FRONTEND_ORIGIN}/email?gmail_connected=1|0` after the Google
+ * consent flow finishes. This page reads that param on mount, shows
+ * a success/error toast, refetches the accounts list on success, and
+ * strips the param from the URL via `history.replaceState` — NOT via
+ * `router.replace`, which would re-mount the page and re-fire the
+ * effect (duplicate toasts / refetches).
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Mail } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { toast } from "sonner";
 
 import {
   Tabs,
@@ -38,6 +49,25 @@ type TabId = "inbox" | "accounts";
 
 function errMessage(err: unknown): string {
   return err instanceof ApiError ? err.message : "Falha inesperada";
+}
+
+/**
+ * Devolve o `pathname + search` atual com `gmail_connected` removido.
+ * Preserva qualquer outro query param que possa estar na URL.
+ */
+function stripGmailConnected(href: string): string {
+  try {
+    // `window.location.href` é absoluto; o `history.replaceState` aceita
+    // um URL absoluto OU relativo. Construímos um `URL` para manipular
+    // os search params de forma robusta e devolvemos o resultado
+    // (pathname + search) — assim não dependemos do origin.
+    const url = new URL(href);
+    if (!url.searchParams.has("gmail_connected")) return href;
+    url.searchParams.delete("gmail_connected");
+    return url.pathname + (url.search ? url.search : "") + url.hash;
+  } catch {
+    return href;
+  }
 }
 
 export default function EmailPage() {
@@ -62,6 +92,35 @@ export default function EmailPage() {
   useEffect(() => {
     refreshAccounts();
   }, [refreshAccounts]);
+
+  // OAuth callback handling: ler `?gmail_connected=1|0` uma vez (no
+  // mount) e mostrar o toast correspondente. O `history.replaceState`
+  // evita que a próxima navegação/save re-monte o componente e re-dispare
+  // o mesmo efeito. O `useRef` impede que o efeito re-rode com o mesmo
+  // valor de flag (em React 19, `useSearchParams` devolve um objeto novo
+  // a cada render e dispararia o efeito duas vezes em dev strict mode).
+  const searchParams = useSearchParams();
+  const handledGmailConnected = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (handledGmailConnected.current) return;
+    const flag = searchParams.get("gmail_connected");
+    if (flag === null) return;
+    handledGmailConnected.current = true;
+    if (flag === "1") {
+      toast.success("Conta Google conectada com sucesso.");
+      // Refetch já é feito pelo `useEffect` de mount — o AccountsPanel
+      // mostra a nova conta. Um refetch extra aqui garante que
+      // apareça mesmo se o usuário chegou via redirect externo
+      // (auth flow não preserva o state de navegação).
+      void refreshAccounts();
+    } else if (flag === "0") {
+      toast.error("Conexão com Google não concluída. Tente novamente.");
+    }
+    // Strip the param without re-mounting.
+    const stripped = stripGmailConnected(window.location.href);
+    window.history.replaceState(null, "", stripped);
+  }, [searchParams, refreshAccounts]);
 
   const openCompose = useCallback((prefill?: ComposePrefill) => {
     setComposePrefill(prefill ?? null);

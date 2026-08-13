@@ -55,6 +55,11 @@ class CrmRepositoryPort(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    async def get_company_by_name(self, user_id: str, name: str) -> Company | None:
+        """Retorna empresa ativa do user cujo nome bate (case-insensitive)."""
+        raise NotImplementedError
+
+    @abstractmethod
     async def update_company(self, company: Company) -> Company | None:
         """Atualiza empresa própria; None se não existir para o user_id."""
         raise NotImplementedError
@@ -161,6 +166,19 @@ class CrmRepositoryPort(ABC):
         self, user_id: str, deal_id: str, stage: DealStage
     ) -> Deal | None:
         """Atualiza só o estágio do deal; None se miss."""
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_active_deal_by_contact(
+        self, user_id: str, contact_id: str
+    ) -> Deal | None:
+        """Retorna o deal ativo (`stage NOT IN ('won','lost')`) mais recente do contato.
+
+        Usado por `classify_email_by_contact` (`sales-pipeline-via-agent`
+        REQ-005) para decidir se um email recebido deve gerar uma nota
+        automática no deal. Escopado a `user_id`. `None` se o contato não
+        tiver nenhum deal ativo.
+        """
         raise NotImplementedError
 
     # --- Notes ---------------------------------------------------------------
