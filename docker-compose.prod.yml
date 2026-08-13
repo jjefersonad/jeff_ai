@@ -180,6 +180,10 @@ services:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?defina NEXT_PUBLIC_API_URL em .env}
       JEFF_AI_TZ: ${JEFF_AI_TZ:-UTC}
       TZ: ${JEFF_AI_TZ:-UTC}
+      INTEGRATION_CREDENTIALS_KEY: ${INTEGRATION_CREDENTIALS_KEY:-}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-http://localhost:8001/api/email/accounts/gmail/callback}
     depends_on:
       - backend
     # Substitui o ENTRYPOINT da imagem langgraph-api (uvicorn) — ver nota
