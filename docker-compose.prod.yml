@@ -76,11 +76,16 @@ services:
       # Espelha auth.path do langgraph.json — ver docker-compose.yml (LANGGRAPH_AUTH).
       LANGGRAPH_AUTH: '{"path": "./src/infrastructure/web/auth.py:auth"}'
       CORS_ALLOW_ORIGINS: ${FRONTEND_ORIGIN:-http://localhost:3002}
-    # Em produção o código já vai na imagem (Dockerfile.backend COPY).
-    # NÃO bind-montar ./backend/src nem ./backend/langgraph.json no Portainer:
-    # se o path não existir no host, o Docker cria um DIRETÓRIO no lugar do
-    # arquivo e o deploy quebra com "not a directory" / "mount ... file".
-    # Só volumes nomeados para dados mutáveis em runtime.
+      # Em produção o código já vai na imagem (Dockerfile.backend COPY).
+      # NÃO bind-montar ./backend/src nem ./backend/langgraph.json no Portainer:
+      # se o path não existir no host, o Docker cria um DIRETÓRIO no lugar do
+      # arquivo e o deploy quebra com "not a directory" / "mount ... file".
+      # Só volumes nomeados para dados mutáveis em runtime.
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-conexaoelite_jeff_bot}
+      WHATSAPP_BUSINESS_NUMBER: ${WHATSAPP_BUSINESS_NUMBER:-5561947581258}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-http://localhost:8001/api/email/accounts/gmail/callback}
     volumes:
       - backend_outputs:/deps/backend/outputs
       - backend_skills:/deps/backend/skills
