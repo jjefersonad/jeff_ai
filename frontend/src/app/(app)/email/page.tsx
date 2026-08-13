@@ -27,7 +27,7 @@
  * effect (duplicate toasts / refetches).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Mail } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
@@ -70,7 +70,7 @@ function stripGmailConnected(href: string): string {
   }
 }
 
-export default function EmailPage() {
+function EmailPageContent() {
   const [tab, setTab] = useState<TabId>("inbox");
   const [composeOpen, setComposeOpen] = useState(false);
   const [composePrefill, setComposePrefill] = useState<ComposePrefill | null>(null);
@@ -174,5 +174,21 @@ export default function EmailPage() {
         accounts={accounts}
       />
     </div>
+  );
+}
+
+export default function EmailPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-background">
+          <p className="p-6 text-sm text-muted-foreground" role="status">
+            Carregando…
+          </p>
+        </div>
+      }
+    >
+      <EmailPageContent />
+    </Suspense>
   );
 }
