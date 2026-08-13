@@ -458,7 +458,10 @@ describe("InboxPanel detail body (email-send-html-only-by-default-task-inbox-1 /
     await userEvent.click(row);
 
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Hi there")).toBeInTheDocument();
+    const iframe = within(dialog).getByTitle("Corpo do e-mail");
+    const srcDoc =
+      iframe.getAttribute("srcDoc") ?? iframe.getAttribute("srcdoc") ?? "";
+    expect(srcDoc).toContain("Hi there");
     expect(within(dialog).queryByText("(sem conteúdo)")).not.toBeInTheDocument();
   });
 
@@ -476,8 +479,131 @@ describe("InboxPanel detail body (email-send-html-only-by-default-task-inbox-1 /
     await userEvent.click(row);
 
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("HTML_ONLY_MARKER")).toBeInTheDocument();
+    const iframe = within(dialog).getByTitle("Corpo do e-mail");
+    const srcDoc =
+      iframe.getAttribute("srcDoc") ?? iframe.getAttribute("srcdoc") ?? "";
+    expect(srcDoc).toContain("HTML_ONLY_MARKER");
     expect(within(dialog).queryByText("PLAIN_ONLY_MARKER")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// melhorar-visualizacao-de-emails — isolated HTML body in the detail dialog
+// (task-inbox-1 / REQ-014 + REQ-013 rewrite)
+// ---------------------------------------------------------------------------
+describe("InboxPanel isolated HTML body (melhorar-visualizacao-de-emails-task-inbox-1)", () => {
+  beforeEach(() => {
+    mockListEmails.mockReset();
+    mockSearchEmails.mockReset();
+    mockGetEmail.mockReset();
+    mockUpdateEmail.mockReset();
+  });
+
+  it("unit-1: detail view renders HTML via isolated iframe", async () => {
+    const email = emailFor("e1", {
+      body_html: "<p>ISOLATED_HTML_MARKER</p>",
+      body_text: "plain",
+    });
+    mockListEmails.mockResolvedValue([email]);
+    mockGetEmail.mockResolvedValue(email);
+    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+
+    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
+    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
+    await userEvent.click(row);
+
+    const dialog = await screen.findByRole("dialog");
+    const iframe = within(dialog).getByTitle("Corpo do e-mail");
+    expect(iframe.tagName).toBe("IFRAME");
+    const srcDoc =
+      iframe.getAttribute("srcDoc") ?? iframe.getAttribute("srcdoc") ?? "";
+    expect(srcDoc).toContain("ISOLATED_HTML_MARKER");
+  });
+
+  it("unit-2: plain-text fallback has no iframe", async () => {
+    const email = emailFor("e1", {
+      body_html: null,
+      body_text: "PLAIN_FALLBACK_MARKER",
+    });
+    mockListEmails.mockResolvedValue([email]);
+    mockGetEmail.mockResolvedValue(email);
+    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+
+    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
+    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
+    await userEvent.click(row);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("PLAIN_FALLBACK_MARKER")).toBeInTheDocument();
+    expect(within(dialog).queryByTitle("Corpo do e-mail")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// melhorar-visualizacao-de-emails — wider modal + sticky chrome
+// (task-inbox-2 / REQ-015)
+// ---------------------------------------------------------------------------
+describe("InboxPanel detail modal layout (melhorar-visualizacao-de-emails-task-inbox-2)", () => {
+  beforeEach(() => {
+    mockListEmails.mockReset();
+    mockSearchEmails.mockReset();
+    mockGetEmail.mockReset();
+    mockUpdateEmail.mockReset();
+  });
+
+  it("unit-1: detail DialogContent is sm:max-w-4xl not sm:max-w-2xl", async () => {
+    const email = emailFor("e1");
+    mockListEmails.mockResolvedValue([email]);
+    mockGetEmail.mockResolvedValue(email);
+    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+
+    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
+    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
+    await userEvent.click(row);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.className).toMatch(/\bsm:max-w-4xl\b/);
+    expect(dialog.className).not.toMatch(/\bsm:max-w-2xl\b/);
+  });
+
+  it("unit-2: sticky chrome vs scrolling body class contract", async () => {
+    const email = emailFor("e1");
+    mockListEmails.mockResolvedValue([email]);
+    mockGetEmail.mockResolvedValue(email);
+    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+
+    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
+    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
+    await userEvent.click(row);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.className).toMatch(/\bflex\b/);
+    expect(dialog.className).toMatch(/\bflex-col\b/);
+    expect(dialog.className).toMatch(/\boverflow-hidden\b/);
+
+    const header = dialog.querySelector('[data-slot="dialog-header"]') as HTMLElement;
+    expect(header.className).toMatch(/\bshrink-0\b/);
+
+    const meta = dialog.querySelector("dl") as HTMLElement;
+    expect(meta.className).toMatch(/\bshrink-0\b/);
+
+    const actions = meta.previousElementSibling as HTMLElement;
+    expect(actions.className).toMatch(/\bshrink-0\b/);
+
+    const body = meta.nextElementSibling as HTMLElement;
+    expect(body.className).toMatch(/\bmin-h-0\b/);
+    expect(body.className).toMatch(/\bflex-1\b/);
+  });
+
+  it("unit-3: with no email open, the list is not a split-pane grid", async () => {
+    mockListEmails.mockResolvedValue([emailFor("e1")]);
+    const { container } = render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+
+    await screen.findAllByRole("button", { name: /assunto de teste/i });
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(container.querySelector('[class*="grid-cols-[2fr_3fr]"]')).toBeNull();
+    expect(container.querySelector('[class*="grid-cols-[1fr_"]')).toBeNull();
   });
 });
 

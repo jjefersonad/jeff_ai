@@ -26,9 +26,14 @@
  * `frontend-route-guard` says the cookie is the only source of truth, and
  * `isAuthenticated` in `AuthProvider` is React state that may be stale across
  * a hard reload. Keeping the user on the login page is safer than guessing.
+ *
+ * Footer links to `/public/privacy` and `/public/terms` (public-legal-pages
+ * REQ-006) sit outside the form so they remain visible during the Suspense
+ * fallback. They are not added to `UserMenu`.
  */
 
 import { FormEvent, Suspense, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { LogIn } from "lucide-react";
 
@@ -138,7 +143,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background p-6">
+    <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-background p-6">
       <Suspense
         fallback={
           <div
@@ -151,6 +156,23 @@ export default function LoginPage() {
       >
         <LoginForm />
       </Suspense>
+      <nav
+        aria-label="Documentos legais"
+        className="flex flex-wrap justify-center gap-x-4 gap-y-2 text-sm text-muted-foreground"
+      >
+        <Link
+          href="/public/privacy"
+          className="underline-offset-4 hover:text-foreground hover:underline"
+        >
+          Política de Privacidade
+        </Link>
+        <Link
+          href="/public/terms"
+          className="underline-offset-4 hover:text-foreground hover:underline"
+        >
+          Termos de Serviço
+        </Link>
+      </nav>
     </main>
   );
 }

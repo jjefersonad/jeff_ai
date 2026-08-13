@@ -13,8 +13,11 @@
  *     split pane — email-inbox-ux-improvements REQ-009);
  *   - detail modal that calls `getEmail` (sanitized HTML — design
  *     Decision 3, `nh3` at ingest; the API never returns unsanitized
- *     HTML, so a direct `dangerouslySetInnerHTML` is the documented
- *     trust boundary) and closes by clearing the selection;
+ *     HTML). HTML bodies render in `EmailHtmlBody` (sandboxed `srcDoc`
+ *     iframe); plain text stays a `<pre>` in the dialog. The detail
+ *     DialogContent is `sm:max-w-4xl` with sticky chrome (`shrink-0`)
+ *     and a `flex-1 min-h-0` body pane (REQ-015). Closes by clearing
+ *     the selection;
  *   - mark read/unread + move folder via `updateEmail`;
  *   - search via `searchEmails` (REQs REQ-003 + REQ-002 of inbox).
  *
@@ -71,6 +74,7 @@ import {
 } from "@/lib/email";
 
 import type { ComposePrefill } from "./ComposeDialog";
+import { EmailHtmlBody } from "./EmailHtmlBody";
 
 const STANDARD_FOLDERS = ["Inbox", "Sent", "Drafts", "Trash", "Spam"] as const;
 type StandardFolder = (typeof STANDARD_FOLDERS)[number];
@@ -717,7 +721,9 @@ export function InboxPanel({ accounts, onCompose }: InboxPanelProps) {
       </div>
 
       {/* Detail dialog — REQ-009: full email detail opens as a modal;
-          closing it clears the selection so no row stays marked selected. */}
+          closing it clears the selection so no row stays marked selected.
+          REQ-015: wider overlay (`sm:max-w-4xl`), sticky chrome, body pane
+          scrolls independently; the shared Dialog primitive is unchanged. */}
       <Dialog
         open={!!selectedId}
         onOpenChange={(open) => {
@@ -727,8 +733,8 @@ export function InboxPanel({ accounts, onCompose }: InboxPanelProps) {
           }
         }}
       >
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-4xl">
+          <DialogHeader className="shrink-0">
             <DialogTitle>
               {selectedDetail?.subject ??
                 (detailLoading ? "Carregando…" : "(sem assunto)")}
@@ -750,7 +756,7 @@ export function InboxPanel({ accounts, onCompose }: InboxPanelProps) {
           )}
           {selectedDetail && !detailLoading && (
             <>
-              <div className="flex items-center gap-1">
+              <div className="flex shrink-0 items-center gap-1">
                 <TooltipIconButton
                   icon={<Mail className="h-4 w-4" />}
                   tooltip={
@@ -783,7 +789,7 @@ export function InboxPanel({ accounts, onCompose }: InboxPanelProps) {
                   />
                 )}
               </div>
-              <dl className="grid gap-1 text-xs text-muted-foreground">
+              <dl className="grid shrink-0 gap-1 text-xs text-muted-foreground">
                 <div className="flex flex-wrap items-center gap-x-2">
                   <dt className="font-medium">De:</dt>
                   <dd>
@@ -815,21 +821,11 @@ export function InboxPanel({ accounts, onCompose }: InboxPanelProps) {
                   </div>
                 )}
               </dl>
-              <div className="prose prose-sm max-w-none border-t border-border pt-3">
+              <div className="min-h-0 flex-1 overflow-hidden border-t border-border pt-3">
                 {selectedDetail.body_html ? (
-                  // The backend sanitizes `body_html` once at ingest with
-                  // `nh3` (design Decision 3); the value returned here is
-                  // the same already-sanitized string the agent's
-                  // `read_email` tool sees. There is no client-side
-                  // re-sanitization step — `nh3` runs server-side and the
-                  // API never returns unsanitized HTML.
-                  <div
-                    dangerouslySetInnerHTML={{
-                      __html: selectedDetail.body_html,
-                    }}
-                  />
+                  <EmailHtmlBody html={selectedDetail.body_html} />
                 ) : (
-                  <pre className="whitespace-pre-wrap font-sans text-sm">
+                  <pre className="h-full overflow-auto whitespace-pre-wrap font-sans text-sm">
                     {selectedDetail.body_text ?? "(sem conteúdo)"}
                   </pre>
                 )}
