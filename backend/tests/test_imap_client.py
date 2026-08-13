@@ -112,7 +112,7 @@ class _FakeImapServer:
         self._messages = messages
         self.logged_out = False
         self.login_calls: list[tuple[str, str]] = []
-        self.xoauth2_calls: list[tuple[str, bytes]] = []
+        self.xoauth2_calls: list[tuple[str, str]] = []
 
     async def wait_hello_from_server(self) -> None:
         return None
@@ -121,7 +121,7 @@ class _FakeImapServer:
         self.login_calls.append((user, password))
         return _Response("OK", [])
 
-    async def xoauth2(self, user: str, token: bytes) -> _Response:
+    async def xoauth2(self, user: str, token: str) -> _Response:
         self.xoauth2_calls.append((user, token))
         return _Response("OK", [])
 
@@ -183,6 +183,32 @@ async def test_fetch_new_messages_returns_only_messages_newer_than_watermark(
     assert server.logged_out is True
 
 
+def test_limit_uids_for_poll_initial_sync_keeps_newest_only() -> None:
+    from src.infrastructure.email.imap_client import (
+        _INITIAL_SYNC_LIMIT,
+        _limit_uids_for_poll,
+    )
+
+    uids = list(range(1, _INITIAL_SYNC_LIMIT + 50))
+    limited = _limit_uids_for_poll(uids, watermark=0)
+    assert limited == uids[-_INITIAL_SYNC_LIMIT:]
+    assert limited[0] == 50
+    assert limited[-1] == _INITIAL_SYNC_LIMIT + 49
+
+
+def test_limit_uids_for_poll_catchup_takes_oldest_batch() -> None:
+    from src.infrastructure.email.imap_client import (
+        _FETCH_BATCH_SIZE,
+        _limit_uids_for_poll,
+    )
+
+    uids = list(range(100, 100 + _FETCH_BATCH_SIZE + 20))
+    limited = _limit_uids_for_poll(uids, watermark=99)
+    assert limited == uids[:_FETCH_BATCH_SIZE]
+    assert limited[0] == 100
+    assert limited[-1] == 100 + _FETCH_BATCH_SIZE - 1
+
+
 async def test_fetch_new_messages_with_gmail_config_uses_xoauth2(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -192,7 +218,7 @@ async def test_fetch_new_messages_with_gmail_config_uses_xoauth2(
 
     await fetch_new_messages(_GMAIL_CONFIG, folder="INBOX", watermark=100)
 
-    assert server.xoauth2_calls == [("user@gmail.com", b"ya29.access")]
+    assert server.xoauth2_calls == [("user@gmail.com", "ya29.access")]
     assert server.login_calls == []
 
 

@@ -17,14 +17,12 @@ from src.application.ports.crm_repository import CrmRepositoryPort
 from src.application.use_cases.archive_crm_company import ArchiveCrmCompany
 from src.application.use_cases.archive_crm_contact import ArchiveCrmContact
 from src.application.use_cases.archive_crm_deal import ArchiveCrmDeal
-from src.application.use_cases.convert_crm_lead import ConvertCrmLead
 from src.application.use_cases.create_crm_company import CreateCrmCompany
 from src.application.use_cases.create_crm_contact import CreateCrmContact
 from src.application.use_cases.create_crm_deal import CreateCrmDeal
 from src.application.use_cases.create_crm_field_definition import (
     CreateCrmFieldDefinition,
 )
-from src.application.use_cases.create_crm_lead import CreateCrmLead
 from src.application.use_cases.create_crm_note import CreateCrmNote
 from src.application.use_cases.get_crm_company import GetCrmCompany
 from src.application.use_cases.get_crm_contact import GetCrmContact
@@ -36,14 +34,11 @@ from src.application.use_cases.list_crm_deals import ListCrmDeals
 from src.application.use_cases.list_crm_field_definitions import (
     ListCrmFieldDefinitions,
 )
-from src.application.use_cases.list_crm_leads import ListCrmLeads
 from src.application.use_cases.list_crm_notes import ListCrmNotes
 from src.application.use_cases.move_crm_deal import MoveCrmDeal
-from src.application.use_cases.preview_crm_lead_conversion import (
-    PreviewCrmLeadConversion,
-)
 from src.application.use_cases.update_crm_company import UpdateCrmCompany
 from src.application.use_cases.update_crm_contact import UpdateCrmContact
+from src.application.use_cases.update_crm_deal import UpdateCrmDeal
 from src.application.use_cases.update_crm_field_definition import (
     UpdateCrmFieldDefinition,
 )
@@ -55,8 +50,6 @@ from src.domain.crm import (
     FieldDefinition,
     FieldEntity,
     FieldType,
-    Lead,
-    LeadSource,
     Note,
     NoteSource,
 )
@@ -559,188 +552,6 @@ async def update_field_definition_endpoint(
     return _field_definition_response(definition)
 
 
-# --- Leads -------------------------------------------------------------------
-
-
-class LeadCreateRequest(BaseModel):
-    """Corpo de `POST /api/crm/leads`. Exige email, phone ou company_name."""
-
-    name: str
-    email: str | None = None
-    phone: str | None = None
-    company_name: str | None = None
-    interest: str | None = None
-    estimated_value: Decimal | None = None
-    currency: str | None = None
-    qualification_score: int | None = None
-    notes: str | None = None
-    tags: list[str] | None = None
-    custom_values: dict[str, Any] | None = None
-    source: str | None = None
-
-
-class LeadResponse(BaseModel):
-    """Contrato HTTP de lead."""
-
-    id: str
-    user_id: str
-    name: str
-    email: str | None
-    phone: str | None
-    company_name: str | None
-    interest: str | None
-    estimated_value: Decimal | None
-    currency: str | None
-    qualification_score: int | None
-    notes: str | None
-    status: str
-    tags: list[str]
-    custom_values: dict[str, Any]
-    source: str | None
-    converted_at: datetime | None
-    converted_contact_id: str | None
-    converted_company_id: str | None
-    converted_deal_id: str | None
-    archived_at: datetime | None
-    created_at: datetime
-    updated_at: datetime
-
-
-def _lead_response(lead: Lead) -> LeadResponse:
-    return LeadResponse(
-        id=lead.id,
-        user_id=lead.user_id,
-        name=lead.name,
-        email=lead.email,
-        phone=lead.phone,
-        company_name=lead.company_name,
-        interest=lead.interest,
-        estimated_value=lead.estimated_value,
-        currency=lead.currency,
-        qualification_score=lead.qualification_score,
-        notes=lead.notes,
-        status=lead.status.value,
-        tags=list(lead.tags),
-        custom_values=dict(lead.custom_values),
-        source=lead.source.value if lead.source is not None else None,
-        converted_at=lead.converted_at,
-        converted_contact_id=lead.converted_contact_id,
-        converted_company_id=lead.converted_company_id,
-        converted_deal_id=lead.converted_deal_id,
-        archived_at=lead.archived_at,
-        created_at=lead.created_at,
-        updated_at=lead.updated_at,
-    )
-
-
-@router.post("/api/crm/leads", status_code=201)
-async def create_lead_endpoint(
-    body: LeadCreateRequest,
-    user: User | None = Depends(require_auth),
-    repository: CrmRepositoryPort = Depends(_crm_repository),
-) -> LeadResponse:
-    """Cria lead do usuário autenticado (status default new)."""
-    actor = _require_user(user)
-    source: LeadSource | None = None
-    if body.source is not None:
-        try:
-            source = LeadSource(body.source)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=422, detail=f"source inválido: {body.source}"
-            ) from exc
-    try:
-        lead = await CreateCrmLead(repository=repository).execute(
-            user_id=actor.id,
-            name=body.name,
-            email=body.email,
-            phone=body.phone,
-            company_name=body.company_name,
-            interest=body.interest,
-            estimated_value=body.estimated_value,
-            currency=body.currency,
-            qualification_score=body.qualification_score,
-            notes=body.notes,
-            tags=body.tags,
-            custom_values=body.custom_values,
-            source=source,
-        )
-    except DomainError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return _lead_response(lead)
-
-
-@router.get("/api/crm/leads")
-async def list_leads_endpoint(
-    converted: bool = Query(default=False),
-    user: User | None = Depends(require_auth),
-    repository: CrmRepositoryPort = Depends(_crm_repository),
-) -> list[LeadResponse]:
-    """Lista leads ativos por default; `converted=true` mostra os convertidos."""
-    actor = _require_user(user)
-    leads = await ListCrmLeads(repository=repository).execute(
-        user_id=actor.id, converted=converted
-    )
-    return [_lead_response(lead) for lead in leads]
-
-
-class LeadConversionPreviewResponse(BaseModel):
-    """Contrato HTTP do preview de `POST /api/crm/leads/{id}/convert?preview=true`."""
-
-    contact_name: str
-    company_name: str | None
-    company_is_new: bool
-    deal_value: Decimal | None
-
-
-class LeadConversionResponse(BaseModel):
-    """Contrato HTTP da conversão confirmada (entidades criadas/atualizadas)."""
-
-    lead: LeadResponse
-    contact: ContactResponse
-    company: CompanyResponse | None
-    deal: DealResponse
-
-
-@router.post("/api/crm/leads/{lead_id}/convert")
-async def convert_lead_endpoint(
-    lead_id: str,
-    preview: bool = Query(default=False),
-    user: User | None = Depends(require_auth),
-    repository: CrmRepositoryPort = Depends(_crm_repository),
-) -> LeadConversionPreviewResponse | LeadConversionResponse:
-    """`preview=true` faz dry-run (sem escrever); default confirma a conversão."""
-    actor = _require_user(user)
-    try:
-        if preview:
-            result = await PreviewCrmLeadConversion(repository=repository).execute(
-                user_id=actor.id, lead_id=lead_id
-            )
-            if result is None:
-                raise HTTPException(status_code=404, detail="Lead not found")
-            return LeadConversionPreviewResponse(
-                contact_name=result.contact_name,
-                company_name=result.company_name,
-                company_is_new=result.company_is_new,
-                deal_value=result.deal_value,
-            )
-        conversion = await ConvertCrmLead(repository=repository).execute(
-            user_id=actor.id, lead_id=lead_id
-        )
-    except DomainError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if conversion is None:
-        raise HTTPException(status_code=404, detail="Lead not found")
-    return LeadConversionResponse(
-        lead=_lead_response(conversion.lead),
-        contact=_contact_response(conversion.contact),
-        company=_company_response(conversion.company)
-        if conversion.company is not None
-        else None,
-        deal=_deal_response(conversion.deal),
-    )
-
-
 # --- Notes -------------------------------------------------------------------
 
 
@@ -831,8 +642,24 @@ async def list_notes_endpoint(
 # --- Deals -------------------------------------------------------------------
 
 
+class DealContactRequest(BaseModel):
+    """Contato aninhado em `POST /api/crm/deals` (campos opcionais)."""
+
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    city: str | None = None
+    state: str | None = None
+    tags: list[str] | None = None
+    status: str | None = None
+    custom_values: dict[str, Any] | None = None
+
+
 class DealCreateRequest(BaseModel):
-    """Corpo de `POST /api/crm/deals`."""
+    """Corpo de `POST /api/crm/deals`.
+
+    `custom_values` no topo é do deal; `contact.custom_values` é do contato.
+    """
 
     title: str
     stage: str | None = None
@@ -841,6 +668,19 @@ class DealCreateRequest(BaseModel):
     contact_id: str | None = None
     company_id: str | None = None
     custom_values: dict[str, Any] | None = None
+    contact: DealContactRequest | None = None
+
+
+class DealUpdateRequest(BaseModel):
+    """Corpo de `PATCH /api/crm/deals/{id}`."""
+
+    title: str | None = None
+    stage: str | None = None
+    value: Decimal | None = None
+    currency: str | None = None
+    company_id: str | None = None
+    clear_company: bool = False
+    contact: DealContactRequest | None = None
 
 
 class DealMoveRequest(BaseModel):
@@ -899,7 +739,7 @@ async def create_deal_endpoint(
     user: User | None = Depends(require_auth),
     repository: CrmRepositoryPort = Depends(_crm_repository),
 ) -> DealResponse:
-    """Cria deal (stage default qualified)."""
+    """Cria deal (stage default lead); `contact` aninhado é opcional."""
     actor = _require_user(user)
     stage: DealStage | None = None
     if body.stage is not None:
@@ -909,6 +749,7 @@ async def create_deal_endpoint(
             raise HTTPException(
                 status_code=422, detail=f"stage inválido: {body.stage}"
             ) from exc
+    nested = body.contact
     try:
         deal = await CreateCrmDeal(repository=repository).execute(
             user_id=actor.id,
@@ -919,6 +760,14 @@ async def create_deal_endpoint(
             contact_id=body.contact_id,
             company_id=body.company_id,
             custom_values=body.custom_values,
+            contact_name=nested.name if nested else None,
+            email=nested.email if nested else None,
+            phone=nested.phone if nested else None,
+            city=nested.city if nested else None,
+            state=nested.state if nested else None,
+            tags=nested.tags if nested else None,
+            status=nested.status if nested else None,
+            contact_custom_values=nested.custom_values if nested else None,
         )
     except DomainError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -948,6 +797,52 @@ async def list_deals_endpoint(
     return [_deal_response(d) for d in deals]
 
 
+@router.patch("/api/crm/deals/{deal_id}")
+async def update_deal_endpoint(
+    deal_id: str,
+    body: DealUpdateRequest,
+    user: User | None = Depends(require_auth),
+    repository: CrmRepositoryPort = Depends(_crm_repository),
+) -> DealResponse:
+    """Atualiza deal próprio; `contact` aninhado é opcional."""
+    actor = _require_user(user)
+    stage: DealStage | None = None
+    if body.stage is not None:
+        try:
+            stage = DealStage(body.stage)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail=f"stage inválido: {body.stage}"
+            ) from exc
+    nested = body.contact
+    try:
+        deal = await UpdateCrmDeal(repository=repository).execute(
+            user_id=actor.id,
+            deal_id=deal_id,
+            title=body.title,
+            stage=stage,
+            value=body.value,
+            set_value="value" in body.model_fields_set,
+            currency=body.currency,
+            company_id=body.company_id,
+            clear_company=body.clear_company,
+            contact_name=nested.name if nested else None,
+            email=nested.email if nested else None,
+            phone=nested.phone if nested else None,
+            city=nested.city if nested else None,
+            state=nested.state if nested else None,
+            tags=nested.tags if nested else None,
+            status=nested.status if nested else None,
+            contact_custom_values=nested.custom_values if nested else None,
+            apply_contact=nested is not None,
+        )
+    except DomainError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if deal is None:
+        raise HTTPException(status_code=404, detail="Deal not found")
+    return _deal_response(deal)
+
+
 @router.get("/api/crm/deals/{deal_id}")
 async def get_deal_endpoint(
     deal_id: str,
@@ -971,11 +866,14 @@ async def move_deal_endpoint(
     user: User | None = Depends(require_auth),
     repository: CrmRepositoryPort = Depends(_crm_repository),
 ) -> DealResponse:
-    """Move deal para outro estágio."""
+    """Move deal para outro estágio; grava nota de transição com source='user'."""
     actor = _require_user(user)
     try:
         deal = await MoveCrmDeal(repository=repository).execute(
-            user_id=actor.id, deal_id=deal_id, stage=body.stage
+            user_id=actor.id,
+            deal_id=deal_id,
+            stage=body.stage,
+            source=NoteSource.USER,
         )
     except DomainError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

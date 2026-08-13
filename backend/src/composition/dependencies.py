@@ -31,15 +31,21 @@ from src.application.use_cases.complete_scheduled_task_after_resume import (
 )
 from src.application.use_cases.create_crm_contact import CreateCrmContact
 from src.application.use_cases.create_crm_deal import CreateCrmDeal
-from src.application.use_cases.create_crm_field_definition import CreateCrmFieldDefinition
+from src.application.use_cases.create_crm_field_definition import (
+    CreateCrmFieldDefinition,
+)
 from src.application.use_cases.create_crm_note import CreateCrmNote
+from src.application.use_cases.get_crm_deal import GetCrmDeal
 from src.application.use_cases.list_crm_contacts import ListCrmContacts
 from src.application.use_cases.list_crm_deals import ListCrmDeals
 from src.application.use_cases.list_crm_field_definitions import ListCrmFieldDefinitions
+from src.application.use_cases.list_crm_notes import ListCrmNotes
 from src.application.use_cases.move_crm_deal import MoveCrmDeal
 from src.application.use_cases.resolve_delivery_target import ResolveDeliveryTarget
 from src.application.use_cases.update_crm_contact import UpdateCrmContact
-from src.application.use_cases.update_crm_field_definition import UpdateCrmFieldDefinition
+from src.application.use_cases.update_crm_field_definition import (
+    UpdateCrmFieldDefinition,
+)
 from src.composition.public_url import image_url_prefix
 from src.infrastructure.channels.registry import ChannelRegistry
 from src.infrastructure.channels.telegram_channel import TelegramChannel
@@ -254,6 +260,16 @@ def build_create_crm_deal() -> CreateCrmDeal:
 def build_move_crm_deal() -> MoveCrmDeal:
     """Monta MoveCrmDeal para as tools do agente."""
     return MoveCrmDeal(repository=_crm_repository())
+
+
+def build_get_crm_deal() -> GetCrmDeal:
+    """Monta GetCrmDeal para as tools do agente (sales-pipeline-via-agent)."""
+    return GetCrmDeal(repository=_crm_repository())
+
+
+def build_list_crm_notes() -> ListCrmNotes:
+    """Monta ListCrmNotes para as tools do agente (sales-pipeline-via-agent)."""
+    return ListCrmNotes(repository=_crm_repository())
 
 
 def build_create_crm_field_definition() -> CreateCrmFieldDefinition:

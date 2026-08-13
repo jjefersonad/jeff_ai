@@ -18,14 +18,17 @@ from src.composition.dependencies import (
     build_create_crm_deal,
     build_create_crm_field_definition,
     build_create_crm_note,
+    build_get_crm_deal,
     build_list_crm_contacts,
     build_list_crm_deals,
     build_list_crm_field_definitions,
+    build_list_crm_notes,
     build_move_crm_deal,
     build_update_crm_contact,
     build_update_crm_field_definition,
 )
 from src.domain.crm import (
+    Company,
     Contact,
     Deal,
     DealStage,
@@ -35,8 +38,30 @@ from src.domain.crm import (
     Note,
     NoteSource,
 )
+from src.domain.crm.next_best_action import suggest as suggest_followup
 from src.domain.shared.errors import DomainError
 from src.infrastructure.ownership.store import resolve_user_id
+
+
+def _resolve_slot_finder() -> Any | None:
+    """Resolve `scheduling_tools.find_free_slot` lazy.
+
+    `find_free_slot` pertence à change `agendamento-jeff-cli` (ainda em
+    draft no momento em que esta tool foi escrita). Enquanto essa change
+    não for mergeada, `import` falha — a NBA então cai graciosamente
+    para `email_followup` sem `calendar_slot`, que é o comportamento
+    de fallback documentado em REQ-005.
+
+    Importação lazy + tolerante: o domínio `next_best_action` continua
+    puro (nunca importa `scheduling_tools`); o acoplamento fica
+    exclusivamente nesta tool, que é o boundary correto.
+    """
+    try:
+        from src.tools.scheduling_tools import find_free_slot
+    except ImportError:
+        return None
+    return find_free_slot
+
 
 _NO_IDENTITY = (
     "Identidade do usuário não resolvida para esta sessão; "
@@ -68,6 +93,23 @@ def _contact_dict(contact: Contact) -> dict[str, Any]:
         "archived_at": contact.archived_at.isoformat() if contact.archived_at else None,
         "created_at": contact.created_at.isoformat(),
         "updated_at": contact.updated_at.isoformat(),
+    }
+
+
+def _company_dict(company: Company) -> dict[str, Any]:
+    return {
+        "id": company.id,
+        "user_id": company.user_id,
+        "name": company.name,
+        "website": company.website,
+        "domain": company.domain,
+        "phone": company.phone,
+        "city": company.city,
+        "state": company.state,
+        "custom_values": dict(company.custom_values),
+        "archived_at": company.archived_at.isoformat() if company.archived_at else None,
+        "created_at": company.created_at.isoformat(),
+        "updated_at": company.updated_at.isoformat(),
     }
 
 
@@ -238,7 +280,7 @@ async def crm_list_deals(
 ) -> list[dict[str, Any]] | dict[str, Any]:
     """[CRM Jeff AI] `crm_list_deals` — lista deals do funil nativo.
 
-    `stage` opcional: qualified, proposal, negotiation, won, lost. Este é o
+    `stage` opcional: lead, qualified, proposal, negotiation, won, lost. Este é o
     funil do módulo `/crm` — não existe equivalente em MCP
     `contacts_*`/`lead_gen_*`. `user_id` do modelo é IGNORADO.
     """
@@ -265,12 +307,23 @@ async def crm_create_deal(
     contact_id: str | None = None,
     company_id: str | None = None,
     custom_values: dict[str, Any] | None = None,
+    contact_name: str | None = None,
+    email: str | None = None,
+    phone: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    tags: list[str] | None = None,
+    status: str | None = None,
+    contact_custom_values: dict[str, Any] | None = None,
     user_id: str | None = None,
 ) -> dict[str, Any]:
-    r"""[CRM Jeff AI] `crm_create_deal` — cria deal no funil nativo (default qualified).
+    r"""[CRM Jeff AI] `crm_create_deal` — cria deal no funil nativo (default lead).
 
     `value` string decimal (ex. "1500.00"); moeda default BRL se value
-    presente. Aceita `custom_values`. Não usar MCP `lead_gen_*` no lugar.
+    presente. `custom_values` é do deal. Campos de contato (`contact_name`,
+    `email`, `phone`, `city`, `state`, `tags`, `status`,
+    `contact_custom_values`) criam/atualizam o contato no mesmo fluxo —
+    `crm_upsert_contact` NÃO é pré-requisito. Não usar MCP `lead_gen_*`.
     `user_id` do modelo é IGNORADO.
     """
     del user_id
@@ -299,6 +352,14 @@ async def crm_create_deal(
             contact_id=contact_id,
             company_id=company_id,
             custom_values=custom_values,
+            contact_name=contact_name,
+            email=email,
+            phone=phone,
+            city=city,
+            state=state,
+            tags=tags,
+            status=status,
+            contact_custom_values=contact_custom_values,
         )
     except DomainError as exc:
         return {"error": str(exc)}
@@ -313,8 +374,9 @@ async def crm_move_deal(
 ) -> dict[str, Any]:
     """[CRM Jeff AI] `crm_move_deal` — move deal no funil nativo.
 
-    Estágios: qualified, proposal, negotiation, won, lost. CRM Jeff AI
-    apenas — não confundir com MCP. `user_id` do modelo é IGNORADO.
+    Estágios: lead, qualified, proposal, negotiation, won, lost. Grava nota de
+    transição com `source='agent'`. CRM Jeff AI apenas — não confundir com
+    MCP. `user_id` do modelo é IGNORADO.
     """
     del user_id
     resolved = await _require_user_id()
@@ -322,7 +384,10 @@ async def crm_move_deal(
         return resolved
     try:
         deal = await build_move_crm_deal().execute(
-            user_id=resolved, deal_id=deal_id, stage=stage
+            user_id=resolved,
+            deal_id=deal_id,
+            stage=stage,
+            source=NoteSource.AGENT,
         )
     except DomainError as exc:
         return {"error": str(exc)}
@@ -419,3 +484,82 @@ async def crm_update_field_definition(
     if definition is None:
         return {"error": "Field definition not found"}
     return _field_definition_dict(definition)
+
+
+@tool
+async def request_followup(
+    deal_id: str,
+    draft: str | None = None,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """[CRM Jeff AI] `request_followup` — rascunho de follow-up para um deal.
+
+    Sem `draft`, gera um rascunho automaticamente citando só fatos
+    presentes nas notas reais do deal (`crm_notes`) — nunca inventa fatos.
+    Com `draft`, usa esse texto verbatim em vez de gerar um. Em ambos os
+    casos só devolve o rascunho (preview) — para efetivamente enviar,
+    chame `send_email` com esse texto e depois `crm_add_note` para
+    registrar o envio (`source='agent'`); `send_email` já exige aprovação
+    humana (Tier 3) antes de disparar. `user_id` do modelo é IGNORADO.
+
+    Resposta inclui `kind` (`email_followup` ou `meeting_proposal`,
+    REQ-005) e, quando aplicável, `calendar_slot` (dict com
+    `start`/`end`/`calendar_link` proposto para reunião de retomada em
+    deals `proposal`/`negotiation`).
+    """
+    del user_id
+    resolved = await _require_user_id()
+    if isinstance(resolved, dict):
+        return resolved
+    deal = await build_get_crm_deal().execute(user_id=resolved, deal_id=deal_id)
+    if deal is None:
+        return {"error": "Deal not found"}
+    if draft is not None:
+        return {
+            "deal_id": deal_id,
+            "draft_text": draft,
+            "kind": "email_followup",
+        }
+    notes = await build_list_crm_notes().execute(user_id=resolved, deal_id=deal_id)
+    suggestion = suggest_followup(
+        notes,
+        deal_stage=deal.stage,
+        slot_finder=_resolve_slot_finder(),
+    )
+    response: dict[str, Any] = {
+        "deal_id": deal_id,
+        "draft_text": suggestion["editable_text"],
+        "kind": suggestion["kind"],
+    }
+    calendar_slot = suggestion.get("calendar_slot")
+    if calendar_slot is not None:
+        response["calendar_slot"] = calendar_slot
+    return response
+
+
+@tool
+async def add_deal_note(
+    deal_id: str,
+    text: str,
+    user_id: str | None = None,
+) -> dict[str, Any]:
+    """[CRM Jeff AI] `add_deal_note` — nota de deal no CRM nativo (source=agent).
+
+    Atalho de `crm_add_note` restrito a `deal_id` — mesmo use case
+    (`CreateCrmNote`), mesma tabela `crm_notes`, sem endpoint intermediário
+    além do já usado para notas manuais. `user_id` do modelo é IGNORADO.
+    """
+    del user_id
+    resolved = await _require_user_id()
+    if isinstance(resolved, dict):
+        return resolved
+    try:
+        note = await build_create_crm_note().execute(
+            user_id=resolved,
+            body=text,
+            source=NoteSource.AGENT,
+            deal_id=deal_id,
+        )
+    except DomainError as exc:
+        return {"error": str(exc)}
+    return _note_dict(note)

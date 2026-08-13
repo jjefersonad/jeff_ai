@@ -225,6 +225,32 @@ export async function deleteEmailAccount(id: string): Promise<void> {
   // 204 No Content — no JSON body to parse.
 }
 
+// --- Gmail OAuth -----------------------------------------------------------
+
+/**
+ * `POST /api/email/accounts/gmail/authorize` (REQ-001
+ * gmail-oauth-connection): pede ao backend a URL de consentimento do
+ * Google. O backend gera o `state` (opaco, double-submit cookie) e o
+ * devolve embutido na URL; o frontend NÃO toca em cookies, tokens, ou
+ * o `state` — só redireciona o navegador para a URL devolvida.
+ *
+ * O consumidor típico (`ConnectAccountDialog`) faz
+ * `window.location.href = (await startGmailOAuth()).authorize_url`. O
+ * top-level GET para `accounts.google.com` é SameSite=Lax-safe (o
+ * callback usa a sessão existente do backend, verificado por
+ * `require_auth` no router).
+ */
+export interface GmailAuthorizeResponse {
+  authorize_url: string;
+}
+
+export async function startGmailOAuth(): Promise<GmailAuthorizeResponse> {
+  const response = await apiFetch("/api/email/accounts/gmail/authorize", {
+    method: "POST",
+  });
+  return parseJsonOrThrow<GmailAuthorizeResponse>(response);
+}
+
 // --- Inbox ------------------------------------------------------------------
 
 export async function listEmails(options?: {

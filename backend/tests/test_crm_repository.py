@@ -18,7 +18,6 @@ from src.domain.crm import (
     FieldDefinition,
     FieldEntity,
     FieldType,
-    Lead,
     Note,
     NoteSource,
 )
@@ -47,7 +46,7 @@ def _setup_postgres() -> None:
         with conn.cursor() as cur:
             cur.execute(
                 "TRUNCATE TABLE crm_notes, crm_deals, crm_contacts, "
-                "crm_companies, crm_field_definitions, crm_leads CASCADE"
+                "crm_companies, crm_field_definitions CASCADE"
             )
         conn.commit()
 
@@ -77,19 +76,6 @@ def _new_contact(user_id: str, **overrides: object) -> Contact:
     }
     kwargs.update(overrides)
     return Contact(**kwargs)  # type: ignore[arg-type]
-
-
-def _new_lead(user_id: str, **overrides: object) -> Lead:
-    kwargs: dict[str, object] = {
-        "id": str(uuid.uuid4()),
-        "user_id": user_id,
-        "name": "João Lead",
-        "phone": "11999998888",
-        "created_at": datetime.now(UTC),
-        "updated_at": datetime.now(UTC),
-    }
-    kwargs.update(overrides)
-    return Lead(**kwargs)  # type: ignore[arg-type]
 
 
 async def test_get_contact_of_other_user_returns_none() -> None:
@@ -276,103 +262,3 @@ async def test_create_field_definition_rejects_duplicate_key() -> None:
     listed = await repo.list_field_definitions(user_id, entity=FieldEntity.CONTACT)
     assert len(listed) == 1
     assert listed[0].label == "Segmento"
-
-
-async def test_convert_lead_creates_contact_company_deal_with_source_lead_id() -> None:
-    """unit-1 (REQ-003): company_name novo -> 1 Contato + 1 Empresa + 1 Deal,
-    todos com source_lead_id apontando para o lead."""
-    from src.infrastructure.persistence.crm_repository import PostgresCrmRepository
-
-    user_id = _insert_test_user()
-    repo = PostgresCrmRepository(_uri())
-    lead = _new_lead(user_id, company_name="Acme Ltda", email="joao@acme.com")
-    await repo.create_lead(lead)
-
-    result = await repo.convert_lead(lead)
-
-    assert result.contact.name == lead.name
-    assert result.contact.email == lead.email
-    assert result.contact.source_lead_id == lead.id
-    assert result.company is not None
-    assert result.company.name == "Acme Ltda"
-    assert result.company.source_lead_id == lead.id
-    assert result.deal.stage == DealStage.QUALIFIED
-    assert result.deal.source_lead_id == lead.id
-    assert result.deal.contact_id == result.contact.id
-    assert result.deal.company_id == result.company.id
-    assert result.lead.converted_at is not None
-    assert result.lead.converted_contact_id == result.contact.id
-    assert result.lead.converted_company_id == result.company.id
-    assert result.lead.converted_deal_id == result.deal.id
-
-    companies = await repo.list_companies(user_id)
-    assert len([c for c in companies if c.name == "Acme Ltda"]) == 1
-
-
-async def test_convert_lead_reuses_existing_company() -> None:
-    """unit-2 (REQ-003): company_name já existe -> reaproveita, sem duplicar."""
-    from src.domain.crm import Company
-    from src.infrastructure.persistence.crm_repository import PostgresCrmRepository
-
-    user_id = _insert_test_user()
-    repo = PostgresCrmRepository(_uri())
-    existing_company = Company(
-        id=str(uuid.uuid4()),
-        user_id=user_id,
-        name="Acme Ltda",
-        created_at=datetime.now(UTC),
-        updated_at=datetime.now(UTC),
-    )
-    await repo.create_company(existing_company)
-
-    lead = _new_lead(user_id, company_name="acme ltda", email="joao@acme.com")
-    await repo.create_lead(lead)
-
-    result = await repo.convert_lead(lead)
-
-    assert result.company is not None
-    assert result.company.id == existing_company.id
-
-    companies = await repo.list_companies(user_id)
-    assert len([c for c in companies if c.name.lower() == "acme ltda"]) == 1
-
-
-async def test_convert_lead_rolls_back_on_failure() -> None:
-    """REQ-003: falha em qualquer etapa reverte tudo (sem registros parciais)."""
-    import src.infrastructure.persistence.crm_repository as crm_repository_module
-    from src.infrastructure.persistence.crm_repository import PostgresCrmRepository
-
-    user_id = _insert_test_user()
-    repo = PostgresCrmRepository(_uri())
-    lead = _new_lead(user_id, company_name="Falha Ltda", email="joao@falha.com")
-    await repo.create_lead(lead)
-
-    original_lead_columns = crm_repository_module._LEAD_COLUMNS
-    crm_repository_module._LEAD_COLUMNS = original_lead_columns + ", coluna_inexistente"
-    try:
-        with pytest.raises(Exception):
-            await repo.convert_lead(lead)
-    finally:
-        crm_repository_module._LEAD_COLUMNS = original_lead_columns
-
-    with psycopg.connect(_uri()) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT count(*) FROM crm_contacts WHERE user_id = %s", (user_id,)
-            )
-            row = cur.fetchone()
-            assert row is not None and row[0] == 0
-            cur.execute(
-                "SELECT count(*) FROM crm_companies WHERE user_id = %s", (user_id,)
-            )
-            row = cur.fetchone()
-            assert row is not None and row[0] == 0
-            cur.execute(
-                "SELECT count(*) FROM crm_deals WHERE user_id = %s", (user_id,)
-            )
-            row = cur.fetchone()
-            assert row is not None and row[0] == 0
-
-    fresh = await repo.get_lead(user_id, lead.id)
-    assert fresh is not None
-    assert fresh.converted_at is None

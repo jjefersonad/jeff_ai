@@ -8,12 +8,9 @@ CHECKs de contato (email OU phone) e nota (exatamente um alvo).
 Extensão `extend-crm-fields-location-value-custom`: city/state/custom_values,
 `crm_field_definitions`, `crm_notes.archived_at`.
 
-Extensão `sales-pipeline-via-agent`: `crm_leads` (triagem isolada de contato/empresa/deal,
-CHECK exige email OU phone OU company_name); `source_lead_id` em
-`crm_deals`/`crm_contacts`/`crm_companies` (rastreia a conversão de origem);
-`crm_deals.stage` perde `'lead'` do domínio (lead agora é entidade própria) e
-ganha `'negotiation'` — migração via drop+recreate do CHECK nomeado, mesmo
-padrão de `scheduled_tasks_schema._MIGRATE_STATUS_CHECK_WAITING_HUMAN`.
+Extensão `sales-pipeline-via-agent`: `crm_deals.stage` ganha `'negotiation'`
+(migração via drop+recreate do CHECK nomeado). `correct-funil-lead-as-deal`
+remove `crm_leads` / `source_lead_id` — o lead é o card do Funil.
 """
 from __future__ import annotations
 
@@ -63,9 +60,11 @@ CREATE TABLE IF NOT EXISTS crm_deals (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id),
     title TEXT NOT NULL,
-    stage TEXT NOT NULL DEFAULT 'qualified'
+    stage TEXT NOT NULL DEFAULT 'lead'
         CONSTRAINT crm_deals_stage_check
-        CHECK (stage IN ('qualified', 'proposal', 'negotiation', 'won', 'lost')),
+        CHECK (stage IN (
+            'lead', 'qualified', 'proposal', 'negotiation', 'won', 'lost'
+        )),
     value NUMERIC,
     currency TEXT,
     contact_id UUID REFERENCES crm_contacts(id),
@@ -77,43 +76,12 @@ CREATE TABLE IF NOT EXISTS crm_deals (
 )
 """
 
-_CREATE_CRM_LEADS = """
-CREATE TABLE IF NOT EXISTS crm_leads (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id),
-    name TEXT NOT NULL,
-    email TEXT,
-    phone TEXT,
-    company_name TEXT,
-    interest TEXT,
-    estimated_value NUMERIC,
-    currency TEXT,
-    qualification_score SMALLINT CHECK (qualification_score BETWEEN 0 AND 100),
-    notes TEXT,
-    status TEXT NOT NULL DEFAULT 'new'
-        CHECK (status IN ('new', 'contacted', 'qualified', 'discarded')),
-    tags TEXT[] NOT NULL DEFAULT '{}',
-    custom_values JSONB NOT NULL DEFAULT '{}'::jsonb,
-    source TEXT
-        CHECK (source IN ('manual', 'form', 'referral', 'instagram', 'import', 'other')),
-    converted_at TIMESTAMPTZ,
-    converted_contact_id UUID REFERENCES crm_contacts(id),
-    converted_company_id UUID REFERENCES crm_companies(id),
-    converted_deal_id UUID REFERENCES crm_deals(id),
-    archived_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT crm_leads_contact_info_check
-        CHECK (email IS NOT NULL OR phone IS NOT NULL OR company_name IS NOT NULL)
-)
-"""
-
 _CREATE_CRM_NOTES = """
 CREATE TABLE IF NOT EXISTS crm_notes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id),
     body TEXT NOT NULL,
-    source TEXT NOT NULL CHECK (source IN ('user', 'agent')),
+    source TEXT NOT NULL CHECK (source IN ('user', 'agent', 'system')),
     contact_id UUID REFERENCES crm_contacts(id),
     company_id UUID REFERENCES crm_companies(id),
     deal_id UUID REFERENCES crm_deals(id),
@@ -157,11 +125,6 @@ CREATE INDEX IF NOT EXISTS crm_deals_user_id_idx
     ON crm_deals (user_id)
 """
 
-_CREATE_CRM_LEADS_USER_ID_IDX = """
-CREATE INDEX IF NOT EXISTS crm_leads_user_id_idx
-    ON crm_leads (user_id)
-"""
-
 _CREATE_CRM_NOTES_USER_ID_IDX = """
 CREATE INDEX IF NOT EXISTS crm_notes_user_id_idx
     ON crm_notes (user_id)
@@ -186,13 +149,11 @@ _ALTER_STATEMENTS = (
     "ALTER TABLE crm_deals "
     "ADD COLUMN IF NOT EXISTS custom_values JSONB NOT NULL DEFAULT '{}'::jsonb",
     "ALTER TABLE crm_notes ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ",
-    "ALTER TABLE crm_deals "
-    "ADD COLUMN IF NOT EXISTS source_lead_id UUID REFERENCES crm_leads(id)",
-    "ALTER TABLE crm_contacts "
-    "ADD COLUMN IF NOT EXISTS source_lead_id UUID REFERENCES crm_leads(id)",
-    "ALTER TABLE crm_companies "
-    "ADD COLUMN IF NOT EXISTS source_lead_id UUID REFERENCES crm_leads(id)",
-    "ALTER TABLE crm_deals ALTER COLUMN stage SET DEFAULT 'qualified'",
+    "ALTER TABLE crm_deals ALTER COLUMN stage SET DEFAULT 'lead'",
+    "ALTER TABLE crm_deals DROP COLUMN IF EXISTS source_lead_id",
+    "ALTER TABLE crm_contacts DROP COLUMN IF EXISTS source_lead_id",
+    "ALTER TABLE crm_companies DROP COLUMN IF EXISTS source_lead_id",
+    "DROP TABLE IF EXISTS crm_leads",
 )
 
 # Bancos criados antes de sales-pipeline-via-agent não têm NENHUM CHECK em
@@ -238,8 +199,101 @@ BEGIN
         ALTER TABLE crm_deals
             ADD CONSTRAINT crm_deals_stage_check
             CHECK (stage IN (
-                'qualified', 'proposal', 'negotiation', 'won', 'lost'
+                'lead', 'qualified', 'proposal', 'negotiation', 'won', 'lost'
             ));
+    END IF;
+END $$
+"""
+
+# Bancos que já passaram por `_MIGRATE_DEALS_STAGE_CHECK` têm o CHECK com
+# `negotiation` mas sem `lead`. CREATE TABLE IF NOT EXISTS não reescreve
+# o constraint existente — drop (CHECK com negotiation e sem 'lead') +
+# add do funil atual, idempotente nos restarts seguintes.
+_MIGRATE_DEALS_STAGE_CHECK_LEAD = """
+DO $$
+DECLARE
+    old_stage_check TEXT;
+BEGIN
+    SELECT con.conname INTO old_stage_check
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+    WHERE rel.relname = 'crm_deals'
+      AND nsp.nspname = current_schema()
+      AND con.contype = 'c'
+      AND pg_get_constraintdef(con.oid) LIKE '%stage%'
+      AND pg_get_constraintdef(con.oid) LIKE '%negotiation%'
+      AND pg_get_constraintdef(con.oid) NOT LIKE '%''lead''%';
+
+    IF old_stage_check IS NOT NULL THEN
+        EXECUTE format(
+            'ALTER TABLE crm_deals DROP CONSTRAINT %I',
+            old_stage_check
+        );
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+        WHERE rel.relname = 'crm_deals'
+          AND nsp.nspname = current_schema()
+          AND con.contype = 'c'
+          AND pg_get_constraintdef(con.oid) LIKE '%stage%'
+          AND pg_get_constraintdef(con.oid) LIKE '%''lead''%'
+          AND pg_get_constraintdef(con.oid) LIKE '%negotiation%'
+    ) THEN
+        ALTER TABLE crm_deals
+            ADD CONSTRAINT crm_deals_stage_check
+            CHECK (stage IN (
+                'lead', 'qualified', 'proposal', 'negotiation', 'won', 'lost'
+            ));
+    END IF;
+END $$
+"""
+
+# Bancos criados antes de sales-pipeline-via-agent têm o CHECK antigo de
+# `crm_notes.source` sem `'system'` (task backend-email-1, REQ-005:
+# `classify_email_by_contact` grava notas `source='system'`). Mesmo padrão
+# de `_MIGRATE_DEALS_STAGE_CHECK`: drop do CHECK antigo (se existir) + add
+# do novo, idempotente nos restarts seguintes.
+_MIGRATE_CRM_NOTES_SOURCE_CHECK = """
+DO $$
+DECLARE
+    old_source_check TEXT;
+BEGIN
+    SELECT con.conname INTO old_source_check
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+    JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+    WHERE rel.relname = 'crm_notes'
+      AND nsp.nspname = current_schema()
+      AND con.contype = 'c'
+      AND pg_get_constraintdef(con.oid) LIKE '%source%'
+      AND pg_get_constraintdef(con.oid) NOT LIKE '%system%';
+
+    IF old_source_check IS NOT NULL THEN
+        EXECUTE format(
+            'ALTER TABLE crm_notes DROP CONSTRAINT %I',
+            old_source_check
+        );
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint con
+        JOIN pg_class rel ON rel.oid = con.conrelid
+        JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+        WHERE rel.relname = 'crm_notes'
+          AND nsp.nspname = current_schema()
+          AND con.contype = 'c'
+          AND pg_get_constraintdef(con.oid) LIKE '%source%'
+          AND pg_get_constraintdef(con.oid) LIKE '%system%'
+    ) THEN
+        ALTER TABLE crm_notes
+            ADD CONSTRAINT crm_notes_source_check
+            CHECK (source IN ('user', 'agent', 'system'));
     END IF;
 END $$
 """
@@ -249,20 +303,20 @@ def ensure_crm_schema(conninfo: str) -> None:
     """Cria/estende as tabelas CRM e índices de forma idempotente."""
     with psycopg.connect(conninfo, autocommit=True) as conn:
         with conn.cursor() as cur:
-            # Ordem: companies → contacts → deals → leads (FKs) → notes → definitions.
+            # Ordem: companies → contacts → deals → notes → definitions.
             cur.execute(_CREATE_CRM_COMPANIES)
             cur.execute(_CREATE_CRM_CONTACTS)
             cur.execute(_CREATE_CRM_DEALS)
-            cur.execute(_CREATE_CRM_LEADS)
             cur.execute(_CREATE_CRM_NOTES)
             cur.execute(_CREATE_CRM_FIELD_DEFINITIONS)
             for statement in _ALTER_STATEMENTS:
                 cur.execute(statement)
             cur.execute(_MIGRATE_DEALS_STAGE_CHECK)
+            cur.execute(_MIGRATE_DEALS_STAGE_CHECK_LEAD)
+            cur.execute(_MIGRATE_CRM_NOTES_SOURCE_CHECK)
             cur.execute(_CREATE_CRM_COMPANIES_USER_ID_IDX)
             cur.execute(_CREATE_CRM_CONTACTS_USER_ID_IDX)
             cur.execute(_CREATE_CRM_DEALS_USER_ID_IDX)
-            cur.execute(_CREATE_CRM_LEADS_USER_ID_IDX)
             cur.execute(_CREATE_CRM_NOTES_USER_ID_IDX)
             cur.execute(_CREATE_CRM_FIELD_DEFINITIONS_USER_ENTITY_IDX)
 

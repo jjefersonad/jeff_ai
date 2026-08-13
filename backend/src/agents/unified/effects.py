@@ -376,6 +376,12 @@ TOOL_EFFECTS: Final[Mapping[str, tuple[Any, ...]]] = {
     "crm_move_deal": _write_new(),
     "crm_create_field_definition": _write_new(),
     "crm_update_field_definition": _write_new(),
+    # Agent-driven deal actions (sales-pipeline-via-agent-task-backend-agent-actions-1,
+    # REQ-002). Sem entrada aqui, `classify()` devolveria `UNKNOWN` e a tool
+    # ficaria escondida do modelo.
+    "request_followup": _write_new(),
+    # sales-pipeline-via-agent-task-backend-agent-actions-2, REQ-003.
+    "add_deal_note": _write_new(),
     # --- Entrega de mensagens (Tier 2) ----------------------------------
     # `send_message` resolve o canal via registry e chama a API do canal
     # corrente (Telegram Bot API / Evolution / SSE) — `Capability.NETWORK`.

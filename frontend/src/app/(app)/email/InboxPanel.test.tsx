@@ -433,6 +433,55 @@ describe("InboxPanel responsive list (email-inbox-responsiveness-task-breakpoint
 });
 
 // ---------------------------------------------------------------------------
+// email-send-html-only-by-default — read view with nullable body_text
+// (task-inbox-1 / REQ-007)
+// ---------------------------------------------------------------------------
+describe("InboxPanel detail body (email-send-html-only-by-default-task-inbox-1 / REQ-007)", () => {
+  beforeEach(() => {
+    mockListEmails.mockReset();
+    mockSearchEmails.mockReset();
+    mockGetEmail.mockReset();
+    mockUpdateEmail.mockReset();
+  });
+
+  it("unit-1: renders sanitized HTML when body_text is null (no empty/placeholder body)", async () => {
+    const email = emailFor("e1", {
+      body_text: null,
+      body_html: "<p>Hi there</p>",
+    });
+    mockListEmails.mockResolvedValue([email]);
+    mockGetEmail.mockResolvedValue(email);
+    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+
+    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
+    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
+    await userEvent.click(row);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Hi there")).toBeInTheDocument();
+    expect(within(dialog).queryByText("(sem conteúdo)")).not.toBeInTheDocument();
+  });
+
+  it("unit-2: prefers HTML body when both body_text and body_html are present", async () => {
+    const email = emailFor("e1", {
+      body_text: "PLAIN_ONLY_MARKER",
+      body_html: "<p>HTML_ONLY_MARKER</p>",
+    });
+    mockListEmails.mockResolvedValue([email]);
+    mockGetEmail.mockResolvedValue(email);
+    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+
+    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
+    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
+    await userEvent.click(row);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("HTML_ONLY_MARKER")).toBeInTheDocument();
+    expect(within(dialog).queryByText("PLAIN_ONLY_MARKER")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // email-inbox-responsiveness — toolbar wrapping at xs (task-toolbar-1 / REQ-012)
 // ---------------------------------------------------------------------------
 // jsdom does not lay out, so we cannot assert on getBoundingClientRect() or

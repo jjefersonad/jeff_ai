@@ -26,7 +26,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.requests import Request
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, model_validator
 
 from src.application.integrations.config_schemas import UnknownIntegrationTypeError
 from src.application.ports.email_account_repository import (
@@ -178,17 +178,33 @@ class SendEmailRequest(BaseModel):
     `in_reply_to` é o ID (UUID) de um email já sincronizado do próprio
     user; o use case propaga `thread_id` e prefixa `subject` com `Re:`
     automaticamente (REQ-005 email-inbox).
+
+    `body_text` é opcional (email-send-html-only-by-default, REQ-010):
+    ao menos um entre `body_text` e `body_html` deve ser fornecido —
+    caso contrário o `model_validator` levanta 422. Isso espelha a
+    regra do `SendEmail.execute`, que levanta `ValueError("Send body
+    required")` se ambos forem vazios (defesa em profundidade: o
+    HTTP route é a primeira linha, o use case é a segunda).
     """
 
     account_id: str
     to_addresses: list[str]
     subject: str
-    body_text: str
+    body_text: str | None = None
     body_html: str | None = None
     cc_addresses: list[str] | None = None
     bcc_addresses: list[str] | None = None
     in_reply_to: str | None = None
     references: str | None = None
+
+    @model_validator(mode="after")
+    def _require_at_least_one_body(self) -> "SendEmailRequest":
+        """REQ-010 scenario 2: 422 quando `body_text` E `body_html` são vazios."""
+        text_empty = not (self.body_text and self.body_text.strip())
+        html_empty = not (self.body_html and self.body_html.strip())
+        if text_empty and html_empty:
+            raise ValueError("Send body required")
+        return self
 
 
 class SendEmailResponse(BaseModel):

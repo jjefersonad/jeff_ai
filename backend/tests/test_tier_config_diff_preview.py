@@ -356,9 +356,31 @@ class TestSendEmailDiff:
             )
             is None
         )
+        # Sem corpo algum (nem text nem html).
+        assert (
+            _diff_for_send_email(
+                {"to_addresses": ["a@example.com"], "subject": "s"}
+            )
+            is None
+        )
         # `to_addresses` vazio não é "missing" — ainda assim não devemos
         # renderizar um send sem destinatário, mas a função renderiza e o
         # backend recusa o envio em outro lugar.
+
+    def test_html_only_body_still_renders_preview(self):
+        """HTML-first: body_text omitido não deve cair no preview estático."""
+        from src.agents.unified.tier_config import _diff_for_send_email
+
+        result = _diff_for_send_email(
+            {
+                "to_addresses": ["a@example.com"],
+                "subject": "Hello",
+                "body_html": "<p>Hi there</p>",
+            }
+        )
+        assert result is not None
+        assert "Hi there" in result
+        assert "corpo (html)" in result
 
     def test_truncates_very_long_body(self):
         from src.agents.unified.tier_config import _diff_for_send_email

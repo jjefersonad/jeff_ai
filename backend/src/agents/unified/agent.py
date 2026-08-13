@@ -89,6 +89,7 @@ from src.tools.create_pdf_document_tool import create_pdf_document
 from src.tools.create_pptx_presentation_tool import create_pptx_presentation
 from src.tools.create_xlsx_spreadsheet_tool import create_xlsx_spreadsheet
 from src.tools.crm_tools import (
+    add_deal_note,
     crm_add_note,
     crm_create_deal,
     crm_create_field_definition,
@@ -98,6 +99,7 @@ from src.tools.crm_tools import (
     crm_search_contacts,
     crm_update_field_definition,
     crm_upsert_contact,
+    request_followup,
 )
 from src.tools.deep_agent_tools import get_date_time_current
 from src.tools.delivery_tools import send_message
@@ -327,11 +329,11 @@ usuário.
   conversa atual e pertence a QUEM está conversando — `owner_user_key` é
   resolvido do `configurable`, nunca do argumento da tool.
 - **CRM Jeff AI** (módulo nativo em `/crm`, Postgres do usuário autenticado):
-  use **somente** as tools cujo nome começa com `crm_` —
+  use **somente** as tools do módulo CRM Jeff AI —
   `crm_search_contacts`, `crm_upsert_contact`, `crm_add_note`,
   `crm_list_deals`, `crm_create_deal`, `crm_move_deal`,
   `crm_list_field_definitions`, `crm_create_field_definition`,
-  `crm_update_field_definition`.
+  `crm_update_field_definition`, `request_followup`, `add_deal_note`.
   - NÃO use tools MCP de terceiros (`contacts_*`, `lead_gen_*`,
     `sequences_*`, `mcp__…`) para o CRM Jeff AI — essas são APIs de
     outra plataforma e **não** gravama em `/api/crm` nem na UI `/crm`.
@@ -343,10 +345,18 @@ usuário.
     `crm_create_field_definition` só se a chave ainda não existir;
     `crm_update_field_definition` altera só o label.
   - Nota/follow-up (`source=agent`): `crm_add_note` com exatamente um
-    alvo (`contact_id` | `company_id` | `deal_id`).
-  - Funil: `crm_list_deals`, `crm_create_deal` (default `qualified`,
-    `value`/`custom_values`), `crm_move_deal`
-    (`qualified` → `proposal` → `negotiation` → `won`/`lost`).
+    alvo (`contact_id` | `company_id` | `deal_id`); `add_deal_note(deal_id, text)`
+    é o atalho equivalente restrito a deal.
+  - Funil: `crm_list_deals`, `crm_create_deal` (default `lead`,
+    `value`/`custom_values` do deal; campos de contato `contact_name`/
+    `email`/`phone`/`city`/`state`/`tags`/`status`/`contact_custom_values`
+    no mesmo call — sem `crm_upsert_contact` prévio), `crm_move_deal`
+    (`lead` → `qualified` → `proposal` → `negotiation` → `won`/`lost`).
+  - Follow-up de deal (sales-pipeline-via-agent, REQ-002):
+    `request_followup(deal_id)` devolve um rascunho gerado a partir das
+    notas reais do deal (`draft` opcional usa esse texto verbatim). Só
+    devolve o preview — para enviar de fato, chame `send_email` com esse
+    texto (Tier 3, exige aprovação) e depois `crm_add_note` para registrar.
   - Leituras Tier 1; escritas Tier 2. Skill: `crm`.
 - **Imagens**: delegue para `image_design_subagent` (sempre).
 - **Leitura do projeto**: `read_project_file`, `list_project_files`
@@ -425,6 +435,12 @@ _UNIFIED_TOOLS: list = [
     crm_list_field_definitions,
     crm_create_field_definition,
     crm_update_field_definition,
+    # Agent-driven deal actions (sales-pipeline-via-agent-task-backend-agent-actions-1/2,
+    # REQ-002/REQ-003): rascunho de follow-up (preview) — envio real passa
+    # por `send_email` (Tier 3) e registro por `crm_add_note`; `add_deal_note`
+    # é o atalho de nota restrito a `deal_id`.
+    request_followup,
+    add_deal_note,
     # --- Email (email-client-imap-mvp; Tier 1 read / Tier 3 send) ------ #
     list_emails,
     read_email,

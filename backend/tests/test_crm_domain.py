@@ -1,7 +1,6 @@
 """Testes do domínio CRM (`add-simple-crm-module-task-domain-1`).
 
-Unit-1: DealStage order — qualified → proposal → negotiation → won → lost
-(`sales-pipeline-via-agent`: `lead` deixou de ser estágio de deal).
+Unit-1: DealStage order — lead → qualified → proposal → negotiation → won → lost
 """
 from __future__ import annotations
 
@@ -22,6 +21,7 @@ from src.domain.crm import (
 def test_default_deal_stages_order() -> None:
     """WHEN o código lista os estágios padrão THEN ordem fixa da spec."""
     assert default_deal_stages() == [
+        DealStage.LEAD,
         DealStage.QUALIFIED,
         DealStage.PROPOSAL,
         DealStage.NEGOTIATION,
@@ -29,6 +29,7 @@ def test_default_deal_stages_order() -> None:
         DealStage.LOST,
     ]
     assert [s.value for s in default_deal_stages()] == [
+        "lead",
         "qualified",
         "proposal",
         "negotiation",

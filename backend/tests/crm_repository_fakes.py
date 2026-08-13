@@ -1,8 +1,8 @@
 """Mixins stubs para fakes de `CrmRepositoryPort` nos testes unitários."""
 from __future__ import annotations
 
-from src.application.ports.crm_repository import ContactPage, LeadConversionResult
-from src.domain.crm import Company, Contact, FieldDefinition, FieldEntity, Lead
+from src.application.ports.crm_repository import ContactPage
+from src.domain.crm import Company, Contact, Deal, FieldDefinition, FieldEntity
 
 
 class CrmRepositoryPortExtensions:
@@ -59,19 +59,8 @@ class CrmRepositoryPortExtensions:
         """Default: sem match — testes que precisam de comportamento sobrescrevem."""
         return None
 
-    async def create_lead(self, lead: Lead) -> Lead:
-        raise NotImplementedError
-
-    async def list_leads(
-        self,
-        user_id: str,
-        *,
-        converted: bool = False,
-    ) -> list[Lead]:
-        return []
-
-    async def get_lead(self, user_id: str, lead_id: str) -> Lead | None:
+    async def get_active_deal_by_contact(
+        self, user_id: str, contact_id: str
+    ) -> Deal | None:
+        """Default: sem deal ativo — testes que precisam de comportamento sobrescrevem."""
         return None
-
-    async def convert_lead(self, lead: Lead) -> LeadConversionResult:
-        raise NotImplementedError

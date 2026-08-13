@@ -6,7 +6,6 @@ Padrão: `psycopg` async, uma conexão por operação.
 from __future__ import annotations
 
 import json
-import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -17,7 +16,6 @@ from psycopg.errors import UniqueViolation
 from src.application.ports.crm_repository import (
     ContactPage,
     CrmRepositoryPort,
-    LeadConversionResult,
 )
 from src.domain.crm import (
     Company,
@@ -28,37 +26,25 @@ from src.domain.crm import (
     FieldDefinition,
     FieldEntity,
     FieldType,
-    Lead,
-    LeadSource,
-    LeadStatus,
     Note,
     NoteSource,
 )
 
 _CONTACT_COLUMNS = (
     "id, user_id, name, email, phone, company_id, status, tags, "
-    "city, state, custom_values, source_lead_id, archived_at, created_at, "
-    "updated_at"
+    "city, state, custom_values, archived_at, created_at, updated_at"
 )
 _COMPANY_COLUMNS = (
     "id, user_id, name, website, domain, phone, notes, "
-    "city, state, custom_values, source_lead_id, archived_at, created_at, "
-    "updated_at"
+    "city, state, custom_values, archived_at, created_at, updated_at"
 )
 _DEAL_COLUMNS = (
     "id, user_id, title, stage, value, currency, contact_id, company_id, "
-    "custom_values, source_lead_id, archived_at, created_at, updated_at"
+    "custom_values, archived_at, created_at, updated_at"
 )
 _NOTE_COLUMNS = (
     "id, user_id, body, source, contact_id, company_id, deal_id, "
     "archived_at, created_at"
-)
-_LEAD_COLUMNS = (
-    "id, user_id, name, email, phone, company_name, interest, "
-    "estimated_value, currency, qualification_score, notes, status, tags, "
-    "custom_values, source, converted_at, converted_contact_id, "
-    "converted_company_id, converted_deal_id, archived_at, created_at, "
-    "updated_at"
 )
 _FIELD_DEF_COLUMNS = (
     "id, user_id, entity, key, label, field_type, created_at, updated_at"
@@ -82,7 +68,6 @@ def _row_to_contact(row: tuple[Any, ...]) -> Contact:
         city,
         state,
         custom_values,
-        source_lead_id,
         archived_at,
         created_at,
         updated_at,
@@ -99,7 +84,6 @@ def _row_to_contact(row: tuple[Any, ...]) -> Contact:
         city=city,
         state=state,
         custom_values=dict(custom_values or {}),
-        source_lead_id=str(source_lead_id) if source_lead_id is not None else None,
         archived_at=archived_at,
         created_at=created_at,
         updated_at=updated_at,
@@ -118,7 +102,6 @@ def _row_to_company(row: tuple[Any, ...]) -> Company:
         city,
         state,
         custom_values,
-        source_lead_id,
         archived_at,
         created_at,
         updated_at,
@@ -134,7 +117,6 @@ def _row_to_company(row: tuple[Any, ...]) -> Company:
         city=city,
         state=state,
         custom_values=dict(custom_values or {}),
-        source_lead_id=str(source_lead_id) if source_lead_id is not None else None,
         archived_at=archived_at,
         created_at=created_at,
         updated_at=updated_at,
@@ -152,7 +134,6 @@ def _row_to_deal(row: tuple[Any, ...]) -> Deal:
         contact_id,
         company_id,
         custom_values,
-        source_lead_id,
         archived_at,
         created_at,
         updated_at,
@@ -167,7 +148,6 @@ def _row_to_deal(row: tuple[Any, ...]) -> Deal:
         contact_id=str(contact_id) if contact_id is not None else None,
         company_id=str(company_id) if company_id is not None else None,
         custom_values=dict(custom_values or {}),
-        source_lead_id=str(source_lead_id) if source_lead_id is not None else None,
         archived_at=archived_at,
         created_at=created_at,
         updated_at=updated_at,
@@ -196,65 +176,6 @@ def _row_to_note(row: tuple[Any, ...]) -> Note:
         deal_id=str(deal_id) if deal_id is not None else None,
         archived_at=archived_at,
         created_at=created_at,
-    )
-
-
-def _row_to_lead(row: tuple[Any, ...]) -> Lead:
-    (
-        lead_id,
-        user_id,
-        name,
-        email,
-        phone,
-        company_name,
-        interest,
-        estimated_value,
-        currency,
-        qualification_score,
-        notes,
-        status,
-        tags,
-        custom_values,
-        source,
-        converted_at,
-        converted_contact_id,
-        converted_company_id,
-        converted_deal_id,
-        archived_at,
-        created_at,
-        updated_at,
-    ) = row
-    return Lead(
-        id=str(lead_id),
-        user_id=str(user_id),
-        name=name,
-        email=email,
-        phone=phone,
-        company_name=company_name,
-        interest=interest,
-        estimated_value=Decimal(str(estimated_value))
-        if estimated_value is not None
-        else None,
-        currency=currency,
-        qualification_score=qualification_score,
-        notes=notes,
-        status=LeadStatus(status),
-        tags=list(tags) if tags is not None else [],
-        custom_values=dict(custom_values or {}),
-        source=LeadSource(source) if source is not None else None,
-        converted_at=converted_at,
-        converted_contact_id=str(converted_contact_id)
-        if converted_contact_id is not None
-        else None,
-        converted_company_id=str(converted_company_id)
-        if converted_company_id is not None
-        else None,
-        converted_deal_id=str(converted_deal_id)
-        if converted_deal_id is not None
-        else None,
-        archived_at=archived_at,
-        created_at=created_at,
-        updated_at=updated_at,
     )
 
 
@@ -298,7 +219,7 @@ class PostgresCrmRepository(CrmRepositoryPort):
                     f"""
                     INSERT INTO crm_companies ({_COMPANY_COLUMNS})
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s
                     )
                     RETURNING {_COMPANY_COLUMNS}
                     """,
@@ -313,7 +234,6 @@ class PostgresCrmRepository(CrmRepositoryPort):
                         company.city,
                         company.state,
                         _as_jsonb(company.custom_values),
-                        company.source_lead_id,
                         company.archived_at,
                         company.created_at,
                         company.updated_at,
@@ -436,7 +356,7 @@ class PostgresCrmRepository(CrmRepositoryPort):
                     f"""
                     INSERT INTO crm_contacts ({_CONTACT_COLUMNS})
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s
                     )
                     RETURNING {_CONTACT_COLUMNS}
                     """,
@@ -452,7 +372,6 @@ class PostgresCrmRepository(CrmRepositoryPort):
                         contact.city,
                         contact.state,
                         _as_jsonb(contact.custom_values),
-                        contact.source_lead_id,
                         contact.archived_at,
                         contact.created_at,
                         contact.updated_at,
@@ -656,7 +575,7 @@ class PostgresCrmRepository(CrmRepositoryPort):
                     f"""
                     INSERT INTO crm_deals ({_DEAL_COLUMNS})
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s
                     )
                     RETURNING {_DEAL_COLUMNS}
                     """,
@@ -670,7 +589,6 @@ class PostgresCrmRepository(CrmRepositoryPort):
                         deal.contact_id,
                         deal.company_id,
                         _as_jsonb(deal.custom_values),
-                        deal.source_lead_id,
                         deal.archived_at,
                         deal.created_at,
                         deal.updated_at,
@@ -689,6 +607,29 @@ class PostgresCrmRepository(CrmRepositoryPort):
                     f"SELECT {_DEAL_COLUMNS} FROM crm_deals "
                     "WHERE id = %s AND user_id = %s",
                     (deal_id, user_id),
+                )
+                row = await cur.fetchone()
+        return _row_to_deal(row) if row is not None else None
+
+    async def get_active_deal_by_contact(
+        self, user_id: str, contact_id: str
+    ) -> Deal | None:
+        """Deal ativo (`stage NOT IN ('won','lost')`) mais recente do contato.
+
+        `sales-pipeline-via-agent` REQ-005 — usado por
+        `classify_email_by_contact` para decidir se um email recebido gera
+        nota automática. Em caso de múltiplos deals ativos, devolve o mais
+        recentemente atualizado (mesma escolha estável de
+        `get_contact_by_email`).
+        """
+        async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    f"SELECT {_DEAL_COLUMNS} FROM crm_deals "
+                    "WHERE user_id = %s AND contact_id = %s "
+                    "AND archived_at IS NULL AND stage NOT IN ('won', 'lost') "
+                    "ORDER BY updated_at DESC LIMIT 1",
+                    (user_id, contact_id),
                 )
                 row = await cur.fetchone()
         return _row_to_deal(row) if row is not None else None
@@ -787,221 +728,6 @@ class PostgresCrmRepository(CrmRepositoryPort):
                 row = await cur.fetchone()
             await conn.commit()
         return _row_to_deal(row) if row is not None else None
-
-    # --- Leads -----------------------------------------------------------------
-
-    async def create_lead(self, lead: Lead) -> Lead:
-        """Insere lead e devolve a linha persistida."""
-        async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    f"""
-                    INSERT INTO crm_leads ({_LEAD_COLUMNS})
-                    VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s
-                    )
-                    RETURNING {_LEAD_COLUMNS}
-                    """,
-                    (
-                        lead.id,
-                        lead.user_id,
-                        lead.name,
-                        lead.email,
-                        lead.phone,
-                        lead.company_name,
-                        lead.interest,
-                        lead.estimated_value,
-                        lead.currency,
-                        lead.qualification_score,
-                        lead.notes,
-                        lead.status.value,
-                        lead.tags,
-                        _as_jsonb(lead.custom_values),
-                        lead.source.value if lead.source is not None else None,
-                        lead.converted_at,
-                        lead.converted_contact_id,
-                        lead.converted_company_id,
-                        lead.converted_deal_id,
-                        lead.archived_at,
-                        lead.created_at,
-                        lead.updated_at,
-                    ),
-                )
-                row = await cur.fetchone()
-            await conn.commit()
-        assert row is not None
-        return _row_to_lead(row)
-
-    async def list_leads(
-        self, user_id: str, *, converted: bool = False
-    ) -> list[Lead]:
-        """Lista leads do user não-arquivados; `converted` alterna ativos/convertidos."""
-        clauses = ["user_id = %s", "archived_at IS NULL"]
-        params: list[object] = [user_id]
-        if converted:
-            clauses.append("converted_at IS NOT NULL")
-        else:
-            clauses.append("converted_at IS NULL")
-        where = " AND ".join(clauses)
-        async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    f"SELECT {_LEAD_COLUMNS} FROM crm_leads "
-                    f"WHERE {where} ORDER BY created_at DESC",
-                    params,
-                )
-                rows = await cur.fetchall()
-        return [_row_to_lead(r) for r in rows]
-
-    async def get_lead(self, user_id: str, lead_id: str) -> Lead | None:
-        """Retorna lead do user ou ``None``."""
-        async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    f"SELECT {_LEAD_COLUMNS} FROM crm_leads "
-                    "WHERE id = %s AND user_id = %s",
-                    (lead_id, user_id),
-                )
-                row = await cur.fetchone()
-        return _row_to_lead(row) if row is not None else None
-
-    async def convert_lead(self, lead: Lead) -> LeadConversionResult:
-        """Cria Contato + Empresa (opcional) + Deal e marca o lead convertido.
-
-        Tudo numa única conexão/transação — rollback explícito se qualquer
-        INSERT/UPDATE falhar, sem deixar registros parciais no banco.
-        """
-        now = datetime.now(UTC)
-        async with await psycopg.AsyncConnection.connect(self._conninfo) as conn:
-            try:
-                async with conn.cursor() as cur:
-                    company: Company | None = None
-                    if lead.company_name:
-                        await cur.execute(
-                            f"SELECT {_COMPANY_COLUMNS} FROM crm_companies "
-                            "WHERE user_id = %s AND archived_at IS NULL "
-                            "AND LOWER(name) = LOWER(%s) LIMIT 1",
-                            (lead.user_id, lead.company_name),
-                        )
-                        existing_company_row = await cur.fetchone()
-                        if existing_company_row is not None:
-                            company = _row_to_company(existing_company_row)
-                        else:
-                            await cur.execute(
-                                f"""
-                                INSERT INTO crm_companies ({_COMPANY_COLUMNS})
-                                VALUES (
-                                    %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                    %s::jsonb, %s, %s, %s, %s
-                                )
-                                RETURNING {_COMPANY_COLUMNS}
-                                """,
-                                (
-                                    str(uuid.uuid4()),
-                                    lead.user_id,
-                                    lead.company_name,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    None,
-                                    _as_jsonb({}),
-                                    lead.id,
-                                    None,
-                                    now,
-                                    now,
-                                ),
-                            )
-                            company = _row_to_company(await cur.fetchone())
-
-                    await cur.execute(
-                        f"""
-                        INSERT INTO crm_contacts ({_CONTACT_COLUMNS})
-                        VALUES (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                            %s::jsonb, %s, %s, %s, %s
-                        )
-                        RETURNING {_CONTACT_COLUMNS}
-                        """,
-                        (
-                            str(uuid.uuid4()),
-                            lead.user_id,
-                            lead.name,
-                            lead.email,
-                            lead.phone,
-                            company.id if company is not None else None,
-                            None,
-                            [],
-                            None,
-                            None,
-                            _as_jsonb({}),
-                            lead.id,
-                            None,
-                            now,
-                            now,
-                        ),
-                    )
-                    contact = _row_to_contact(await cur.fetchone())
-
-                    await cur.execute(
-                        f"""
-                        INSERT INTO crm_deals ({_DEAL_COLUMNS})
-                        VALUES (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s
-                        )
-                        RETURNING {_DEAL_COLUMNS}
-                        """,
-                        (
-                            str(uuid.uuid4()),
-                            lead.user_id,
-                            lead.name,
-                            DealStage.QUALIFIED.value,
-                            lead.estimated_value,
-                            lead.currency,
-                            contact.id,
-                            company.id if company is not None else None,
-                            _as_jsonb({}),
-                            lead.id,
-                            None,
-                            now,
-                            now,
-                        ),
-                    )
-                    deal = _row_to_deal(await cur.fetchone())
-
-                    await cur.execute(
-                        f"""
-                        UPDATE crm_leads SET
-                            converted_at = %s, converted_contact_id = %s,
-                            converted_company_id = %s, converted_deal_id = %s,
-                            updated_at = %s
-                        WHERE id = %s AND user_id = %s
-                        RETURNING {_LEAD_COLUMNS}
-                        """,
-                        (
-                            now,
-                            contact.id,
-                            company.id if company is not None else None,
-                            deal.id,
-                            now,
-                            lead.id,
-                            lead.user_id,
-                        ),
-                    )
-                    updated_lead_row = await cur.fetchone()
-                await conn.commit()
-            except Exception:
-                await conn.rollback()
-                raise
-        assert updated_lead_row is not None
-        return LeadConversionResult(
-            lead=_row_to_lead(updated_lead_row),
-            contact=contact,
-            company=company,
-            deal=deal,
-        )
 
     # --- Notes ---------------------------------------------------------------
 

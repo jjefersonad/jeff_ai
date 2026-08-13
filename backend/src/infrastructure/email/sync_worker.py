@@ -12,6 +12,13 @@ REQ-006) e passa o `contact_id` para `upsert_email`. Sem match, a
 mensagem é persistida normalmente com `contact_id=None` — nenhum erro é
 levantado.
 
+Com contato resolvido, também chama `ClassifyEmailByContact`
+(`sales-pipeline-via-agent-task-backend-email-1`, REQ-005) passando o
+`Contact` já obtido — evita um segundo `get_contact_by_email` idêntico. Se
+o contato tiver um deal ativo (`stage NOT IN ('won','lost')`), grava uma
+nota `crm_notes(source='system')` no deal; o estágio nunca é alterado por
+esse caminho.
+
 Em falha de autenticação (`ImapAuthError`), marca `status="error"` sem
 tocar a linha `user_integrations` — para contas IMAP a garantia continua
 estrutural (nenhuma chamada a `save` nesse caminho). Para contas Gmail
@@ -56,6 +63,9 @@ from src.application.ports.email_account_repository import (
 from src.application.ports.email_repository import EmailRepositoryPort
 from src.application.ports.user_integration_repository import (
     UserIntegrationRepositoryPort,
+)
+from src.application.use_cases.classify_email_by_contact import (
+    ClassifyEmailByContact,
 )
 from src.domain.email import EmailAccount, EmailAccountStatus, ParsedMessage
 from src.domain.integrations import UserIntegration
@@ -105,6 +115,7 @@ class EmailSyncWorker:
         self._crm_repository = crm_repository
         self._fetch_messages = fetch_messages
         self._ensure_fresh_token = ensure_fresh_token
+        self._classify_by_contact = ClassifyEmailByContact(repository=crm_repository)
         self._watermarks: dict[tuple[str, str], int] = {}
 
     async def poll_once(self) -> None:
@@ -178,6 +189,13 @@ class EmailSyncWorker:
             await self._email_repository.upsert_email(
                 account.id, message, contact_id=contact_id
             )
+            if contact is not None:
+                await self._classify_by_contact.execute(
+                    user_id=account.user_id,
+                    sender_email=message.from_address,
+                    subject=message.subject or "",
+                    contact=contact,
+                )
             self._watermarks[key] = max(self._watermarks.get(key, 0), int(message.uid))
 
     async def _mark_error(self, account: EmailAccount, reason: str) -> None:

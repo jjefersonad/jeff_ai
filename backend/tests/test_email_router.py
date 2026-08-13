@@ -188,6 +188,32 @@ def test_get_other_users_account_returns_404(
     assert resp.status_code == 404
 
 
+def test_list_accounts_returns_correct_provider_for_mixed_accounts(
+    client: TestClient, accounts_repo: _FakeEmailAccountRepository
+) -> None:
+    """gmail-account-oauth-connection-task-response-1-unit-1 (REQ-007)."""
+    _as(_USER_A)
+    imap_account = client.post("/api/email/accounts", json=_VALID_BODY).json()
+
+    gmail_account = EmailAccount(
+        id="gmail-account-1",
+        user_id=_USER_A.id,
+        user_integration_id="gmail-integration-1",
+        display_name="user@gmail.com",
+        provider="gmail",
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    accounts_repo.accounts[gmail_account.id] = gmail_account
+
+    resp = client.get("/api/email/accounts")
+
+    assert resp.status_code == 200
+    providers = {item["id"]: item["provider"] for item in resp.json()}
+    assert providers[imap_account["id"]] == "imap"
+    assert providers[gmail_account.id] == "gmail"
+
+
 # ===========================================================================
 # unit-2 (REQ-004): DELETE remove e some da listagem
 # ===========================================================================
@@ -317,3 +343,107 @@ def test_patch_account_missing_required_field_returns_422(
     body_text = resp.text
     # Field-level error is surfaced (the imap_host field shows up in the body).
     assert "imap_host" in body_text
+
+
+# ===========================================================================
+# gmail-account-oauth-connection-task-response-2-unit-1 (REQ-008)
+#
+# `DELETE /api/email/accounts/{id}` for a `provider="gmail"` account MUST
+# remove both the `email_accounts` row and its linked
+# `user_integrations` row (same ownership/404 semantics as `provider="imap"`,
+# since the existing `DeleteEmailAccount` use case is provider-agnostic).
+# ===========================================================================
+
+
+def _seed_gmail_account(
+    accounts_repo: _FakeEmailAccountRepository,
+    integrations_repo: _FakeUserIntegrationRepository,
+    *,
+    user_id: str,
+    account_id: str = "gmail-account-1",
+    integration_id: str = "gmail-integration-1",
+) -> EmailAccount:
+    """Helper: seed a `provider="gmail"` account + its encrypted integration row."""
+    integration = UserIntegration(
+        id=integration_id,
+        user_id=user_id,
+        integration_type="gmail",
+        config={"email_address": "user@gmail.com", "access_token": "stub"},
+    )
+    account = EmailAccount(
+        id=account_id,
+        user_id=user_id,
+        user_integration_id=integration_id,
+        display_name="user@gmail.com",
+        provider="gmail",
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    integrations_repo.integrations[integration.id] = integration
+    accounts_repo.accounts[account.id] = account
+    return account
+
+
+def test_delete_gmail_account_removes_both_rows(
+    client: TestClient,
+    accounts_repo: _FakeEmailAccountRepository,
+    integrations_repo: _FakeUserIntegrationRepository,
+) -> None:
+    """REQ-008: DELETE on a `provider="gmail"` account owned by the caller
+    removes BOTH the `email_accounts` row and its linked `user_integrations`
+    row, and the account is gone from `GET /api/email/accounts`."""
+    _as(_USER_A)
+    account = _seed_gmail_account(
+        accounts_repo, integrations_repo, user_id=_USER_A.id
+    )
+
+    delete_resp = client.delete(f"/api/email/accounts/{account.id}")
+
+    assert delete_resp.status_code == 204
+    # Both rows are removed.
+    assert account.id not in accounts_repo.accounts
+    assert account.user_integration_id not in integrations_repo.integrations
+    # And the account is gone from the listing.
+    list_resp = client.get("/api/email/accounts")
+    assert list_resp.status_code == 200
+    assert account.id not in [a["id"] for a in list_resp.json()]
+
+
+def test_delete_gmail_account_repeat_returns_404(
+    client: TestClient,
+    accounts_repo: _FakeEmailAccountRepository,
+    integrations_repo: _FakeUserIntegrationRepository,
+) -> None:
+    """REQ-008: a second DELETE on the same `provider="gmail"` account
+    returns 404 (the account is already gone)."""
+    _as(_USER_A)
+    account = _seed_gmail_account(
+        accounts_repo, integrations_repo, user_id=_USER_A.id
+    )
+
+    first = client.delete(f"/api/email/accounts/{account.id}")
+    assert first.status_code == 204
+
+    second = client.delete(f"/api/email/accounts/{account.id}")
+    assert second.status_code == 404
+
+
+def test_delete_gmail_account_cross_user_returns_404(
+    client: TestClient,
+    accounts_repo: _FakeEmailAccountRepository,
+    integrations_repo: _FakeUserIntegrationRepository,
+) -> None:
+    """REQ-008: a different user cannot delete a `provider="gmail"`
+    account they do not own — same 404 behavior as `provider="imap"`."""
+    _as(_USER_A)
+    account = _seed_gmail_account(
+        accounts_repo, integrations_repo, user_id=_USER_A.id
+    )
+
+    _as(_USER_B)
+    resp = client.delete(f"/api/email/accounts/{account.id}")
+
+    assert resp.status_code == 404
+    # The rows are untouched — owner still has them.
+    assert account.id in accounts_repo.accounts
+    assert account.user_integration_id in integrations_repo.integrations

@@ -1,6 +1,6 @@
 """Testes dos use cases de deals CRM (add-simple-crm-module-task-usecases-4).
 
-Unit-1: create_deal defaults to qualified
+Unit-1: create_deal defaults to lead
 Unit-2: move_deal rejects invalid stage
 """
 from __future__ import annotations
@@ -11,7 +11,15 @@ import pytest
 
 from src.application.ports.crm_repository import CrmRepositoryPort
 from crm_repository_fakes import CrmRepositoryPortExtensions
-from src.domain.crm import Company, Contact, Deal, DealStage, Note, default_deal_stages
+from src.domain.crm import (
+    Company,
+    Contact,
+    Deal,
+    DealStage,
+    Note,
+    NoteSource,
+    default_deal_stages,
+)
 from src.domain.shared.errors import DomainError
 
 
@@ -20,6 +28,7 @@ class _FakeCrmRepository(CrmRepositoryPortExtensions, CrmRepositoryPort):
         self.companies: dict[str, Company] = {}
         self.contacts: dict[str, Contact] = {}
         self.deals: dict[str, Deal] = {}
+        self.notes: list[Note] = []
 
     async def create_company(self, company: Company) -> Company:
         self.companies[company.id] = company
@@ -124,7 +133,8 @@ class _FakeCrmRepository(CrmRepositoryPortExtensions, CrmRepositoryPort):
         return deal
 
     async def create_note(self, note: Note) -> Note:
-        raise NotImplementedError
+        self.notes.append(note)
+        return note
 
     async def list_notes_for_contact(
         self,
@@ -154,16 +164,16 @@ class _FakeCrmRepository(CrmRepositoryPortExtensions, CrmRepositoryPort):
         return []
 
 
-async def test_create_deal_defaults_to_qualified() -> None:
-    """unit-1 (REQ-002): create sem stage → qualified."""
+async def test_create_deal_defaults_to_lead() -> None:
+    """unit-1 (REQ-002): create sem stage → lead."""
     from src.application.use_cases.create_crm_deal import CreateCrmDeal
 
     repo = _FakeCrmRepository()
     deal = await CreateCrmDeal(repository=repo).execute(
         user_id="user-a", title="Proposta Acme"
     )
-    assert deal.stage == DealStage.QUALIFIED
-    assert repo.deals[deal.id].stage == DealStage.QUALIFIED
+    assert deal.stage == DealStage.LEAD
+    assert repo.deals[deal.id].stage == DealStage.LEAD
 
 
 async def test_move_deal_rejects_invalid_stage() -> None:
@@ -181,6 +191,7 @@ async def test_move_deal_rejects_invalid_stage() -> None:
             user_id="user-a",
             deal_id=deal.id,
             stage="not-a-stage",
+            source=NoteSource.USER,
         )
 
     stored = await repo.get_deal("user-a", deal.id)
@@ -189,7 +200,7 @@ async def test_move_deal_rejects_invalid_stage() -> None:
 
 
 async def test_list_deal_stages_ordered() -> None:
-    """REQ-001: list_stages retorna os 5 estágios ordenados."""
+    """REQ-001: list_stages retorna os estágios ordenados."""
     from src.application.use_cases.list_crm_deal_stages import ListCrmDealStages
 
     stages = await ListCrmDealStages().execute()
@@ -221,10 +232,61 @@ async def test_move_deal_to_won() -> None:
         user_id="user-a", title="Deal", stage=DealStage.PROPOSAL
     )
     moved = await MoveCrmDeal(repository=repo).execute(
-        user_id="user-a", deal_id=deal.id, stage=DealStage.WON
+        user_id="user-a", deal_id=deal.id, stage=DealStage.WON, source=NoteSource.USER
     )
     assert moved is not None
     assert moved.stage == DealStage.WON
+
+
+async def test_move_deal_writes_note_with_transition_and_source() -> None:
+    """unit-1/unit-2 (REQ-002/REQ-004): move grava crm_notes com 'de → para' e source."""
+    from src.application.use_cases.create_crm_deal import CreateCrmDeal
+    from src.application.use_cases.move_crm_deal import MoveCrmDeal
+
+    repo = _FakeCrmRepository()
+    deal = await CreateCrmDeal(repository=repo).execute(
+        user_id="user-a", title="Deal", stage=DealStage.QUALIFIED
+    )
+
+    await MoveCrmDeal(repository=repo).execute(
+        user_id="user-a",
+        deal_id=deal.id,
+        stage=DealStage.PROPOSAL,
+        source=NoteSource.USER,
+    )
+    assert len(repo.notes) == 1
+    assert repo.notes[0].deal_id == deal.id
+    assert repo.notes[0].body == "qualified → proposal"
+    assert repo.notes[0].source == NoteSource.USER
+
+    await MoveCrmDeal(repository=repo).execute(
+        user_id="user-a",
+        deal_id=deal.id,
+        stage=DealStage.NEGOTIATION,
+        source=NoteSource.AGENT,
+    )
+    assert len(repo.notes) == 2
+    assert repo.notes[1].body == "proposal → negotiation"
+    assert repo.notes[1].source == NoteSource.AGENT
+
+
+async def test_move_deal_invalid_stage_does_not_write_note() -> None:
+    """Stage inválido -> DomainError antes de mover; nenhuma nota é criada."""
+    from src.application.use_cases.create_crm_deal import CreateCrmDeal
+    from src.application.use_cases.move_crm_deal import MoveCrmDeal
+
+    repo = _FakeCrmRepository()
+    deal = await CreateCrmDeal(repository=repo).execute(
+        user_id="user-a", title="Deal", stage=DealStage.QUALIFIED
+    )
+    with pytest.raises(DomainError):
+        await MoveCrmDeal(repository=repo).execute(
+            user_id="user-a",
+            deal_id=deal.id,
+            stage="not-a-stage",
+            source=NoteSource.USER,
+        )
+    assert repo.notes == []
 
 
 async def test_list_deals_filter_and_archive() -> None:
@@ -267,3 +329,48 @@ async def test_get_deal_cross_user_returns_none() -> None:
         )
         is None
     )
+
+
+async def test_update_deal_changes_title_and_value() -> None:
+    """PATCH campos do deal sem contato."""
+    from decimal import Decimal
+
+    from src.application.use_cases.create_crm_deal import CreateCrmDeal
+    from src.application.use_cases.update_crm_deal import UpdateCrmDeal
+
+    repo = _FakeCrmRepository()
+    deal = await CreateCrmDeal(repository=repo).execute(
+        user_id="user-a", title="Acme"
+    )
+    updated = await UpdateCrmDeal(repository=repo).execute(
+        user_id="user-a",
+        deal_id=deal.id,
+        title="Acme revisado",
+        value=Decimal("1500.00"),
+        set_value=True,
+        currency="BRL",
+    )
+    assert updated is not None
+    assert updated.title == "Acme revisado"
+    assert updated.value == Decimal("1500.00")
+    assert updated.currency == "BRL"
+
+
+async def test_update_deal_stage_writes_transition_note() -> None:
+    """Mudança de estágio no update grava a mesma nota de MoveCrmDeal."""
+    from src.application.use_cases.create_crm_deal import CreateCrmDeal
+    from src.application.use_cases.update_crm_deal import UpdateCrmDeal
+
+    repo = _FakeCrmRepository()
+    deal = await CreateCrmDeal(repository=repo).execute(
+        user_id="user-a", title="Acme"
+    )
+    updated = await UpdateCrmDeal(repository=repo).execute(
+        user_id="user-a",
+        deal_id=deal.id,
+        stage=DealStage.QUALIFIED,
+    )
+    assert updated is not None
+    assert updated.stage == DealStage.QUALIFIED
+    assert len(repo.notes) == 1
+    assert repo.notes[0].body == "lead → qualified"
