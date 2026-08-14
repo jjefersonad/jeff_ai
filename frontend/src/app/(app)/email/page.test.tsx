@@ -30,6 +30,7 @@ const mockReplaceState = vi.fn();
 let mockSearchParamsValue: string | null = null;
 
 vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   // O `useSearchParams` do Next devolve um `ReadonlyURLSearchParams`;
   // nosso mock expõe `get` (que é o único membro usado pela page) e
   // ignora o resto. Retornamos um valor cuja leitura depende do
@@ -37,6 +38,10 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => ({
     get: (key: string) =>
       key === "gmail_connected" ? mockSearchParamsValue : null,
+    toString: () =>
+      mockSearchParamsValue === null
+        ? ""
+        : `gmail_connected=${mockSearchParamsValue}`,
   }),
 }));
 

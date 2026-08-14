@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import { Mail } from "lucide-react";
 
@@ -23,5 +24,19 @@ describe("TooltipIconButton — aria-label (email-inbox-ux-improvements task-sha
     render(<TooltipIconButton icon={<Mail />} onClick={vi.fn()} tooltip="Responder" />);
 
     expect(screen.getByRole("button", { name: "Responder" })).toBeInTheDocument();
+  });
+
+  it("tooltip content uses an opaque popover surface, not the unset bg-primary token", async () => {
+    const user = userEvent.setup();
+    render(
+      <TooltipIconButton icon={<Mail />} onClick={vi.fn()} tooltip="Responder" />
+    );
+
+    await user.hover(screen.getByRole("button", { name: "Responder" }));
+    const tooltip = await screen.findByRole("tooltip", { name: "Responder" });
+    const surface = tooltip.closest("[data-slot='tooltip-content']") ?? tooltip;
+
+    expect(surface.className).toMatch(/\bbg-popover\b/);
+    expect(surface.className).not.toMatch(/\bbg-primary\b/);
   });
 });

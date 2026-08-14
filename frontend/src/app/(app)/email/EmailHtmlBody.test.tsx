@@ -42,4 +42,25 @@ describe("EmailHtmlBody (melhorar-visualizacao-de-emails-task-htmlbody-1)", () =
     expect(compact).toMatch(/img\{max-width:100%/);
     expect(compact).toMatch(/body\{[^}]*overflow:auto/);
   });
+
+  it("unit-5: srcDoc passes through inline style without a second strip", () => {
+    render(
+      <EmailHtmlBody html={'<p style="color:red">Hello</p>'} />
+    );
+
+    expect(iframeSrcDoc()).toContain('style="color:red"');
+  });
+
+  it("unit-6: wrapper CSS drops table max-width, keeps img constraint and light canvas", () => {
+    render(<EmailHtmlBody html="<p>Hi there</p>" />);
+
+    const compact = iframeSrcDoc().replace(/\s/g, "");
+    expect(compact).toMatch(/img\{max-width:100%/);
+    expect(compact).toMatch(/body\{[^}]*overflow:auto/);
+    expect(compact).toMatch(/background:#fff/);
+    expect(compact).not.toMatch(/table\{max-width:100%/);
+
+    const sandbox = screen.getByTitle("Corpo do e-mail").getAttribute("sandbox") ?? "";
+    expect(sandbox).not.toContain("allow-scripts");
+  });
 });

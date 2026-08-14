@@ -15,11 +15,13 @@ Nunca inclui a senha em texto puro em nenhuma mensagem de exceção — o
 resultado do `login()` (`OK`/`NO`/`BAD`) não carrega a senha, e o próprio
 `aioimaplib` já faz `scrub` da senha nos logs internos do comando LOGIN.
 
-`fetch_new_messages`/`sanitize_body_html` (email-client-imap-mvp-task-sync-1):
-busca mensagens com UID acima de um watermark por pasta (REQ-005
-`email-account-management`) e sanitiza `body_html` com `nh3` antes de
-devolver os dados parseados — nunca persiste HTML não sanitizado (REQ-002
-`email-inbox`, design Decision 3).
+`fetch_new_messages`/`sanitize_body_html` (email-client-imap-mvp-task-sync-1,
+email-html-style-allowlist, email-html-clean-content-tags): busca mensagens
+com UID acima de um watermark por pasta (REQ-005 `email-account-management`)
+e sanitiza `body_html` com um allowlist nh3 de e-mail (REQ-018) e
+`clean_content_tags` que remove conteúdo de tags não-corpo (REQ-019) antes
+de devolver os dados parseados — nunca persiste HTML não sanitizado
+(REQ-002, design Decision 3).
 """
 from __future__ import annotations
 
@@ -86,13 +88,131 @@ async def _authenticate(
         await client.login(config.imap_username, config.imap_password)
 
 
-def sanitize_body_html(raw_html: str) -> str:
-    """Remove tags/atributos perigosos (`<script>`, `onclick`, ...) de HTML de email.
+#: Email-aware nh3 allowlist (email-html-style-allowlist REQ-018).
+#: Presentation attrs survive; `<script>` / `on*` / `javascript:` still drop.
+#: `<style>` is not in `_EMAIL_HTML_TAGS` (ammonia panics if it is also
+#: in `clean_content_tags`). See `_EMAIL_CLEAN_CONTENT_TAGS`.
+_EMAIL_HTML_TAGS: set[str] = set(nh3.ALLOWED_TAGS) | {"font"}
 
-    Chamada no ingest (`_parse_message`), antes de qualquer persistência —
-    nunca só na renderização (design Decision 3).
+_EMAIL_HTML_ATTRIBUTES: dict[str, set[str]] = {
+    tag: set(attrs) for tag, attrs in nh3.ALLOWED_ATTRIBUTES.items()
+}
+_EMAIL_HTML_ATTRIBUTES["*"] = {
+    "align",
+    "background",
+    "bgcolor",
+    "border",
+    "class",
+    "color",
+    "height",
+    "style",
+    "valign",
+    "width",
+}
+_EMAIL_HTML_ATTRIBUTES.setdefault("table", set()).update(
+    {"width", "height", "bgcolor", "cellpadding", "cellspacing", "border", "align", "style"}
+)
+_EMAIL_HTML_ATTRIBUTES.setdefault("td", set()).update(
+    {"width", "height", "bgcolor", "valign", "align", "style"}
+)
+_EMAIL_HTML_ATTRIBUTES.setdefault("th", set()).update(
+    {"width", "height", "bgcolor", "valign", "align", "style"}
+)
+_EMAIL_HTML_ATTRIBUTES.setdefault("tr", set()).update(
+    {"bgcolor", "align", "valign", "style"}
+)
+_EMAIL_HTML_ATTRIBUTES.setdefault("img", set()).update({"style", "border"})
+_EMAIL_HTML_ATTRIBUTES.setdefault("a", set()).update({"style", "class"})
+_EMAIL_HTML_ATTRIBUTES["font"] = {"face", "size", "color", "style"}
+
+#: Inline CSS allowlist. Omits `position`, `top`/`left`/`right`/`bottom`,
+#: `z-index`, `expression`, `behavior` so overlay/script CSS cannot survive.
+_EMAIL_STYLE_PROPERTIES: frozenset[str] = frozenset(
+    {
+        "background",
+        "background-color",
+        "background-image",
+        "background-position",
+        "background-repeat",
+        "background-size",
+        "border",
+        "border-bottom",
+        "border-collapse",
+        "border-color",
+        "border-left",
+        "border-right",
+        "border-spacing",
+        "border-style",
+        "border-top",
+        "border-width",
+        "box-sizing",
+        "color",
+        "display",
+        "font",
+        "font-family",
+        "font-size",
+        "font-style",
+        "font-variant",
+        "font-weight",
+        "height",
+        "letter-spacing",
+        "line-height",
+        "list-style",
+        "list-style-type",
+        "margin",
+        "margin-bottom",
+        "margin-left",
+        "margin-right",
+        "margin-top",
+        "max-height",
+        "max-width",
+        "min-height",
+        "min-width",
+        "opacity",
+        "overflow",
+        "overflow-x",
+        "overflow-y",
+        "padding",
+        "padding-bottom",
+        "padding-left",
+        "padding-right",
+        "padding-top",
+        "table-layout",
+        "text-align",
+        "text-decoration",
+        "text-indent",
+        "text-transform",
+        "vertical-align",
+        "white-space",
+        "width",
+    }
+)
+
+
+#: Tags removed with inner content (REQ-019). Includes nh3 defaults
+#: (`script`, `style`) plus unwrap-leak wrappers. Must not overlap
+#: `_EMAIL_HTML_TAGS` (ammonia panics if a tag is in both).
+_EMAIL_CLEAN_CONTENT_TAGS: frozenset[str] = frozenset(
+    {"script", "style", "title", "noscript", "textarea", "xmp"}
+)
+
+
+def sanitize_body_html(raw_html: str) -> str:
+    """Sanitize email HTML at ingest: keep presentation, strip active content.
+
+    Called from `_parse_message` before persist (Decision 3) and from SMTP
+    send via the same function. Uses an email-aware nh3 allowlist (REQ-018)
+    instead of default `nh3.clean()`, which dropped `style`/`class`/table
+    layout. Does not allow `<style>` elements. Non-body tags in
+    `_EMAIL_CLEAN_CONTENT_TAGS` are removed with their content (REQ-019).
     """
-    return nh3.clean(raw_html)
+    return nh3.clean(
+        raw_html,
+        tags=_EMAIL_HTML_TAGS,
+        attributes=_EMAIL_HTML_ATTRIBUTES,
+        filter_style_properties=_EMAIL_STYLE_PROPERTIES,
+        clean_content_tags=_EMAIL_CLEAN_CONTENT_TAGS,
+    )
 
 
 #: Teto por poll — evita que um catch-up de milhares de UIDs trave o

@@ -11,25 +11,19 @@
  *   - account filter ("all accounts" / one specific account_id);
  *   - paginated email list scoped by folder + account, full width (no
  *     split pane — email-inbox-ux-improvements REQ-009);
- *   - detail modal that calls `getEmail` (sanitized HTML — design
- *     Decision 3, `nh3` at ingest; the API never returns unsanitized
- *     HTML). HTML bodies render in `EmailHtmlBody` (sandboxed `srcDoc`
- *     iframe); plain text stays a `<pre>` in the dialog. The detail
- *     DialogContent is `sm:max-w-4xl` with sticky chrome (`shrink-0`)
- *     and a `flex-1 min-h-0` body pane (REQ-015). Closes by clearing
- *     the selection;
- *   - mark read/unread + move folder via `updateEmail`;
+ *   - row/card activation navigates to `/email/{id}` with `folder`,
+ *     `account`, and `q` query params (email-detail-full-page REQ-009 /
+ *     REQ-017). List filters are synced onto `/email` search params
+ *     without dropping extras such as `gmail_connected`;
  *   - search via `searchEmails` (REQs REQ-003 + REQ-002 of inbox).
  *
- * Mirrors the CRM's hand-rolled `<table>` pattern (design note: no
- * data-table library added). Reply/Forward buttons render `ComposeDialog`
- * with a pre-fill owned by `task-frontend-4`; this panel only surfaces the
- * action stubs.
+ * Reading chrome, reply/forward, and move/delete live on `EmailReadView`.
+ * "Nova mensagem" still opens the page-owned `ComposeDialog` via `onCompose`.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
-  Archive,
   ChevronLeft,
   ChevronRight,
   Inbox,
@@ -37,23 +31,10 @@ import {
   MailOpen,
   Pencil,
   Search,
-  Send,
-  Star,
-  Trash2,
 } from "lucide-react";
-import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -62,19 +43,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { TooltipIconButton } from "@/components/ui/tooltip-icon-button";
 import { ApiError } from "@/lib/api";
 import {
-  getEmail,
   listEmails,
   searchEmails,
-  updateEmail,
   type Email,
   type EmailAccount,
 } from "@/lib/email";
 
 import type { ComposePrefill } from "./ComposeDialog";
-import { EmailHtmlBody } from "./EmailHtmlBody";
 
 const STANDARD_FOLDERS = ["Inbox", "Sent", "Drafts", "Trash", "Spam"] as const;
 type StandardFolder = (typeof STANDARD_FOLDERS)[number];
@@ -110,6 +87,26 @@ function formatReceivedAt(iso: string): string {
   return date.toLocaleString();
 }
 
+function folderFromSearch(value: string | null): FolderName {
+  return value && value.length > 0 ? value : "Inbox";
+}
+
+/** Merge list-context filters into the current `/email` query, preserving extras such as `gmail_connected`. */
+function mergeListSearchParams(
+  current: URLSearchParams,
+  folder: string,
+  accountId: string,
+  q: string
+): URLSearchParams {
+  const next = new URLSearchParams(current.toString());
+  next.set("folder", folder);
+  if (accountId && accountId !== "all") next.set("account", accountId);
+  else next.delete("account");
+  if (q) next.set("q", q);
+  else next.delete("q");
+  return next;
+}
+
 export interface InboxPanelProps {
   /**
    * The connected accounts, used to populate the account filter
@@ -126,11 +123,17 @@ export interface InboxPanelProps {
 }
 
 export function InboxPanel({ accounts, onCompose }: InboxPanelProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const hasAccounts = accounts.length > 0;
 
-  const [folder, setFolder] = useState<FolderName>("Inbox");
+  const [folder, setFolder] = useState<FolderName>(() =>
+    folderFromSearch(searchParams.get("folder"))
+  );
   const [customFolders, setCustomFolders] = useState<string[]>([]);
-  const [accountId, setAccountId] = useState<string>("all");
+  const [accountId, setAccountId] = useState(
+    () => searchParams.get("account") ?? "all"
+  );
   const [offset, setOffset] = useState(0);
 
   const [emails, setEmails] = useState<Email[]>([]);
@@ -138,18 +141,12 @@ export function InboxPanel({ accounts, onCompose }: InboxPanelProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedDetail, setSelectedDetail] = useState<Email | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-
-  const [searchDraft, setSearchDraft] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
+  const initialQ = searchParams.get("q")?.trim() ?? "";
+  const [searchDraft, setSearchDraft] = useState(initialQ);
+  const [searchQuery, setSearchQuery] = useState(initialQ);
   const [searchResults, setSearchResults] = useState<Email[] | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-
-  const [moveOpen, setMoveOpen] = useState(false);
-  const [moveTargetFolder, setMoveTargetFolder] = useState("Archive");
 
   const loadEmails = useCallback(async () => {
     setLoading(true);
@@ -187,114 +184,40 @@ export function InboxPanel({ accounts, onCompose }: InboxPanelProps) {
     }
   }, [folder, accountId, offset]);
 
-  // Reset paging + selection whenever the filter changes (REQ-004:
+  // Reset paging whenever the filter changes (REQ-004:
   // moving the user to a different folder starts them on the first page).
   useEffect(() => {
     setOffset(0);
-    setSelectedId(null);
-    setSelectedDetail(null);
   }, [folder, accountId]);
 
   useEffect(() => {
     loadEmails();
   }, [loadEmails]);
 
-  // REQ-002: selecting an email loads the full body (which marks it
-  // read server-side per the spec) and shows it in the detail modal.
-  const handleSelectEmail = useCallback(async (email: Email) => {
-    setSelectedId(email.id);
-    setSelectedDetail(null);
-    setDetailLoading(true);
-    try {
-      const fresh = await getEmail(email.id);
-      setSelectedDetail(fresh);
-      // Optimistically reflect the read state in the list — the backend
-      // already flipped `is_read=true`, but the cached row in `emails`
-      // still shows `is_read=false` until the next list refresh.
-      setEmails((prev) =>
-        prev.map((e) =>
-          e.id === fresh.id ? { ...e, is_read: fresh.is_read } : e
-        )
-      );
-    } catch (err) {
-      setError(errMessage(err));
-      setSelectedId(null);
-    } finally {
-      setDetailLoading(false);
-    }
-  }, []);
-
-  const handleToggleRead = useCallback(
-    async (email: Email) => {
-      try {
-        const updated = await updateEmail(email.id, {
-          is_read: !email.is_read,
-        });
-        setEmails((prev) =>
-          prev.map((e) => (e.id === updated.id ? updated : e))
-        );
-        if (selectedDetail?.id === updated.id) {
-          setSelectedDetail(updated);
-        }
-      } catch (err) {
-        toast.error(errMessage(err));
-      }
-    },
-    [selectedDetail]
-  );
-
-  const handleAskMove = useCallback(() => {
-    if (!selectedDetail) return;
-    setMoveTargetFolder(
-      selectedDetail.folder === "Inbox" ? "Archive" : "Inbox"
+  useEffect(() => {
+    const next = mergeListSearchParams(
+      new URLSearchParams(searchParams.toString()),
+      folder,
+      accountId,
+      searchQuery
     );
-    setMoveOpen(true);
-  }, [selectedDetail]);
+    if (next.toString() === searchParams.toString()) return;
+    const qs = next.toString();
+    router.replace(qs ? `/email?${qs}` : "/email");
+  }, [folder, accountId, searchQuery, router, searchParams]);
 
-  const handleConfirmMove = useCallback(async () => {
-    if (!selectedDetail) return;
-    const destination = moveTargetFolder.trim();
-    if (!destination) {
-      toast.error("Pasta de destino inválida");
-      return;
-    }
-    try {
-      const updated = await updateEmail(selectedDetail.id, {
-        folder: destination,
-      });
-      // REQ-004 / task acceptance: if the user is viewing the destination
-      // folder the move should be reflected immediately; if they're
-      // viewing the source folder the email should disappear from view.
-      setEmails((prev) =>
-        destination === folder
-          ? [...prev, updated]
-          : prev.filter((e) => e.id !== updated.id)
-      );
-      setSelectedDetail(updated);
-      setSelectedId(null);
-      setMoveOpen(false);
-      toast.success(`Movido para ${folderLabel(destination)}`);
-    } catch (err) {
-      toast.error(errMessage(err));
-    }
-  }, [selectedDetail, moveTargetFolder, folder]);
-
-  const handleDelete = useCallback(async () => {
-    if (!selectedDetail) return;
-    try {
-      const updated = await updateEmail(selectedDetail.id, { folder: "Trash" });
-      setEmails((prev) =>
-        folder === "Trash"
-          ? prev.map((e) => (e.id === updated.id ? updated : e))
-          : prev.filter((e) => e.id !== updated.id)
-      );
-      setSelectedDetail(updated);
-      setSelectedId(null);
-      toast.success("Movido para Lixeira");
-    } catch (err) {
-      toast.error(errMessage(err));
-    }
-  }, [selectedDetail, folder]);
+  // REQ-009: activating a row/card navigates to the reading page.
+  const handleOpenEmail = useCallback(
+    (email: Email) => {
+      const params = new URLSearchParams();
+      params.set("folder", folder);
+      if (accountId !== "all") params.set("account", accountId);
+      if (searchQuery) params.set("q", searchQuery);
+      const qs = params.toString();
+      router.push(qs ? `/email/${email.id}?${qs}` : `/email/${email.id}`);
+    },
+    [router, folder, accountId, searchQuery]
+  );
 
   // Search -------------------------------------------------------------
   const searchAbortRef = useRef<AbortController | null>(null);
@@ -328,56 +251,16 @@ export function InboxPanel({ accounts, onCompose }: InboxPanelProps) {
     }
   }, [searchDraft, accountId]);
 
+  const hydratedSearch = useRef(false);
+  useEffect(() => {
+    if (hydratedSearch.current) return;
+    if (!searchQuery) return;
+    hydratedSearch.current = true;
+    void handleSearch();
+  }, [searchQuery, handleSearch]);
+
   const showSearchResults = searchResults !== null;
   const displayedEmails = showSearchResults ? searchResults ?? [] : emails;
-
-  // Compose actions (Reply / Forward) ---------------------------------
-  const handleReply = useCallback(
-    (email: Email) => {
-      const subject = email.subject ?? "";
-      const prefixed = subject.toLowerCase().startsWith("re:")
-        ? subject
-        : `Re: ${subject}`;
-      const quoted = email.body_text ?? email.body_html ?? "";
-      const prefill: ComposePrefill = {
-        account_id: email.email_account_id,
-        to_addresses: [email.from_address],
-        subject: prefixed,
-        body_text: quoted
-          ? `\n\n--- Em ${formatReceivedAt(email.received_at)} ${
-              email.from_name ?? email.from_address
-            } escreveu ---\n${quoted}`
-          : "",
-        in_reply_to: email.message_id,
-        references: email.thread_id ?? email.message_id,
-      };
-      onCompose?.(prefill);
-    },
-    [onCompose]
-  );
-
-  const handleForward = useCallback(
-    (email: Email) => {
-      const subject = email.subject ?? "";
-      const prefixed = subject.toLowerCase().startsWith("fwd:")
-        ? subject
-        : `Fwd: ${subject}`;
-      const body = email.body_text ?? email.body_html ?? "";
-      const prefill: ComposePrefill = {
-        account_id: email.email_account_id,
-        subject: prefixed,
-        body_text: body
-          ? `\n\n--- Mensagem encaminhada ---\nDe: ${
-              email.from_name ?? email.from_address
-            }\nPara: ${email.to_addresses.join(", ")}\nAssunto: ${
-              email.subject ?? ""
-            }\nData: ${formatReceivedAt(email.received_at)}\n\n${body}`
-          : "",
-      };
-      onCompose?.(prefill);
-    },
-    [onCompose]
-  );
 
   const allFolders = useMemo(
     () => [...STANDARD_FOLDERS, ...customFolders],
@@ -441,7 +324,7 @@ export function InboxPanel({ accounts, onCompose }: InboxPanelProps) {
           </SelectContent>
         </Select>
 
-        <div className="flex flex-1 flex-wrap items-center gap-2 min-w-0">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <Input
             placeholder="Buscar em remetente, assunto ou corpo…"
             value={searchDraft}
@@ -548,14 +431,12 @@ export function InboxPanel({ accounts, onCompose }: InboxPanelProps) {
                   {displayedEmails.map((email) => (
                     <tr
                       key={email.id}
-                      className={`cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-accent ${
-                        selectedId === email.id ? "bg-accent" : ""
-                      }`}
-                      onClick={() => handleSelectEmail(email)}
+                      className="cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-accent"
+                      onClick={() => handleOpenEmail(email)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          handleSelectEmail(email);
+                          handleOpenEmail(email);
                         }
                       }}
                       tabIndex={0}
@@ -590,7 +471,9 @@ export function InboxPanel({ accounts, onCompose }: InboxPanelProps) {
                       </td>
                       <td
                         className={`truncate px-3 py-2 ${
-                          email.is_read ? "text-muted-foreground" : "font-medium"
+                          email.is_read
+                            ? "text-muted-foreground"
+                            : "font-medium"
                         }`}
                       >
                         {email.subject ?? "(sem assunto)"}
@@ -626,16 +509,14 @@ export function InboxPanel({ accounts, onCompose }: InboxPanelProps) {
                   aria-label={`Abrir e-mail de ${
                     email.from_name ?? email.from_address
                   }: ${email.subject ?? "(sem assunto)"}`}
-                  onClick={() => handleSelectEmail(email)}
+                  onClick={() => handleOpenEmail(email)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      handleSelectEmail(email);
+                      handleOpenEmail(email);
                     }
                   }}
-                  className={`flex cursor-pointer flex-col gap-1 rounded-md border border-border p-3 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                    selectedId === email.id ? "bg-accent" : ""
-                  }`}
+                  className="flex cursor-pointer flex-col gap-1 rounded-md border border-border p-3 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <div className="flex items-center gap-2">
                     {email.is_read ? (
@@ -719,169 +600,6 @@ export function InboxPanel({ accounts, onCompose }: InboxPanelProps) {
           </div>
         )}
       </div>
-
-      {/* Detail dialog — REQ-009: full email detail opens as a modal;
-          closing it clears the selection so no row stays marked selected.
-          REQ-015: wider overlay (`sm:max-w-4xl`), sticky chrome, body pane
-          scrolls independently; the shared Dialog primitive is unchanged. */}
-      <Dialog
-        open={!!selectedId}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSelectedId(null);
-            setSelectedDetail(null);
-          }
-        }}
-      >
-        <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-4xl">
-          <DialogHeader className="shrink-0">
-            <DialogTitle>
-              {selectedDetail?.subject ??
-                (detailLoading ? "Carregando…" : "(sem assunto)")}
-            </DialogTitle>
-            <DialogDescription className="sr-only">
-              Detalhes do e-mail
-              {selectedDetail
-                ? ` de ${
-                    selectedDetail.from_name ?? selectedDetail.from_address
-                  }`
-                : ""}
-            </DialogDescription>
-          </DialogHeader>
-          {detailLoading && (
-            <div className="space-y-2">
-              <Skeleton className="h-4 w-1/2" />
-              <Skeleton className="h-32 w-full" />
-            </div>
-          )}
-          {selectedDetail && !detailLoading && (
-            <>
-              <div className="flex shrink-0 items-center gap-1">
-                <TooltipIconButton
-                  icon={<Mail className="h-4 w-4" />}
-                  tooltip={
-                    selectedDetail.is_read
-                      ? "Marcar como não lido"
-                      : "Marcar como lido"
-                  }
-                  onClick={() => handleToggleRead(selectedDetail)}
-                />
-                <TooltipIconButton
-                  icon={<Send className="h-4 w-4" />}
-                  tooltip="Responder"
-                  onClick={() => handleReply(selectedDetail)}
-                />
-                <TooltipIconButton
-                  icon={<Star className="h-4 w-4" />}
-                  tooltip="Encaminhar"
-                  onClick={() => handleForward(selectedDetail)}
-                />
-                <TooltipIconButton
-                  icon={<Archive className="h-4 w-4" />}
-                  tooltip="Mover para outra pasta"
-                  onClick={handleAskMove}
-                />
-                {selectedDetail.folder !== "Trash" && (
-                  <TooltipIconButton
-                    icon={<Trash2 className="h-4 w-4" />}
-                    tooltip="Excluir (mover para lixeira)"
-                    onClick={handleDelete}
-                  />
-                )}
-              </div>
-              <dl className="grid shrink-0 gap-1 text-xs text-muted-foreground">
-                <div className="flex flex-wrap items-center gap-x-2">
-                  <dt className="font-medium">De:</dt>
-                  <dd>
-                    {selectedDetail.from_name
-                      ? `${selectedDetail.from_name} <${selectedDetail.from_address}>`
-                      : selectedDetail.from_address}
-                  </dd>
-                </div>
-                {selectedDetail.to_addresses.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-x-2">
-                    <dt className="font-medium">Para:</dt>
-                    <dd>{selectedDetail.to_addresses.join(", ")}</dd>
-                  </div>
-                )}
-                {selectedDetail.cc_addresses.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-x-2">
-                    <dt className="font-medium">Cc:</dt>
-                    <dd>{selectedDetail.cc_addresses.join(", ")}</dd>
-                  </div>
-                )}
-                <div className="flex flex-wrap items-center gap-x-2">
-                  <dt className="font-medium">Data:</dt>
-                  <dd>{formatReceivedAt(selectedDetail.received_at)}</dd>
-                </div>
-                {selectedDetail.contact_id && (
-                  <div className="flex flex-wrap items-center gap-x-2">
-                    <dt className="font-medium">Contato:</dt>
-                    <dd>vinculado (#{selectedDetail.contact_id})</dd>
-                  </div>
-                )}
-              </dl>
-              <div className="min-h-0 flex-1 overflow-hidden border-t border-border pt-3">
-                {selectedDetail.body_html ? (
-                  <EmailHtmlBody html={selectedDetail.body_html} />
-                ) : (
-                  <pre className="h-full overflow-auto whitespace-pre-wrap font-sans text-sm">
-                    {selectedDetail.body_text ?? "(sem conteúdo)"}
-                  </pre>
-                )}
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Move-to dialog */}
-      <Dialog
-        open={moveOpen}
-        onOpenChange={setMoveOpen}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Mover e-mail</DialogTitle>
-            <DialogDescription>
-              Escolha a pasta de destino. O e-mail será re-renderizado
-              imediatamente na lista correspondente.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-2 py-2">
-            <Label htmlFor="move-folder">Pasta de destino</Label>
-            <Input
-              id="move-folder"
-              value={moveTargetFolder}
-              onChange={(e) => setMoveTargetFolder(e.target.value)}
-              list="folder-suggestions"
-            />
-            <datalist id="folder-suggestions">
-              {allFolders.map((f) => (
-                <option
-                  key={f}
-                  value={f}
-                />
-              ))}
-            </datalist>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setMoveOpen(false)}
-            >
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              onClick={handleConfirmMove}
-            >
-              Mover
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

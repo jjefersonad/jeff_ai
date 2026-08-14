@@ -8,7 +8,8 @@ Unit-1/2 (email-client-imap-mvp-task-sync-1):
 - `fetch_new_messages` retorna apenas mensagens com UID acima do watermark
   (REQ-005 email-account-management).
 - `sanitize_body_html` remove `<script>` e handlers inline antes de qualquer
-  persistência (REQ-002 email-inbox).
+  persistência (REQ-002), preserva apresentação HTML de e-mail (REQ-018) e
+  remove conteúdo de tags não-corpo para não vazar CSS/`<title>` (REQ-019).
 """
 from __future__ import annotations
 
@@ -264,3 +265,109 @@ async def test_sanitize_body_html_strips_script_and_event_handlers() -> None:
     assert "onclick" not in sanitized
     assert "<p>" in sanitized
     assert '<a href="https://example.com"' in sanitized
+
+
+def test_sanitize_body_html_keeps_inline_styles_and_table_layout() -> None:
+    """email-html-style-allowlist-task-sanitize-1-unit-1 (REQ-018)."""
+    raw_html = (
+        '<p class="intro" style="color:red;font-size:24px">Hello</p>'
+        '<table width="600" bgcolor="#f0f0f0" cellpadding="10" '
+        'cellspacing="0" align="center">'
+        '<tr><td valign="top" width="200">A</td></tr>'
+        "</table>"
+    )
+
+    sanitized = sanitize_body_html(raw_html)
+
+    assert 'style="color:red;font-size:24px"' in sanitized or (
+        "color:red" in sanitized and "font-size:24px" in sanitized
+    )
+    assert 'class="intro"' in sanitized
+    assert 'width="600"' in sanitized
+    assert 'bgcolor="#f0f0f0"' in sanitized
+    assert 'cellpadding="10"' in sanitized
+    assert 'valign="top"' in sanitized
+
+
+def test_sanitize_body_html_keeps_font_presentation() -> None:
+    """email-html-style-allowlist-task-sanitize-1-unit-2 (REQ-018)."""
+    raw_html = '<font face="Arial" size="3" color="#333333">Hi</font>'
+
+    sanitized = sanitize_body_html(raw_html)
+
+    assert "<font" in sanitized
+    assert 'face="Arial"' in sanitized
+    assert 'size="3"' in sanitized
+    assert 'color="#333333"' in sanitized
+
+
+def test_sanitize_body_html_still_strips_script_and_onerror() -> None:
+    """email-html-style-allowlist-task-sanitize-1-unit-3 (REQ-018 / REQ-002)."""
+    raw_html = (
+        '<p>Hi<script>alert(1)</script></p>'
+        '<img src="https://example.com/x.png" onerror="alert(1)">'
+        '<a href="https://ok.example" onclick="evil()">ok</a>'
+    )
+
+    sanitized = sanitize_body_html(raw_html)
+
+    assert "<script>" not in sanitized
+    assert "onerror" not in sanitized
+    assert "onclick" not in sanitized
+    assert "Hi" in sanitized
+    assert 'href="https://ok.example"' in sanitized
+
+
+@pytest.mark.parametrize("wrapper", ["noscript", "textarea", "xmp"])
+def test_sanitize_body_html_nested_style_does_not_leak(wrapper: str) -> None:
+    """email-html-clean-content-tags-task-sanitize-1-unit-1 (REQ-019)."""
+    css = "#interactive:checked+#rebel .ie-form{display:none!important}"
+    raw_html = f"<p>Hi</p><{wrapper}><style>{css}</style></{wrapper}><p>Bye</p>"
+
+    sanitized = sanitize_body_html(raw_html)
+
+    assert "<style>" not in sanitized.lower()
+    assert "#interactive" not in sanitized
+    assert "ie-form" not in sanitized
+    assert "&lt;style" not in sanitized.lower()
+    assert "Hi" in sanitized
+    assert "Bye" in sanitized
+
+
+def test_sanitize_body_html_title_does_not_appear_as_body_text() -> None:
+    """email-html-clean-content-tags-task-sanitize-1-unit-2 (REQ-019)."""
+    raw_html = "<title>Fatura março 2026</title><p>Olá cliente</p>"
+
+    sanitized = sanitize_body_html(raw_html)
+
+    assert "<p>Olá cliente</p>" in sanitized
+    assert "Fatura março 2026" not in sanitized
+
+
+def test_sanitize_body_html_top_level_style_removed_with_content() -> None:
+    """email-html-clean-content-tags-task-sanitize-1-unit-3 (REQ-019)."""
+    raw_html = "<style>body{color:red}</style><p>Hello</p>"
+
+    sanitized = sanitize_body_html(raw_html)
+
+    assert "<p>Hello</p>" in sanitized
+    assert "body{color:red}" not in sanitized
+    assert "<style>" not in sanitized.lower()
+
+
+def test_sanitize_body_html_strips_dangerous_css_and_javascript_href() -> None:
+    """email-html-style-allowlist-task-sanitize-1-unit-4 (REQ-018)."""
+    raw_html = (
+        '<p style="color:red;position:fixed;expression:alert(1);'
+        "background:url(javascript:alert(1))\">Hello</p>"
+        '<a href="javascript:alert(1)">bad</a>'
+        '<a href="https://ok.example" style="color:#fff">ok</a>'
+    )
+
+    sanitized = sanitize_body_html(raw_html)
+
+    assert "position" not in sanitized
+    assert "expression" not in sanitized
+    assert "javascript:" not in sanitized
+    assert "color:red" in sanitized
+    assert 'href="https://ok.example"' in sanitized

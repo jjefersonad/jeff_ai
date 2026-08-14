@@ -16,7 +16,6 @@ const SANDBOX = "allow-popups allow-popups-to-escape-sandbox";
 const WRAPPER_STYLE = [
   "html,body{margin:0;background:#fff;color:#111;}",
   "img{max-width:100%;height:auto;}",
-  "table{max-width:100%;}",
   "body{overflow:auto;}",
 ].join("");
 

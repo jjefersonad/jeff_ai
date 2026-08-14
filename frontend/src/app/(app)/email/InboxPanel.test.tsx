@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { InboxPanel } from "./InboxPanel";
@@ -9,9 +9,19 @@ const mockListEmails = vi.fn();
 const mockSearchEmails = vi.fn();
 const mockGetEmail = vi.fn();
 const mockUpdateEmail = vi.fn();
+const mockPush = vi.fn();
+const mockReplace = vi.fn();
+let mockSearchParams = new URLSearchParams();
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockPush, replace: mockReplace }),
+  useSearchParams: () => mockSearchParams,
+}));
 
 vi.mock("@/lib/email", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/email")>("@/lib/email");
+  const actual = await vi.importActual<typeof import("@/lib/email")>(
+    "@/lib/email"
+  );
   return {
     ...actual,
     listEmails: (...args: unknown[]) => mockListEmails(...args),
@@ -65,6 +75,12 @@ const account: EmailAccount = {
   updated_at: "2026-08-01T00:00:00Z",
 };
 
+beforeEach(() => {
+  mockPush.mockReset();
+  mockReplace.mockReset();
+  mockSearchParams = new URLSearchParams();
+});
+
 describe("InboxPanel toolbar (email-inbox-ux-improvements-task-toolbar-1 unit-1/unit-2 / REQ-007)", () => {
   beforeEach(() => {
     mockListEmails.mockReset();
@@ -76,10 +92,17 @@ describe("InboxPanel toolbar (email-inbox-ux-improvements-task-toolbar-1 unit-1/
 
   it("unit-1: renders 'Nova mensagem' next to 'Buscar' and calls onCompose with no prefill when clicked", async () => {
     const onCompose = vi.fn();
-    render(<InboxPanel accounts={[account]} onCompose={onCompose} />);
+    render(
+      <InboxPanel
+        accounts={[account]}
+        onCompose={onCompose}
+      />
+    );
 
     const searchButton = await screen.findByRole("button", { name: /buscar/i });
-    const composeButton = screen.getByRole("button", { name: /nova mensagem/i });
+    const composeButton = screen.getByRole("button", {
+      name: /nova mensagem/i,
+    });
 
     expect(searchButton.parentElement).toBe(composeButton.parentElement);
 
@@ -89,9 +112,16 @@ describe("InboxPanel toolbar (email-inbox-ux-improvements-task-toolbar-1 unit-1/
   });
 
   it("unit-2: 'Nova mensagem' is disabled when accounts is empty", async () => {
-    render(<InboxPanel accounts={[]} onCompose={vi.fn()} />);
+    render(
+      <InboxPanel
+        accounts={[]}
+        onCompose={vi.fn()}
+      />
+    );
 
-    const composeButton = await screen.findByRole("button", { name: /nova mensagem/i });
+    const composeButton = await screen.findByRole("button", {
+      name: /nova mensagem/i,
+    });
     expect(composeButton).toBeDisabled();
   });
 });
@@ -131,44 +161,81 @@ describe("InboxPanel list columns (email-inbox-ux-improvements-task-list-1 unit-
 
   it("unit-1: unread row's Status column shows the closed-envelope (Mail) icon", async () => {
     mockListEmails.mockResolvedValue([emailFor("e1", { is_read: false })]);
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+    render(
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
+    );
 
     // The table row and the mobile card both have role="button" and
     // an aria-label containing the subject; disambiguate by tag.
-    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
+    const rows = await screen.findAllByRole("button", {
+      name: /assunto de teste/i,
+    });
     const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
-    expect(within(row).getByRole("img", { name: "Não lido" })).toBeInTheDocument();
-    expect(within(row).queryByRole("img", { name: "Lido" })).not.toBeInTheDocument();
+    expect(
+      within(row).getByRole("img", { name: "Não lido" })
+    ).toBeInTheDocument();
+    expect(
+      within(row).queryByRole("img", { name: "Lido" })
+    ).not.toBeInTheDocument();
   });
 
   it("unit-2: read row's Status column shows the open-envelope (MailOpen) icon", async () => {
     mockListEmails.mockResolvedValue([emailFor("e1", { is_read: true })]);
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+    render(
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
+    );
 
-    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
+    const rows = await screen.findAllByRole("button", {
+      name: /assunto de teste/i,
+    });
     const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
     expect(within(row).getByRole("img", { name: "Lido" })).toBeInTheDocument();
-    expect(within(row).queryByRole("img", { name: "Não lido" })).not.toBeInTheDocument();
+    expect(
+      within(row).queryByRole("img", { name: "Não lido" })
+    ).not.toBeInTheDocument();
   });
 
   it("unit-3: Nome/email column falls back to from_address when from_name is null", async () => {
     mockListEmails.mockResolvedValue([
       emailFor("e1", { from_name: null, from_address: "no-name@example.com" }),
     ]);
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+    render(
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
+    );
 
-    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
+    const rows = await screen.findAllByRole("button", {
+      name: /assunto de teste/i,
+    });
     const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
     expect(within(row).getByText("no-name@example.com")).toBeInTheDocument();
   });
 
   it("unit-4: Nome/email column shows from_name when known", async () => {
     mockListEmails.mockResolvedValue([
-      emailFor("e1", { from_name: "Ana Silva", from_address: "ana@example.com" }),
+      emailFor("e1", {
+        from_name: "Ana Silva",
+        from_address: "ana@example.com",
+      }),
     ]);
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+    render(
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
+    );
 
-    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
+    const rows = await screen.findAllByRole("button", {
+      name: /assunto de teste/i,
+    });
     const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
     expect(within(row).getByText("Ana Silva")).toBeInTheDocument();
     expect(within(row).queryByText("ana@example.com")).not.toBeInTheDocument();
@@ -176,17 +243,26 @@ describe("InboxPanel list columns (email-inbox-ux-improvements-task-list-1 unit-
 
   it("unit-5: Data column shows a formatted date and time for received_at", async () => {
     const receivedAt = "2026-08-11T14:30:00Z";
-    mockListEmails.mockResolvedValue([emailFor("e1", { received_at: receivedAt })]);
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+    mockListEmails.mockResolvedValue([
+      emailFor("e1", { received_at: receivedAt }),
+    ]);
+    render(
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
+    );
 
     const expected = new Date(receivedAt).toLocaleString();
-    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
+    const rows = await screen.findAllByRole("button", {
+      name: /assunto de teste/i,
+    });
     const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
     expect(within(row).getByText(expected)).toBeInTheDocument();
   });
 });
 
-describe("InboxPanel detail modal (email-inbox-ux-improvements-task-modal-1 unit-1..3 / REQ-009)", () => {
+describe("InboxPanel list layout (email-inbox-ux-improvements-task-modal-1 unit-2 / REQ-009)", () => {
   beforeEach(() => {
     mockListEmails.mockReset();
     mockSearchEmails.mockReset();
@@ -194,108 +270,24 @@ describe("InboxPanel detail modal (email-inbox-ux-improvements-task-modal-1 unit
     mockUpdateEmail.mockReset();
   });
 
-  it("unit-1: clicking a row opens the detail modal with that email's subject and body", async () => {
-    const email = emailFor("e1", {
-      subject: "Assunto do email",
-      body_text: "Corpo completo do email",
-    });
-    mockListEmails.mockResolvedValue([email]);
-    mockGetEmail.mockResolvedValue(email);
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
-
-    const rows = await screen.findAllByRole("button", { name: /assunto do email/i });
-    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
-    await userEvent.click(row);
-
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Assunto do email")).toBeInTheDocument();
-    expect(within(dialog).getByText("Corpo completo do email")).toBeInTheDocument();
-  });
-
-  it("unit-2: with no modal open, the list has no split-pane grid wrapper and no read-pane markup", async () => {
+  it("unit-2: with no reading page open, the list has no split-pane grid wrapper and no read-pane markup", async () => {
     mockListEmails.mockResolvedValue([emailFor("e1")]);
-    const { container } = render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+    const { container } = render(
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
+    );
 
     await screen.findAllByRole("button", { name: /assunto de teste/i });
 
-    expect(container.querySelector('[class*="grid-cols-[2fr_3fr]"]')).toBeNull();
-    expect(screen.queryByText("Selecione um e-mail para ler.")).not.toBeInTheDocument();
+    expect(
+      container.querySelector('[class*="grid-cols-[2fr_3fr]"]')
+    ).toBeNull();
+    expect(
+      screen.queryByText("Selecione um e-mail para ler.")
+    ).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  });
-
-  it("unit-3: closing the modal clears the selection and leaves no row marked selected", async () => {
-    const email = emailFor("e1");
-    mockListEmails.mockResolvedValue([email]);
-    mockGetEmail.mockResolvedValue(email);
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
-
-    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
-    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
-    await userEvent.click(row);
-    await screen.findByRole("dialog");
-
-    await userEvent.click(screen.getByRole("button", { name: /close/i }));
-
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    const rowsAfterClose = screen.getAllByRole("button", { name: /assunto de teste/i });
-    const rowAfterClose = rowsAfterClose.find((el) => el.tagName === "TR") as HTMLElement;
-    expect(rowAfterClose.className.split(" ")).not.toContain("bg-accent");
-  });
-});
-
-describe("InboxPanel detail action tooltips (email-inbox-ux-improvements-task-tooltips-1 unit-1/unit-2 / REQ-010)", () => {
-  beforeEach(() => {
-    mockListEmails.mockReset();
-    mockSearchEmails.mockReset();
-    mockGetEmail.mockReset();
-    mockUpdateEmail.mockReset();
-  });
-
-  async function openDetailModal(extras: Partial<Email> = {}) {
-    const email = emailFor("e1", extras);
-    mockListEmails.mockResolvedValue([email]);
-    mockGetEmail.mockResolvedValue(email);
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
-
-    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
-    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
-    await userEvent.click(row);
-    await screen.findByRole("dialog");
-  }
-
-  it("unit-1: hovering each of the 5 detail action buttons shows a tooltip with the expected text", async () => {
-    await openDetailModal({ is_read: false });
-
-    const expectedTooltips = [
-      "Marcar como lido",
-      "Responder",
-      "Encaminhar",
-      "Mover para outra pasta",
-      "Excluir (mover para lixeira)",
-    ];
-
-    for (const name of expectedTooltips) {
-      const button = screen.getByRole("button", { name });
-      await userEvent.hover(button);
-      expect(await screen.findByRole("tooltip", { name })).toBeInTheDocument();
-    }
-  });
-
-  it("unit-2: each detail action button's aria-label matches its tooltip text", async () => {
-    await openDetailModal({ is_read: false });
-
-    const expectedTooltips = [
-      "Marcar como lido",
-      "Responder",
-      "Encaminhar",
-      "Mover para outra pasta",
-      "Excluir (mover para lixeira)",
-    ];
-
-    for (const name of expectedTooltips) {
-      const button = screen.getByRole("button", { name });
-      expect(button).toHaveAttribute("aria-label", name);
-    }
   });
 });
 
@@ -343,7 +335,10 @@ describe("InboxPanel responsive list (email-inbox-responsiveness-task-breakpoint
     ]);
 
     const { container } = render(
-      <InboxPanel accounts={[account]} onCompose={vi.fn()} />,
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
     );
 
     // Wait for the list to render the card (listEmails is async).
@@ -355,11 +350,17 @@ describe("InboxPanel responsive list (email-inbox-responsiveness-task-breakpoint
     const card = cards[0];
     // Four data points:
     // (a) Status icon — Mail (closed envelope) for unread.
-    expect(within(card as HTMLElement).getByRole("img", { name: "Não lido" })).toBeInTheDocument();
+    expect(
+      within(card as HTMLElement).getByRole("img", { name: "Não lido" })
+    ).toBeInTheDocument();
     // (b) Sender (from_name).
-    expect(within(card as HTMLElement).getByText("Ana Silva")).toBeInTheDocument();
+    expect(
+      within(card as HTMLElement).getByText("Ana Silva")
+    ).toBeInTheDocument();
     // (c) Subject.
-    expect(within(card as HTMLElement).getByText("Assunto de teste")).toBeInTheDocument();
+    expect(
+      within(card as HTMLElement).getByText("Assunto de teste")
+    ).toBeInTheDocument();
     // (d) Date+time (locale-formatted).
     expect(within(card as HTMLElement).getByText(expected)).toBeInTheDocument();
   });
@@ -369,7 +370,10 @@ describe("InboxPanel responsive list (email-inbox-responsiveness-task-breakpoint
     mockListEmails.mockResolvedValue([emailFor("e1")]);
 
     const { container } = render(
-      <InboxPanel accounts={[account]} onCompose={vi.fn()} />,
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
     );
     await screen.findAllByRole("button", { name: /assunto de teste/i });
 
@@ -381,32 +385,39 @@ describe("InboxPanel responsive list (email-inbox-responsiveness-task-breakpoint
     expect(tableWrapper.className).toMatch(/\bhidden\b/);
     expect(tableWrapper.className).toMatch(/\bmd:block\b/);
 
-    const cardList = container.querySelector('[data-testid="email-card"]')?.parentElement;
+    const cardList = container.querySelector(
+      '[data-testid="email-card"]'
+    )?.parentElement;
     expect(cardList).not.toBeNull();
     expect((cardList as HTMLElement).className).toMatch(/\bmd:hidden\b/);
   });
 
-  it("unit-3: mobile card is keyboard-activatable (Enter and Space open the detail modal)", async () => {
+  it("unit-3: mobile card is keyboard-activatable (Enter and Space navigate to the reading page)", async () => {
     installMatchMedia(false);
     const email = emailFor("e1", { subject: "Assunto de teste" });
     mockListEmails.mockResolvedValue([email]);
-    mockGetEmail.mockResolvedValue(email);
 
     const user = userEvent.setup();
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+    render(
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
+    );
 
     const card = (await screen.findByTestId("email-card")) as HTMLElement;
     card.focus();
-    // Enter
     await user.keyboard("{Enter}");
-    expect(await screen.findByRole("dialog")).toBeInTheDocument();
-    // Close
-    await user.click(screen.getByRole("button", { name: /close/i }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    // Space
+    expect(mockPush).toHaveBeenCalled();
+    expect(String(mockPush.mock.calls[0][0])).toMatch(/^\/email\/e1(\?|$)/);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    mockPush.mockClear();
     card.focus();
     await user.keyboard(" ");
-    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(mockPush).toHaveBeenCalled();
+    expect(String(mockPush.mock.calls[0][0])).toMatch(/^\/email\/e1(\?|$)/);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("unit-4: mobile card's aria-label is distinct from the desktop row's, so role-based queries don't throw 'multiple matches'", async () => {
@@ -414,195 +425,54 @@ describe("InboxPanel responsive list (email-inbox-responsiveness-task-breakpoint
     mockListEmails.mockResolvedValue([emailFor("e1")]);
 
     const { container } = render(
-      <InboxPanel accounts={[account]} onCompose={vi.fn()} />,
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
     );
     await screen.findByTestId("email-card");
 
-    const card = container.querySelector('[data-testid="email-card"]') as HTMLElement;
+    const card = container.querySelector(
+      '[data-testid="email-card"]'
+    ) as HTMLElement;
     const cardLabel = card.getAttribute("aria-label");
     // The card MUST have its own aria-label distinct from the desktop row.
     expect(cardLabel).toBeTruthy();
     expect(cardLabel).toMatch(/Abrir e-mail/i);
 
     // The desktop row still uses the previous label.
-    const row = container.querySelector('tr[role="button"]') as HTMLElement | null;
+    const row = container.querySelector(
+      'tr[role="button"]'
+    ) as HTMLElement | null;
     if (row) {
       expect(row.getAttribute("aria-label")).not.toBe(cardLabel);
     }
   });
 });
 
-// ---------------------------------------------------------------------------
-// email-send-html-only-by-default — read view with nullable body_text
-// (task-inbox-1 / REQ-007)
-// ---------------------------------------------------------------------------
-describe("InboxPanel detail body (email-send-html-only-by-default-task-inbox-1 / REQ-007)", () => {
+describe("InboxPanel list layout (melhorar-visualizacao-de-emails-task-inbox-2 unit-3 / REQ-015)", () => {
   beforeEach(() => {
     mockListEmails.mockReset();
     mockSearchEmails.mockReset();
     mockGetEmail.mockReset();
     mockUpdateEmail.mockReset();
-  });
-
-  it("unit-1: renders sanitized HTML when body_text is null (no empty/placeholder body)", async () => {
-    const email = emailFor("e1", {
-      body_text: null,
-      body_html: "<p>Hi there</p>",
-    });
-    mockListEmails.mockResolvedValue([email]);
-    mockGetEmail.mockResolvedValue(email);
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
-
-    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
-    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
-    await userEvent.click(row);
-
-    const dialog = await screen.findByRole("dialog");
-    const iframe = within(dialog).getByTitle("Corpo do e-mail");
-    const srcDoc =
-      iframe.getAttribute("srcDoc") ?? iframe.getAttribute("srcdoc") ?? "";
-    expect(srcDoc).toContain("Hi there");
-    expect(within(dialog).queryByText("(sem conteúdo)")).not.toBeInTheDocument();
-  });
-
-  it("unit-2: prefers HTML body when both body_text and body_html are present", async () => {
-    const email = emailFor("e1", {
-      body_text: "PLAIN_ONLY_MARKER",
-      body_html: "<p>HTML_ONLY_MARKER</p>",
-    });
-    mockListEmails.mockResolvedValue([email]);
-    mockGetEmail.mockResolvedValue(email);
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
-
-    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
-    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
-    await userEvent.click(row);
-
-    const dialog = await screen.findByRole("dialog");
-    const iframe = within(dialog).getByTitle("Corpo do e-mail");
-    const srcDoc =
-      iframe.getAttribute("srcDoc") ?? iframe.getAttribute("srcdoc") ?? "";
-    expect(srcDoc).toContain("HTML_ONLY_MARKER");
-    expect(within(dialog).queryByText("PLAIN_ONLY_MARKER")).not.toBeInTheDocument();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// melhorar-visualizacao-de-emails — isolated HTML body in the detail dialog
-// (task-inbox-1 / REQ-014 + REQ-013 rewrite)
-// ---------------------------------------------------------------------------
-describe("InboxPanel isolated HTML body (melhorar-visualizacao-de-emails-task-inbox-1)", () => {
-  beforeEach(() => {
-    mockListEmails.mockReset();
-    mockSearchEmails.mockReset();
-    mockGetEmail.mockReset();
-    mockUpdateEmail.mockReset();
-  });
-
-  it("unit-1: detail view renders HTML via isolated iframe", async () => {
-    const email = emailFor("e1", {
-      body_html: "<p>ISOLATED_HTML_MARKER</p>",
-      body_text: "plain",
-    });
-    mockListEmails.mockResolvedValue([email]);
-    mockGetEmail.mockResolvedValue(email);
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
-
-    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
-    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
-    await userEvent.click(row);
-
-    const dialog = await screen.findByRole("dialog");
-    const iframe = within(dialog).getByTitle("Corpo do e-mail");
-    expect(iframe.tagName).toBe("IFRAME");
-    const srcDoc =
-      iframe.getAttribute("srcDoc") ?? iframe.getAttribute("srcdoc") ?? "";
-    expect(srcDoc).toContain("ISOLATED_HTML_MARKER");
-  });
-
-  it("unit-2: plain-text fallback has no iframe", async () => {
-    const email = emailFor("e1", {
-      body_html: null,
-      body_text: "PLAIN_FALLBACK_MARKER",
-    });
-    mockListEmails.mockResolvedValue([email]);
-    mockGetEmail.mockResolvedValue(email);
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
-
-    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
-    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
-    await userEvent.click(row);
-
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("PLAIN_FALLBACK_MARKER")).toBeInTheDocument();
-    expect(within(dialog).queryByTitle("Corpo do e-mail")).not.toBeInTheDocument();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// melhorar-visualizacao-de-emails — wider modal + sticky chrome
-// (task-inbox-2 / REQ-015)
-// ---------------------------------------------------------------------------
-describe("InboxPanel detail modal layout (melhorar-visualizacao-de-emails-task-inbox-2)", () => {
-  beforeEach(() => {
-    mockListEmails.mockReset();
-    mockSearchEmails.mockReset();
-    mockGetEmail.mockReset();
-    mockUpdateEmail.mockReset();
-  });
-
-  it("unit-1: detail DialogContent is sm:max-w-4xl not sm:max-w-2xl", async () => {
-    const email = emailFor("e1");
-    mockListEmails.mockResolvedValue([email]);
-    mockGetEmail.mockResolvedValue(email);
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
-
-    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
-    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
-    await userEvent.click(row);
-
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog.className).toMatch(/\bsm:max-w-4xl\b/);
-    expect(dialog.className).not.toMatch(/\bsm:max-w-2xl\b/);
-  });
-
-  it("unit-2: sticky chrome vs scrolling body class contract", async () => {
-    const email = emailFor("e1");
-    mockListEmails.mockResolvedValue([email]);
-    mockGetEmail.mockResolvedValue(email);
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
-
-    const rows = await screen.findAllByRole("button", { name: /assunto de teste/i });
-    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
-    await userEvent.click(row);
-
-    const dialog = await screen.findByRole("dialog");
-    expect(dialog.className).toMatch(/\bflex\b/);
-    expect(dialog.className).toMatch(/\bflex-col\b/);
-    expect(dialog.className).toMatch(/\boverflow-hidden\b/);
-
-    const header = dialog.querySelector('[data-slot="dialog-header"]') as HTMLElement;
-    expect(header.className).toMatch(/\bshrink-0\b/);
-
-    const meta = dialog.querySelector("dl") as HTMLElement;
-    expect(meta.className).toMatch(/\bshrink-0\b/);
-
-    const actions = meta.previousElementSibling as HTMLElement;
-    expect(actions.className).toMatch(/\bshrink-0\b/);
-
-    const body = meta.nextElementSibling as HTMLElement;
-    expect(body.className).toMatch(/\bmin-h-0\b/);
-    expect(body.className).toMatch(/\bflex-1\b/);
   });
 
   it("unit-3: with no email open, the list is not a split-pane grid", async () => {
     mockListEmails.mockResolvedValue([emailFor("e1")]);
-    const { container } = render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+    const { container } = render(
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
+    );
 
     await screen.findAllByRole("button", { name: /assunto de teste/i });
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(container.querySelector('[class*="grid-cols-[2fr_3fr]"]')).toBeNull();
+    expect(
+      container.querySelector('[class*="grid-cols-[2fr_3fr]"]')
+    ).toBeNull();
     expect(container.querySelector('[class*="grid-cols-[1fr_"]')).toBeNull();
   });
 });
@@ -628,7 +498,12 @@ describe("InboxPanel responsive toolbar (email-inbox-responsiveness-task-toolbar
   });
 
   it("unit-1: 'Nova mensagem' button carries w-full (xs) and sm:w-auto (sm+) so it does not push itself off-screen at 375px", async () => {
-    render(<InboxPanel accounts={[account]} onCompose={vi.fn()} />);
+    render(
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
+    );
     const composeButton = await screen.findByRole("button", {
       name: /nova mensagem/i,
     });
@@ -641,14 +516,19 @@ describe("InboxPanel responsive toolbar (email-inbox-responsiveness-task-toolbar
 
   it("unit-2: the inner toolbar group allows wrapping (flex-wrap, min-w-0) and the search input carries min-w-0 with a bounded width", async () => {
     const { container } = render(
-      <InboxPanel accounts={[account]} onCompose={vi.fn()} />,
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
     );
     await screen.findByRole("button", { name: /buscar/i });
 
     // The search input's <Input> component renders a real <input>. The
     // inner toolbar group is the parent <div> containing the search
     // input and the Buscar button.
-    const searchInput = screen.getByLabelText(/buscar e-mails/i) as HTMLInputElement;
+    const searchInput = screen.getByLabelText(
+      /buscar e-mails/i
+    ) as HTMLInputElement;
     // min-w-0 lets the input shrink inside its flex parent; the previous
     // max-w-sm forced horizontal overflow at 375px, so the test asserts
     // a bounded-width class (w-64 or w-full, etc.) is in use instead.
@@ -665,5 +545,131 @@ describe("InboxPanel responsive toolbar (email-inbox-responsiveness-task-toolbar
     // Container variable intentionally unused but kept for symmetry with
     // the visual review checklist.
     void container;
+  });
+});
+
+describe("InboxPanel navigation (email-detail-full-page-task-inbox-1)", () => {
+  let originalMatchMedia: typeof window.matchMedia | undefined;
+
+  beforeEach(() => {
+    mockListEmails.mockReset();
+    mockSearchEmails.mockReset();
+    mockGetEmail.mockReset();
+    mockUpdateEmail.mockReset();
+    originalMatchMedia = window.matchMedia;
+  });
+
+  afterEach(() => {
+    if (originalMatchMedia === undefined) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      delete (window as any).matchMedia;
+    } else {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        writable: true,
+        value: originalMatchMedia,
+      });
+    }
+  });
+
+  it("unit-1: row click navigates and does not open a detail Dialog", async () => {
+    const email = emailFor("e1", {
+      subject: "Assunto do email",
+      body_text: "Corpo completo do email",
+    });
+    mockListEmails.mockResolvedValue([email]);
+    render(
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
+    );
+
+    const rows = await screen.findAllByRole("button", {
+      name: /assunto do email/i,
+    });
+    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
+    await userEvent.click(row);
+
+    expect(mockPush).toHaveBeenCalled();
+    const href = String(mockPush.mock.calls[0][0]);
+    expect(href).toMatch(/^\/email\/e1(\?|$)/);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Corpo completo do email")
+    ).not.toBeInTheDocument();
+  });
+
+  it("unit-2: list is full width with no split pane or detail dialog", async () => {
+    mockListEmails.mockResolvedValue([emailFor("e1")]);
+    const { container } = render(
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
+    );
+
+    await screen.findAllByRole("button", { name: /assunto de teste/i });
+
+    expect(container.innerHTML).not.toMatch(/grid-cols-\[2fr_3fr\]/);
+    expect(
+      screen.queryByText("Selecione um e-mail para ler.")
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByTitle("Corpo do e-mail")).not.toBeInTheDocument();
+  });
+
+  it("unit-3: mobile card Enter/Space navigates to reading page", async () => {
+    installMatchMedia(false);
+    const email = emailFor("e1", { subject: "Assunto de teste" });
+    mockListEmails.mockResolvedValue([email]);
+
+    const user = userEvent.setup();
+    render(
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
+    );
+
+    const card = (await screen.findByTestId("email-card")) as HTMLElement;
+    card.focus();
+    await user.keyboard("{Enter}");
+    expect(mockPush).toHaveBeenCalled();
+    expect(String(mockPush.mock.calls[0][0])).toMatch(/^\/email\/e1(\?|$)/);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    mockPush.mockClear();
+    card.focus();
+    await user.keyboard(" ");
+    expect(mockPush).toHaveBeenCalled();
+    expect(String(mockPush.mock.calls[0][0])).toMatch(/^\/email\/e1(\?|$)/);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("unit-4: list filters are query params copied onto the reading href", async () => {
+    mockSearchParams = new URLSearchParams("folder=Sent&account=acc-1&q=hello");
+    mockListEmails.mockResolvedValue([emailFor("e1")]);
+    mockSearchEmails.mockResolvedValue([emailFor("e1")]);
+
+    render(
+      <InboxPanel
+        accounts={[account]}
+        onCompose={vi.fn()}
+      />
+    );
+
+    const rows = await screen.findAllByRole("button", {
+      name: /assunto de teste/i,
+    });
+    const row = rows.find((el) => el.tagName === "TR") as HTMLElement;
+    await userEvent.click(row);
+
+    expect(mockPush).toHaveBeenCalled();
+    const href = String(mockPush.mock.calls[0][0]);
+    const params = new URL(href, "http://localhost").searchParams;
+    expect(params.get("folder")).toBe("Sent");
+    expect(params.get("account")).toBe("acc-1");
+    expect(params.get("q")).toBe("hello");
   });
 });

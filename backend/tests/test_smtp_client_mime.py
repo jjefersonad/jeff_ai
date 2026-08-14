@@ -8,7 +8,7 @@ Cobre o helper que decide o tipo MIME de cada envio conforme o par
 - `html-only`      → single-part `text/html` (sem duplicação)
 - `both`           → `multipart/alternative` com `text/plain` primeiro e
                      `text/html` segundo
-- HTML sempre sanitizado via `nh3.clean` antes de ir pro wire
+- HTML sanitizado via `sanitize_body_html` (mesmo allowlist do ingest) antes de ir pro wire
 """
 from __future__ import annotations
 
@@ -127,3 +127,26 @@ def test_build_mime_sanitizes_event_handlers_in_html() -> None:
     payload = msg.get_payload(decode=True)
     assert payload is not None
     assert b"onerror" not in payload
+
+
+def test_build_mime_keeps_presentation_and_strips_script() -> None:
+    """email-html-style-allowlist-task-smtp-1-unit-1 (REQ-018)."""
+    raw_html = (
+        '<p style="color:red">Hi</p>'
+        '<table width="600" bgcolor="#f0f0f0"><tr><td>A</td></tr></table>'
+        "<script>alert(1)</script>"
+    )
+    msg = _build_mime(None, raw_html)
+    payload = msg.get_payload(decode=True)
+    assert payload is not None
+    decoded = payload.decode()
+    assert "color:red" in decoded
+    assert 'width="600"' in decoded
+    assert 'bgcolor="#f0f0f0"' in decoded
+    assert "<script>" not in decoded
+
+    text, html = resolve_bodies(None, raw_html)
+    assert text is None
+    assert html is not None
+    assert "color:red" in html
+    assert "<script>" not in html
