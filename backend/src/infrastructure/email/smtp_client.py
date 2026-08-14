@@ -5,13 +5,14 @@ REQ-009) decidem o formato MIME de cada envio conforme o par
 `(body_text, body_html)` recebido do caller:
 
 - `text-only`  → single-part `text/html` gerado a partir do plain
-                 (`<p>...escaped...</p>`, sanitizado por `nh3.clean`)
+                 (`<p>...escaped...</p>`, sanitizado por `sanitize_body_html`)
 - `html-only`  → single-part `text/html` (sem `text/plain` duplicado)
 - `both`       → `multipart/alternative` com `text/plain` primeiro e
                  `text/html` segundo, em HTML sanitizado
 
-`sanitize_body_html` (mesma função do `imap_client`) garante que um
-`<script>` ou `onerror=` injetado pelo caller não alcance o recipient.
+`sanitize_body_html` (mesma função do `imap_client`, allowlist REQ-018)
+garante que um `<script>` ou `onerror=` injetado pelo caller não alcance
+o recipient, e que apresentação HTML de e-mail sobreviva no wire.
 
 `send_email_via_smtp` aceita `body_text: str | None = None` (antes era
 obrigatório) e usa os helpers acima para montar o payload.
@@ -26,7 +27,6 @@ import html
 from email.header import Header
 from email.utils import formataddr, make_msgid
 
-import nh3
 from aiosmtplib import SMTP, SMTPAuthenticationError
 
 from src.application.integrations.config_schemas import (
