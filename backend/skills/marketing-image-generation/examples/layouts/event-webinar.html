@@ -1,0 +1,31 @@
+<!--
+  Event / webinar card: a date block, event title, one detail line, and a
+  speaker row. Generic placeholders for any live session promo.
+-->
+<div
+  style={{
+    display: 'flex',
+    height: '100%',
+    width: '100%',
+    fontFamily: 'Inter, sans-serif',
+    backgroundColor: '#0b1020',
+    backgroundImage: 'radial-gradient(circle at 15% 85%, rgba(124,58,237,0.4), transparent 55%)',
+    padding: 72,
+  }}
+>
+  <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: 150, height: 150, borderRadius: 22, backgroundColor: '#4f46e5', marginRight: 48 }}>
+      <div style={{ display: 'flex', fontSize: 20, fontWeight: 700, color: '#c7d2fe', letterSpacing: 2 }}>JAN</div>
+      <div style={{ display: 'flex', fontSize: 64, fontWeight: 800, color: '#ffffff', lineHeight: 1 }}>24</div>
+    </div>
+  </div>
+  <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', flex: 1 }}>
+    <div style={{ display: 'flex', fontSize: 56, fontWeight: 800, color: '#ffffff', letterSpacing: -1.5, lineHeight: 1.1, maxWidth: 760 }}>A generic session title goes here</div>
+    <div style={{ display: 'flex', fontSize: 20, color: '#94a3b8', marginTop: 16 }}>11:00 AM PT · 45 minutes · Free to attend</div>
+    <div style={{ display: 'flex', alignItems: 'center', marginTop: 28 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44, borderRadius: 999, backgroundColor: '#ec4899', color: '#fff', fontSize: 16, fontWeight: 700, border: '2px solid #0b1020' }}>S1</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44, borderRadius: 999, backgroundColor: '#14b8a6', color: '#fff', fontSize: 16, fontWeight: 700, border: '2px solid #0b1020', marginLeft: -12 }}>S2</div>
+      <div style={{ display: 'flex', fontSize: 18, color: '#cbd5e1', marginLeft: 16 }}>With two guest speakers</div>
+    </div>
+  </div>
+</div>
