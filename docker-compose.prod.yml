@@ -88,6 +88,7 @@ services:
       GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-http://localhost:8001/api/email/accounts/gmail/callback}
     volumes:
       - backend_outputs:/deps/backend/outputs
+      - backend_files:/deps/backend/files
       - backend_skills:/deps/backend/skills
       - backend_generated:/deps/backend/src/tools/generated
     networks:
@@ -116,8 +117,8 @@ services:
       - jeff_ia-network
 
   # Polling do bot Telegram (mesma imagem do backend). Sem TELEGRAM_* o
-  # bootstrap falha rápido. Compartilha `backend_outputs` com o backend para
-  # as tools send_telegram_photo/_document resolverem paths gerados.
+  # bootstrap falha rápido. Compartilha `backend_outputs` e `backend_files`
+  # com o backend para as tools de mídia resolverem paths gerados.
   telegram_gateway:
     build:
       context: .
@@ -146,6 +147,7 @@ services:
       - backend
     volumes:
       - backend_outputs:/deps/backend/outputs
+      - backend_files:/deps/backend/files
     # Substitui o ENTRYPOINT da imagem langgraph-api (uvicorn) — ver nota
     # completa em docker-compose.yml.
     entrypoint: ["/bin/sh", "/deps/backend/telegram_gateway_entrypoint.sh"]
@@ -202,5 +204,6 @@ networks:
 
 volumes:
   backend_outputs:
+  backend_files:
   backend_skills:
   backend_generated:

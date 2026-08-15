@@ -184,6 +184,37 @@ async def test_create_contact_happy_path() -> None:
     assert repo.contacts[contact.id].user_id == "user-a"
 
 
+async def test_create_contact_whatsapp_opt_in_defaults_false() -> None:
+    """REQ-006: create sem o campo persiste whatsapp_opt_in=false."""
+    from src.application.use_cases.create_crm_contact import CreateCrmContact
+
+    repo = _FakeCrmRepository()
+    contact = await CreateCrmContact(repository=repo).execute(
+        user_id="user-a",
+        name="Ana Silva",
+        email="ana@example.com",
+    )
+
+    assert contact.whatsapp_opt_in is False
+    assert repo.contacts[contact.id].whatsapp_opt_in is False
+
+
+async def test_create_contact_whatsapp_opt_in_true_persists() -> None:
+    """REQ-006: create com whatsapp_opt_in=true persiste true."""
+    from src.application.use_cases.create_crm_contact import CreateCrmContact
+
+    repo = _FakeCrmRepository()
+    contact = await CreateCrmContact(repository=repo).execute(
+        user_id="user-a",
+        name="Ana Silva",
+        email="ana@example.com",
+        whatsapp_opt_in=True,
+    )
+
+    assert contact.whatsapp_opt_in is True
+    assert repo.contacts[contact.id].whatsapp_opt_in is True
+
+
 async def test_update_contact_bumps_updated_at() -> None:
     """REQ-003: update mutável atualiza updated_at."""
     from src.application.use_cases.create_crm_contact import CreateCrmContact
@@ -203,6 +234,70 @@ async def test_update_contact_bumps_updated_at() -> None:
     assert updated is not None
     assert updated.phone == "+5511999999999"
     assert updated.updated_at >= before
+
+
+async def test_update_contact_whatsapp_opt_in_true() -> None:
+    """REQ-006: update com whatsapp_opt_in=true altera de false para true."""
+    from src.application.use_cases.create_crm_contact import CreateCrmContact
+    from src.application.use_cases.update_crm_contact import UpdateCrmContact
+
+    repo = _FakeCrmRepository()
+    created = await CreateCrmContact(repository=repo).execute(
+        user_id="user-a", name="Ana", email="a@x.com"
+    )
+    assert created.whatsapp_opt_in is False
+
+    updated = await UpdateCrmContact(repository=repo).execute(
+        user_id="user-a",
+        contact_id=created.id,
+        whatsapp_opt_in=True,
+    )
+    assert updated is not None
+    assert updated.whatsapp_opt_in is True
+    assert repo.contacts[created.id].whatsapp_opt_in is True
+
+
+async def test_update_contact_omits_whatsapp_opt_in_preserves() -> None:
+    """REQ-006: update sem o campo preserva o valor persistido."""
+    from src.application.use_cases.create_crm_contact import CreateCrmContact
+    from src.application.use_cases.update_crm_contact import UpdateCrmContact
+
+    repo = _FakeCrmRepository()
+    created = await CreateCrmContact(repository=repo).execute(
+        user_id="user-a",
+        name="Ana",
+        email="a@x.com",
+        whatsapp_opt_in=True,
+    )
+
+    updated = await UpdateCrmContact(repository=repo).execute(
+        user_id="user-a",
+        contact_id=created.id,
+        phone="+5511999999999",
+    )
+    assert updated is not None
+    assert updated.phone == "+5511999999999"
+    assert updated.whatsapp_opt_in is True
+
+
+async def test_update_contact_whatsapp_opt_in_cross_user_returns_none() -> None:
+    """REQ-006: PATCH opt-in permanece escopado ao user_id dono."""
+    from src.application.use_cases.create_crm_contact import CreateCrmContact
+    from src.application.use_cases.update_crm_contact import UpdateCrmContact
+
+    repo = _FakeCrmRepository()
+    created = await CreateCrmContact(repository=repo).execute(
+        user_id="user-a", name="Ana", email="a@x.com"
+    )
+
+    updated = await UpdateCrmContact(repository=repo).execute(
+        user_id="user-b",
+        contact_id=created.id,
+        whatsapp_opt_in=True,
+    )
+    assert updated is None
+    assert repo.contacts[created.id].whatsapp_opt_in is False
+    assert repo.contacts[created.id].user_id == "user-a"
 
 
 async def test_archive_hides_from_default_list() -> None:

@@ -20,6 +20,42 @@ def test_system_prompt_contains_current_date():
     assert re.match(r"^Data atual: \d{4}-\d{2}-\d{2} \(.+\)$", first_line), first_line
 
 
+def test_system_prompt_is_business_assistant_not_claude_code_hermes():
+    """REQ-007: Jeff é assistente de negócio; some a persona Claude Code / Hermes."""
+    prompt = agent._SYSTEM_PROMPT
+    assert "Claude Code" not in prompt
+    assert "Hermes" not in prompt
+    assert "agente de desenvolvimento unificado" not in prompt
+    assert "assistente de negócio" in prompt.lower()
+
+
+def test_system_prompt_business_examples_crm_reais_whatsapp_owner():
+    """REQ-007: exemplos BR — CRM/opt-in, R$, WhatsApp do dono; funil canônico."""
+    prompt = agent._SYSTEM_PROMPT
+    lowered = prompt.lower()
+    assert "whatsapp_opt_in" in prompt
+    assert "R$" in prompt or "reais" in lowered
+    assert "whatsapp" in lowered
+    assert "não dispar" in lowered or "nunca dispar" in lowered
+    assert "`lead`" in prompt or "lead" in lowered
+    assert "qualified" in lowered
+    assert "proposal" in lowered
+    assert "negotiation" in lowered
+    assert "won" in lowered
+    assert "lost" in lowered
+
+
+def test_system_prompt_keeps_current_principles():
+    """REQ-007: princípios atuais permanecem; lista de tools não é o único conteúdo."""
+    prompt = agent._SYSTEM_PROMPT
+    assert "## Princípios" in prompt
+    assert "Memória persistente" in prompt
+    assert "interrupt_on" in prompt
+    assert "image_design_subagent" in prompt
+    assert "preview_html_document" in prompt
+    assert "propose_envelope" in prompt
+
+
 def test_system_prompt_rule_instructs_agente():
     """REQ-002: o prompt instrui a não chamar `get_date_time_current` só para saber o dia."""
     normalized = " ".join(agent._SYSTEM_PROMPT.split())

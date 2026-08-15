@@ -108,14 +108,21 @@ def build_dependencies(
     ChannelRegistry.register(WhatsAppChannel(instance=whatsapp_instance))
 
 
-def build_plan_and_create_image() -> PlanAndCreateImage:
-    """Monta PlanAndCreateImage com Gemini + repositório de estilos no Store."""
+def build_plan_and_create_image(
+    *,
+    output_dir: Path | None = None,
+) -> PlanAndCreateImage:
+    """Monta PlanAndCreateImage com Gemini + repositório de estilos no Store.
+
+    `output_dir` tipicamente é `files/<user_id>/images/` (session-file-sandbox).
+    """
     postgres_uri = os.getenv("POSTGRES_URI")
     usage_repository = (
         UsageRepository(postgres_uri) if postgres_uri else None
     )
     return PlanAndCreateImage(
         image_gen=GeminiImageAdapter(
+            output_dir=output_dir,
             usage_repository=usage_repository,
             url_prefix=image_url_prefix(),
         ),
@@ -123,9 +130,12 @@ def build_plan_and_create_image() -> PlanAndCreateImage:
     )
 
 
-def build_reference_image_fetch() -> ReferenceImageFetchPort:
+def build_reference_image_fetch(
+    *,
+    output_dir: Path | None = None,
+) -> ReferenceImageFetchPort:
     """Monta o fetcher de imagem de referência por URL (httpx, com validação/SSRF)."""
-    return HttpxReferenceImageFetch()
+    return HttpxReferenceImageFetch(output_dir=output_dir)
 
 
 def build_generate_requirements_document(

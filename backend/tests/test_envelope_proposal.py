@@ -34,6 +34,21 @@ from src.agents.unified.envelope_proposal import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _admin_role_default_for_legacy_envelope_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Legacy tests assume pre-REQ-010 admin grants; pin role=admin.
+
+    session-file-sandbox REQ-010 fail-closes to user when role is unset;
+    that would strip write_existing/vcs/shell from these fixtures. New
+    role-ceiling tests live in `test_role_envelope_ceiling.py` and pass
+    `role=\"user\"` explicitly.
+    """
+    monkeypatch.setattr(
+        "src.agents.unified.envelope_proposal.current_role_for_envelope",
+        lambda: "admin",
+    )
+
+
 # =========================================================================== #
 # A. REQ-001: ProposeEnvelope é um schema estruturado (não texto livre)
 # =========================================================================== #

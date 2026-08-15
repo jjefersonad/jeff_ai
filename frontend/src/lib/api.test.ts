@@ -6,6 +6,7 @@ import {
   fetchAuthenticatedBlobUrl,
   setUnauthorizedHandler,
   uploadAttachment,
+  uploadReference,
 } from "./api";
 
 describe("checkUnauthorized (session-expiry-redirect-to-login, frontend-route-guard REQ-003)", () => {
@@ -96,6 +97,61 @@ describe("uploadAttachment (chat-file-attachment REQ-002)", () => {
 
     const file = new File(["data"], "report.pdf");
     await expect(uploadAttachment(file, "t1")).rejects.toThrow(ApiError);
+
+    expect(unauthorizedSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("uploadReference (session-file-sandbox D7 / frontend-1)", () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_API_URL = "http://backend.test";
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    setUnauthorizedHandler(null);
+  });
+
+  it("WHEN reference upload runs THEN request uses apiFetch credentials against POST /api/references", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          path: "/files/u1/attachment/logo.png",
+          url: "/api/references/logo.png",
+          filename: "logo.png",
+        }),
+        { status: 200 }
+      )
+    );
+    global.fetch = fetchMock;
+
+    const file = new File(["img"], "logo.png", { type: "image/png" });
+    const result = await uploadReference(file);
+
+    expect(result.path).toBe("/files/u1/attachment/logo.png");
+    expect(result.url).toBe("/api/references/logo.png");
+    expect(result.filename).toBe("logo.png");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("http://backend.test/api/references");
+    expect(init.credentials).toBe("include");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeInstanceOf(FormData);
+  });
+
+  it("WHEN POST /api/references returns 401 THEN triggers re-auth handler and rejects", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: "Unauthorized" }), { status: 401 })
+    );
+    global.fetch = fetchMock;
+    const unauthorizedSpy = vi.fn();
+    setUnauthorizedHandler(unauthorizedSpy);
+
+    await expect(
+      uploadReference(new File(["img"], "logo.png", { type: "image/png" }))
+    ).rejects.toThrow(ApiError);
 
     expect(unauthorizedSpy).toHaveBeenCalledTimes(1);
   });

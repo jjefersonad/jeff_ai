@@ -38,12 +38,14 @@ threads/runs/crons via @auth.on global + metadata.owner"). `assistants` e o
 ver Open Questions do design.
 
 `@auth.on.threads.create_run` carimba `configurable.user_key = web:<identity>`
-a partir da sessão (nunca do body do frontend) para metering de tokens
-(`track-user-token-usage`).
+e `configurable.role` (`user`/`admin`) a partir da sessão (nunca do body do
+frontend) — metering (`track-user-token-usage`) + sandbox por role
+(`session-file-sandbox`).
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from langgraph_sdk import Auth
@@ -56,6 +58,13 @@ from src.infrastructure.auth.session_resolver import (
 from src.infrastructure.usage.user_key import web_user_key
 
 auth = Auth()
+
+
+def role_from_permissions(permissions: Sequence[str] | None) -> str:
+    """Deriva `user`/`admin` de `permissions` (fail-closed: default `user`)."""
+    if permissions and "admin" in permissions:
+        return "admin"
+    return "user"
 
 
 @auth.authenticate
@@ -81,13 +90,19 @@ async def authenticate(request: Request) -> Auth.types.MinimalUserDict:
 _OWNER_SCOPED_RESOURCES = ("threads", "runs", "crons")
 
 
-def _stamp_web_user_key(value: dict[str, Any], identity: str) -> str:
-    """Carimba `configurable.user_key = web:<identity>` no payload create_run.
+def _stamp_web_run_identity(
+    value: dict[str, Any],
+    identity: str,
+    *,
+    permissions: Sequence[str] | None = None,
+) -> str:
+    """Carimba `configurable.user_key` e `configurable.role` no create_run.
 
-    Sempre sobrescreve `user_key` enviado pelo cliente — o frontend nunca é
-    fonte de verdade (track-user-token-usage / REQ-002, REQ-003).
+    Sempre sobrescreve valores enviados pelo cliente — o frontend nunca é
+    fonte de verdade (track-user-token-usage / session-file-sandbox REQ-001).
     """
     key = web_user_key(identity)
+    role = role_from_permissions(permissions)
     metadata = value.setdefault("metadata", {})
     if isinstance(metadata, dict):
         metadata["owner"] = identity
@@ -108,7 +123,12 @@ def _stamp_web_user_key(value: dict[str, Any], identity: str) -> str:
         config["configurable"] = configurable
 
     configurable["user_key"] = key
+    configurable["role"] = role
     return key
+
+
+# Alias preservado para imports/testes legados que ainda citam o nome antigo.
+_stamp_web_user_key = _stamp_web_run_identity
 
 
 @auth.on.threads.create_run
@@ -116,15 +136,15 @@ async def stamp_user_key_on_run_create(
     ctx: Auth.types.AuthContext,
     value: dict,
 ) -> Auth.types.FilterType:
-    """Carimba `user_key` server-side ao criar um run web.
+    """Carimba `user_key` + `role` server-side ao criar um run web.
 
     Mais específico que `@auth.on` — toma precedência em `create_run`.
     Replica o filtro por `owner` (e bypass de admin) do handler global, e
-    adicionalmente injeta `configurable.user_key = web:<identity>`,
+    adicionalmente injeta `configurable.user_key` / `configurable.role`,
     sobrescrevendo qualquer valor do cliente.
     """
     identity = ctx.user.identity
-    _stamp_web_user_key(value, identity)
+    _stamp_web_run_identity(value, identity, permissions=ctx.user.permissions)
 
     if "admin" in ctx.user.permissions:
         return {}

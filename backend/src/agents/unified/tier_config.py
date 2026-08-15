@@ -46,6 +46,8 @@ TIER_1_TOOLS: tuple[str, ...] = (
     # Substitui a change `document-reading-tools` (que previa 4 readers
     # DDD). Ver `src/tools/read_document_tool.py` para rationale.
     "read_document",
+    # session-file-sandbox REQ-003 — listagem owned (anexos + gerados).
+    "list_owned_files",
     # Buscas e execuções de teste.
     "grep_project",
     "search_memory",
@@ -165,10 +167,11 @@ TIER_3_TOOLS: tuple[str, ...] = (
     # o `git_commit` e commitar sem nenhuma aprovação humana, tornando o gate de
     # Tier 3 do `git_commit` puro teatro. Demonstrado na task `floor-4`.
     "git_apply_commit",
-    # Executa `npx skills add <repo>` e instala conteúdo de TERCEIRO em
-    # backend/skills/, que o deepagents carrega AO VIVO (sem restart). Roda código
-    # npm de terceiro. A `SKILLS_ALLOWLIST` limita QUAIS repos, mas não substitui
-    # a aprovação humana de instalar. Estava sem gate até a task `floor-5`.
+    # Executa `npx skills add <repo>` e instala conteúdo de TERCEIRO no destino
+    # por role (`backend/skills/` admin default, ou `files/<uid>/skills/`), que o
+    # deepagents carrega AO VIVO (sem restart). Roda código npm de terceiro. A
+    # `SKILLS_ALLOWLIST` limita QUAIS repos, mas não substitui a aprovação humana
+    # de instalar. Estava sem gate até a task `floor-5`.
     "install_external_skill",
     # Remove uma entrada EXISTENTE da memória de longo prazo (`memory_tools.py`,
     # task `memory-2`). Mesma categoria de risco que `edit_file`/`patch_file`:

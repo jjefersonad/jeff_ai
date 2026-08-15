@@ -71,10 +71,20 @@ from src.agents.unified.mcp_tool_availability import (
     McpToolAvailabilityMiddleware,
 )
 from src.agents.unified.mcp_tools_middleware import McpToolsMiddleware
+from src.agents.unified.chat_attachment_preprocessing_middleware import (
+    ChatAttachmentPreprocessingMiddleware,
+)
+from src.agents.unified.role_scoped_tools_middleware import RoleScopedToolsMiddleware
 from src.agents.unified.scoped_skills_middleware import ScopedSkillsMiddleware
 from src.agents.unified.tier_config import build_interrupt_on
-from src.composition.backends import FsRoute, make_backend_factory
+from src.composition.backends import (
+    FsRoute,
+    current_role,
+    make_backend_factory,
+    sync_user_id_from_configurable,
+)
 from src.composition.env import load_env
+from src.infrastructure.ownership.paths import files_dir, user_files_root, user_skills_root
 from src.infrastructure.usage.callback import UsageRecordingCallback
 from src.infrastructure.usage.repository import UsageRepository
 from src.models.fallback_model import unified_model
@@ -134,6 +144,7 @@ from src.tools.memory_tools import (
 )
 from src.tools.preview_html_document_tool import preview_html_document
 from src.tools.read_document_tool import read_document
+from src.tools.list_owned_files_tool import list_owned_files
 from src.tools.scheduling_tools import (
     cancel_scheduled_task,
     create_scheduled_task,
@@ -198,10 +209,10 @@ for d in (WORKSPACE_DIR, OUTPUTS_DIR, SPECIFY_DIR, TEMPLATES_DIR.parent):
 # System prompt
 # --------------------------------------------------------------------------- #
 # Prompt único e estático — não há mais seções por "modo" (task `modes-1`).
-# O bloco "Ferramentas disponíveis" abaixo é o que rodava em produção como
-# `_PROMPT_CHAT` (o único modo que o classificador morto jamais deixou de
-# selecionar, na prática); preservado tal como estava para não mudar
-# comportamento, só a fachada em torno dele.
+# Identidade (saas-empresario-br REQ-007): assistente de negócio em pt-BR,
+# não agente estilo Claude Code / Hermes. O bloco "Ferramentas disponíveis"
+# permanece o do antigo `_PROMPT_CHAT`, com orientação extra de CRM
+# (`whatsapp_opt_in`, valores em `R$`).
 #
 # Drift de data: a primeira linha (`Data atual: ...`) é computada UMA VEZ no
 # import do módulo. Em processos long-running, a data fica velha (drift de até
@@ -213,9 +224,15 @@ _CURRENT_TZ: str = os.environ.get("JEFF_AI_TZ") or os.environ.get("TZ") or "UTC"
 
 _SYSTEM_PROMPT = f"""Data atual: {_CURRENT_DATE} ({_CURRENT_TZ})
 
-Você é **Jeff AI**, um agente de desenvolvimento unificado no estilo
-Claude Code / Hermes. Você é inteligente, direto, técnico e cuida do
+Você é **Jeff AI**, assistente de negócio e tarefas do dia a dia, em
+português, para o dono (MEI/ME). Você é inteligente, direto e cuida do
 usuário.
+
+Exemplos do dia a dia: cadastrar contato no CRM (inclua `whatsapp_opt_in`
+quando o dono informar consentimento), valores em reais (`R$`), WhatsApp
+do dono (canal Jeff↔você — nunca dispare mensagem a cliente). No funil,
+use os estágios canônicos (`lead` → `qualified` → `proposal` →
+`negotiation` → `won`/`lost`) — nunca strings traduzidas.
 
 ## Princípios
 1. **Memória persistente**: você tem memória cross-thread, em duas camadas.
@@ -248,9 +265,14 @@ usuário.
     vazio/omitido nem `create_xlsx_spreadsheet` com uma aba sem linhas;
     esses casos são rejeitados com `error`. Uma string simples não é
     atalho válido — as tools exigem input estruturado.
-7. **Auto-extensão**: skills em `/skills/<nome>/SKILL.md` (carregam ao
-   vivo). Tools Python via `save_generated_tool` (precisa aprovação
-   humana + restart).
+7. **Auto-extensão**: para criar/editar uma skill **sua**, escreva
+   `/user-skills/<nome>/SKILL.md` (camada owned sob `files/<user_id>/skills/`).
+   A rota `/skills/` é o catálogo de **projeto** (`backend/skills/`) —
+   somente leitura para `role=user`; admin grava defaults do projeto aí.
+   Skills das duas camadas carregam ao vivo (nova thread / estado fresco).
+   `install_external_skill` respeita o mesmo destino por role (user → owned;
+   admin → projeto, ou owned com `for_user_id`). Tools Python via
+   `save_generated_tool` (precisa aprovação humana + restart).
 8. **Edição de código** (quando ativa): tools de Tier 3 (edit_file,
    patch_file, multi_file_edit, git_commit) pausam o framework para
    aprovação humana com diff preview. Aprove SOMENTE se o diff
@@ -284,7 +306,8 @@ usuário.
 - Workspace isolado: `{WORKSPACE_DIR}` (artefatos, scratch)
 - Outputs: `{OUTPUTS_DIR}` (documentos de requisitos)
 - SDD spec dir: `{SPECIFY_DIR}` (artefatos spec-kit)
-- Skills: `{SKILLS_DIR}` (carregadas automaticamente)
+- Skills (projeto): `{SKILLS_DIR}` via `/skills/` (RO para user; RW admin)
+- Skills (suas): `/user-skills/` → `files/<user_id>/skills/` (quando houver user_id)
 
 ## Ferramentas disponíveis
 
@@ -340,7 +363,8 @@ usuário.
   - NÃO procure módulo CRM no repositório com `list_project_files`/
     `grep_project`. Ownership vem da sessão; ignore `user_id` inventado.
   - Contatos: `crm_search_contacts` / `crm_upsert_contact` (exige email
-    e/ou phone; aceita `city`/`state`/`custom_values`).
+    e/ou phone; aceita `city`/`state`/`custom_values` e `whatsapp_opt_in`
+    quando o dono informar consentimento).
   - Campos personalizados: `crm_list_field_definitions` ANTES de criar;
     `crm_create_field_definition` só se a chave ainda não existir;
     `crm_update_field_definition` altera só o label.
@@ -348,7 +372,7 @@ usuário.
     alvo (`contact_id` | `company_id` | `deal_id`); `add_deal_note(deal_id, text)`
     é o atalho equivalente restrito a deal.
   - Funil: `crm_list_deals`, `crm_create_deal` (default `lead`,
-    `value`/`custom_values` do deal; campos de contato `contact_name`/
+    `value` em reais (`R$`) / `custom_values` do deal; campos de contato `contact_name`/
     `email`/`phone`/`city`/`state`/`tags`/`status`/`contact_custom_values`
     no mesmo call — sem `crm_upsert_contact` prévio), `crm_move_deal`
     (`lead` → `qualified` → `proposal` → `negotiation` → `won`/`lost`).
@@ -384,6 +408,13 @@ usuário.
 # delegação via `task()` e não precisam de suas tools registradas no
 # orquestrador (apenas os nomes importam).
 
+# Tools geradas aprovadas (self-extension). Nomes capturados para D15 —
+# RoleScopedToolsMiddleware omite/bloqueia para non-admin.
+_APPROVED_TOOLS: list = load_approved_tools()
+_APPROVED_TOOL_NAMES: frozenset[str] = frozenset(
+    getattr(t, "name", None) or getattr(t, "__name__", "") for t in _APPROVED_TOOLS
+)
+
 _UNIFIED_TOOLS: list = [
     # --- Memória e utilidades ---------------------------------------------- #
     save_memory,
@@ -415,6 +446,8 @@ _UNIFIED_TOOLS: list = [
     # --- Documentos Office/PDF (markitdown) --------------------------------- #
     # Substitui a change `document-reading-tools`. Tier 1 (auto): só leitura.
     read_document,
+    # --- Arquivos do usuário da sessão (Tier 1) ----------------------------- #
+    list_owned_files,
     # --- Agendamento de tarefas (Tier 2) ----------------------------------- #
     # Cria/lista/cancela tarefas que o agente vai rodar no futuro. `create` e
     # `cancel` precisam do `task_scheduler` (registrar/desagendar trigger);
@@ -455,7 +488,7 @@ _UNIFIED_TOOLS: list = [
     find_external_skills,
     list_skills_in_repo,
     install_external_skill,
-    *load_approved_tools(),
+    *_APPROVED_TOOLS,
     # --- Shell (Tier 4) --------------------------------------------------- #
     run_shell_command,
     # --- Requirements (merge de artefatos) -------------------------------- #
@@ -501,7 +534,7 @@ _UNIFIED_SUBAGENTS: list = [
 
 
 # --------------------------------------------------------------------------- #
-# Backend factory unificado (CompositeBackend com 6 rotas)
+# Backend factory unificado (CompositeBackend role-aware)
 # --------------------------------------------------------------------------- #
 # A rota `/memories/` é SEMPRE montada. Antes ela era condicionada ao "modo" do
 # grafo, mas o sistema de modos nunca existiu de fato — tudo era construído como
@@ -513,33 +546,76 @@ _UNIFIED_SUBAGENTS: list = [
 # injetado pelo runtime via `langgraph.json` — e sempre funcionaram,
 # independentemente daqui. O que faltava era o acesso *filesystem* à memória
 # (`ls` / `read_file` sobre `/memories/`).
+#
+# session-file-sandbox: rotas dependem de `configurable.role` (e `user_id`
+# para montar `files/<uid>/`). Avaliadas a cada run via callable em
+# `make_backend_factory`.
 
 def _build_backend_factory():
-    """Constrói a `backend_factory` unificada.
+    """Constrói a `backend_factory` unificada (role-aware, D3/D11/D14).
 
-    Rotas:
-    - `/workspace/` → WORKSPACE_DIR (per-thread, scratch/artifacts)
-    - `/repo/`      → REPO_ROOT      (shared, código real)
-    - `/outputs/`   → OUTPUTS_DIR    (per-thread, requirements)
-    - `/specify/`   → SPECIFY_DIR    (shared, SDD scaffolding)
-    - `/skills/`    → SKILLS_DIR     (shared, skills carregadas pelo deepagents)
-    - `/memories/`  → StoreBackend   (cross-thread, sempre montada)
+    Rotas comuns:
+    - workspace per-thread (scratch)
+    - `/skills/` (admin gravável; user read-only) — catálogo de projeto
+    - `/user-skills/` → `files/<user_id>/skills/` quando `user_id` resolvível (RW)
+    - `/memories/` StoreBackend
+
+    Admin adicional: REPO_ROOT, OUTPUTS_DIR, SPECIFY, TEMPLATES, FILES_DIR raiz.
+    User adicional: `files/<user_id>/` se `user_id` resolvível; sem REPO/OUTPUTS/
+    specify/templates (REQ-001–005, D11).
     """
-    return make_backend_factory(
-        routes=[
+
+    def _routes_for_run() -> list[FsRoute]:
+        role = current_role()
+        routes: list[FsRoute] = [
             FsRoute(prefix=f"{WORKSPACE_DIR}", base_dir=WORKSPACE_DIR, per_thread=True),
-            FsRoute(prefix=f"{REPO_ROOT}",    base_dir=REPO_ROOT),
-            FsRoute(prefix=f"{OUTPUTS_DIR}",  base_dir=OUTPUTS_DIR, per_thread=True),
-            FsRoute(
-                prefix=f"{SPECIFY_DIR}",
-                base_dir=SPECIFY_DIR,
-                ensure_subpath="specs",
-            ),
-            FsRoute(prefix=f"{TEMPLATES_DIR}", base_dir=TEMPLATES_DIR),
-            FsRoute(prefix="/skills/",         base_dir=SKILLS_DIR),
-        ],
-        include_store=True,
-    )
+        ]
+        user_id = sync_user_id_from_configurable()
+        if role == "admin":
+            routes.extend(
+                [
+                    FsRoute(prefix=f"{REPO_ROOT}", base_dir=REPO_ROOT),
+                    FsRoute(prefix=f"{OUTPUTS_DIR}", base_dir=OUTPUTS_DIR, per_thread=True),
+                    FsRoute(
+                        prefix=f"{SPECIFY_DIR}",
+                        base_dir=SPECIFY_DIR,
+                        ensure_subpath="specs",
+                    ),
+                    FsRoute(prefix=f"{TEMPLATES_DIR}", base_dir=TEMPLATES_DIR),
+                    FsRoute(prefix="/skills/", base_dir=SKILLS_DIR),
+                    FsRoute(
+                        prefix=f"{files_dir()}",
+                        base_dir=files_dir(),
+                        ensure_exists=True,
+                    ),
+                ]
+            )
+        else:
+            routes.append(
+                FsRoute(prefix="/skills/", base_dir=SKILLS_DIR, read_only=True)
+            )
+            if user_id:
+                root = user_files_root(user_id)
+                routes.append(
+                    FsRoute(
+                        prefix=f"{root}",
+                        base_dir=root,
+                        ensure_exists=True,
+                    )
+                )
+        # D3/D6/D8: alias /user-skills/ only when identity is resolvable (fail-closed).
+        if user_id:
+            skills_root = user_skills_root(user_id)
+            routes.append(
+                FsRoute(
+                    prefix="/user-skills/",
+                    base_dir=skills_root,
+                    ensure_exists=True,
+                )
+            )
+        return routes
+
+    return make_backend_factory(routes=_routes_for_run, include_store=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -572,10 +648,12 @@ def build_unified(
 
     O retorno é um grafo LangGraph configurado com `recursion_limit=1000`.
 
-    `middleware=[EnvelopeLifecycleMiddleware(), EnvelopeMiddleware()]` liga o
-    harness de permissões por tarefa (task `envelope-7`) — antes disso,
-    `envelope-1..6` existiam completos e testados, mas isolados de qualquer
-    grafo real. Aditivo por design (Decision D1): remover a lista
+    `middleware=[EnvelopeLifecycleMiddleware(), McpToolsMiddleware(),
+    McpToolAvailabilityMiddleware(), RoleScopedToolsMiddleware(...),
+    EnvelopeMiddleware(), ChatAttachmentPreprocessingMiddleware(),
+    ScopedSkillsMiddleware(...)]` liga o harness de permissões por tarefa,
+    MCP, filtro por role, injeção path-first de anexos (session-file-sandbox
+    D6/D9) e skills escopadas. Aditivo por design: remover a lista
     `middleware=[...]` restaura o comportamento anterior sem tocar em mais
     nada. `EnvelopeMiddleware()` sem argumento começa com `granted=set()` —
     deny-all acima do piso, o caso mais restritivo (REQ-002).
@@ -583,8 +661,11 @@ def build_unified(
     `ScopedSkillsMiddleware` substitui o `skills=[...]` do `create_deep_agent`
     (task `ctx-2`, design Q8): a `SkillsMiddleware` padrão do deepagents lista
     as 11 skills inteiras em todo turno; a variante escopada só injeta as
-    relevantes à conversa. Passada explicitamente em `middleware=[...]` em vez
-    do atalho `skills=` para poder trocar a classe sem mexer no resto.
+    relevantes à conversa. Sources: `("/skills/", "Project")` then
+    `("/user-skills/", "User")` — deepagents last-wins by frontmatter `name`
+    (user-project-skills-layers D1/D2). Passada explicitamente em
+    `middleware=[...]` em vez do atalho `skills=` para poder trocar a classe
+    sem mexer no resto.
 
     Os parâmetros `checkpointer` e `store` são opcionais (default `None`):
     quando omitidos, o grafo é compilado sem eles e a plataforma LangGraph os
@@ -607,8 +688,15 @@ def build_unified(
             EnvelopeLifecycleMiddleware(),
             McpToolsMiddleware(),
             McpToolAvailabilityMiddleware(),
+            # D9: RoleScoped depois do MCP load e antes do Envelope.
+            RoleScopedToolsMiddleware(approved_tool_names=_APPROVED_TOOL_NAMES),
             EnvelopeMiddleware(),
-            ScopedSkillsMiddleware(backend=backend_factory, sources=["/skills/"]),
+            ChatAttachmentPreprocessingMiddleware(),
+            # D1/D2: Project then User — deepagents last-wins by frontmatter name.
+            ScopedSkillsMiddleware(
+                backend=backend_factory,
+                sources=[("/skills/", "Project"), ("/user-skills/", "User")],
+            ),
         ],
         checkpointer=checkpointer,
         store=store,

@@ -32,7 +32,8 @@ async def test_records_ownership_with_kind_and_basename(
         url="/api/files/pptx/20260708120000.pptx",
         metadata={"kind": "pptx"},
     )
-    monkeypatch.setattr(pptx_tool, "_build_pptx_render", lambda: _FakeRender(result))
+    monkeypatch.setattr(pptx_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
+    monkeypatch.setattr(pptx_tool, "_build_pptx_render", lambda _output_dir=None: _FakeRender(result))
     record = AsyncMock()
     monkeypatch.setattr(pptx_tool, "record_ownership", record)
 
@@ -51,7 +52,8 @@ async def test_ownership_failure_is_fail_closed(
         url="/api/files/pptx/20260708120000.pptx",
         metadata={"kind": "pptx"},
     )
-    monkeypatch.setattr(pptx_tool, "_build_pptx_render", lambda: _FakeRender(result))
+    monkeypatch.setattr(pptx_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
+    monkeypatch.setattr(pptx_tool, "_build_pptx_render", lambda _output_dir=None: _FakeRender(result))
     monkeypatch.setattr(
         pptx_tool, "record_ownership", AsyncMock(side_effect=RuntimeError("db down"))
     )

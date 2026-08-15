@@ -231,7 +231,7 @@ def test_docx_spec_accepts_non_empty_blocks():
 def _point_docx_tool(monkeypatch, tmp_path: Path) -> None:
     from unittest.mock import AsyncMock
 
-    monkeypatch.setattr(docx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(docx_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
     monkeypatch.setattr(docx_tool, "_document_url_prefix", lambda: "/api/files")
     monkeypatch.setattr(docx_tool, "record_ownership", AsyncMock())
 
@@ -376,7 +376,7 @@ async def test_tool_returns_absolute_url_end_to_end(monkeypatch, tmp_path):
 
     monkeypatch.delenv("BASE_URL", raising=False)
     monkeypatch.delenv("FRONTEND_ORIGIN", raising=False)
-    monkeypatch.setattr(docx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(docx_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
     monkeypatch.setattr(docx_tool, "record_ownership", AsyncMock())
 
     result = await docx_tool.create_docx_document.coroutine(

@@ -21,13 +21,13 @@ interface EnvelopeApprovalInterruptProps {
  * `src/agents/unified/effects.py:Capability` on the backend.
  */
 const CAPABILITY_LABELS: Record<string, string> = {
-  read: "Read files / search",
-  write_new: "Create new files",
-  write_existing: "Edit existing files",
+  read: "Ler arquivos / buscar",
+  write_new: "Criar arquivos novos",
+  write_existing: "Editar arquivos existentes",
   vcs: "Git (commit, branch)",
-  shell: "Run shell commands",
-  network: "Network access",
-  unknown: "Unrecognized tool (MCP third-party)",
+  shell: "Executar comandos no terminal",
+  network: "Acesso à rede",
+  unknown: "Ferramenta não reconhecida (MCP de terceiros)",
 };
 
 function capabilityLabel(capability: string): string {
@@ -100,7 +100,7 @@ export function EnvelopeApprovalInterrupt({
           className="text-yellow-600 dark:text-yellow-400"
         />
         <span className="text-xs font-semibold uppercase tracking-wider">
-          Permission Request
+          Pedido de permissão
         </span>
       </div>
 
@@ -120,12 +120,12 @@ export function EnvelopeApprovalInterrupt({
       {/* Required capabilities — toggleable */}
       <div className="mb-4 rounded-sm border border-border bg-background p-3">
         <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          Requested for this task
+          Solicitado para esta tarefa
         </span>
         <div className="mt-2 space-y-3">
           {requiredCapabilities.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              (nothing requested — this task only needs read/search)
+              (nada solicitado — esta tarefa só precisa de leitura/busca)
             </p>
           ) : (
             requiredCapabilities.map((cap) => (
@@ -157,7 +157,7 @@ export function EnvelopeApprovalInterrupt({
       {excludedCapabilities.length > 0 && (
         <div className="mb-4">
           <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Explicitly not requested
+            Explicitamente não solicitado
           </span>
           <p className="mt-1 text-xs text-muted-foreground">
             {excludedCapabilities.map(capabilityLabel).join(", ")}
@@ -175,7 +175,7 @@ export function EnvelopeApprovalInterrupt({
           className="text-destructive hover:bg-destructive/10"
         >
           <X size={14} />
-          Deny
+          Recusar
         </Button>
         <Button
           size="sm"
@@ -188,10 +188,10 @@ export function EnvelopeApprovalInterrupt({
         >
           <Check size={14} />
           {isLoading
-            ? "Granting..."
+            ? "Aprovando..."
             : selected.size === 0
-              ? "Grant (none selected)"
-              : "Grant"}
+              ? "Aprovar (nenhuma selecionada)"
+              : "Aprovar"}
         </Button>
       </div>
     </div>

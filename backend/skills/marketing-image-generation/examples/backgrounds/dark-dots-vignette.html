@@ -1,0 +1,16 @@
+<!--
+  Dot grid that stays bright in the center and fades into black toward the edges.
+  Dots render first (bright), vignette overlay on top darkens only the outer ring.
+  Per-layer backgroundSize: vignette 100%, dots tiled at 24px.
+-->
+<div
+  style={{
+    display: 'flex',
+    height: '100%',
+    width: '100%',
+    backgroundColor: '#0a0a0a',
+    backgroundImage:
+      'radial-gradient(circle at 50% 50%, rgba(10,10,10,0) 40%, rgba(10,10,10,0.92) 88%), radial-gradient(circle at center, rgba(255,255,255,0.5) 0%, rgba(255,255,255,0.5) 13%, transparent 14%)',
+    backgroundSize: '100% 100%, 24px 24px',
+  }}
+/>

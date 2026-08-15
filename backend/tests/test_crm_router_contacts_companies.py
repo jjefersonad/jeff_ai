@@ -208,6 +208,116 @@ def test_post_contact_valid_returns_201(client: TestClient) -> None:
     assert body["email"] == "ana@example.com"
 
 
+def test_post_contact_omits_whatsapp_opt_in_defaults_false(
+    client: TestClient,
+) -> None:
+    """REQ-006: POST sem o campo persiste false; GET/list devolve o valor."""
+    _as(client, _USER_A)
+    created = client.post(
+        "/api/crm/contacts",
+        json={"name": "Ana", "email": "ana@example.com"},
+    )
+    assert created.status_code == 201
+    body = created.json()
+    assert body["whatsapp_opt_in"] is False
+    contact_id = body["id"]
+
+    listed = client.get("/api/crm/contacts")
+    assert listed.status_code == 200
+    items = listed.json()["items"]
+    assert items[0]["id"] == contact_id
+    assert items[0]["whatsapp_opt_in"] is False
+
+    got = client.get(f"/api/crm/contacts/{contact_id}")
+    assert got.status_code == 200
+    assert got.json()["whatsapp_opt_in"] is False
+
+
+def test_post_contact_whatsapp_opt_in_true_persists(client: TestClient) -> None:
+    """REQ-006: POST com whatsapp_opt_in=true persiste true."""
+    _as(client, _USER_A)
+    created = client.post(
+        "/api/crm/contacts",
+        json={
+            "name": "Ana",
+            "email": "ana@example.com",
+            "whatsapp_opt_in": True,
+        },
+    )
+    assert created.status_code == 201
+    assert created.json()["whatsapp_opt_in"] is True
+
+    listed = client.get("/api/crm/contacts")
+    assert listed.json()["items"][0]["whatsapp_opt_in"] is True
+
+
+def test_patch_contact_whatsapp_opt_in_true(client: TestClient) -> None:
+    """REQ-006: PATCH com whatsapp_opt_in=true altera de false para true."""
+    _as(client, _USER_A)
+    created = client.post(
+        "/api/crm/contacts",
+        json={"name": "Ana", "email": "ana@example.com"},
+    )
+    assert created.json()["whatsapp_opt_in"] is False
+    contact_id = created.json()["id"]
+
+    patched = client.patch(
+        f"/api/crm/contacts/{contact_id}",
+        json={"whatsapp_opt_in": True},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["whatsapp_opt_in"] is True
+
+    got = client.get(f"/api/crm/contacts/{contact_id}")
+    assert got.json()["whatsapp_opt_in"] is True
+
+
+def test_patch_contact_omits_whatsapp_opt_in_preserves(client: TestClient) -> None:
+    """REQ-006: PATCH sem o campo não altera o valor persistido."""
+    _as(client, _USER_A)
+    created = client.post(
+        "/api/crm/contacts",
+        json={
+            "name": "Ana",
+            "email": "ana@example.com",
+            "whatsapp_opt_in": True,
+        },
+    )
+    contact_id = created.json()["id"]
+
+    patched = client.patch(
+        f"/api/crm/contacts/{contact_id}",
+        json={"phone": "+5511999999999"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["phone"] == "+5511999999999"
+    assert patched.json()["whatsapp_opt_in"] is True
+
+
+def test_patch_contact_whatsapp_opt_in_foreign_returns_404(
+    client: TestClient,
+) -> None:
+    """REQ-006: PATCH opt-in de outro user → 404; o bit do dono não muda."""
+    _as(client, _USER_A)
+    created = client.post(
+        "/api/crm/contacts",
+        json={"name": "Ana", "email": "ana@example.com"},
+    )
+    contact_id = created.json()["id"]
+
+    _as(client, _USER_B)
+    patched = client.patch(
+        f"/api/crm/contacts/{contact_id}",
+        json={"whatsapp_opt_in": True},
+    )
+    assert patched.status_code == 404
+
+    _as(client, _USER_A)
+    got = client.get(f"/api/crm/contacts/{contact_id}")
+    assert got.status_code == 200
+    assert got.json()["whatsapp_opt_in"] is False
+
+
 def test_post_contact_without_identifier_returns_422(client: TestClient) -> None:
     """unit-1: sem email/phone → 422."""
     _as(client, _USER_A)

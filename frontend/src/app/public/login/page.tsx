@@ -78,7 +78,7 @@ function LoginForm() {
       router.replace(target);
       return;
     }
-    setError(result.error ?? "Login failed");
+    setError(result.error ?? "Falha no login");
   };
 
   return (
@@ -87,14 +87,14 @@ function LoginForm() {
       className="flex w-full max-w-sm flex-col gap-4 rounded-lg border border-border bg-card p-6 shadow-sm"
     >
       <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold">Sign in</h1>
+        <h1 className="text-xl font-semibold">Entrar</h1>
         <p className="text-sm text-muted-foreground">
-          Use your Jeff AI account to continue.
+          Use sua conta Jeff AI para continuar.
         </p>
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="username">Username</Label>
+        <Label htmlFor="username">Usuário</Label>
         <Input
           id="username"
           name="username"
@@ -108,7 +108,7 @@ function LoginForm() {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="password">Password</Label>
+        <Label htmlFor="password">Senha</Label>
         <Input
           id="password"
           name="password"
@@ -135,7 +135,7 @@ function LoginForm() {
         disabled={isAuthenticating || username.length === 0 || password.length === 0}
       >
         <LogIn className="h-4 w-4" />
-        {isAuthenticating ? "Signing in…" : "Sign in"}
+        {isAuthenticating ? "Entrando…" : "Entrar"}
       </Button>
     </form>
   );
@@ -150,7 +150,7 @@ export default function LoginPage() {
             className="text-sm text-muted-foreground"
             role="status"
           >
-            Loading…
+            Carregando…
           </div>
         }
       >

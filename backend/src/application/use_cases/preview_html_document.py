@@ -19,9 +19,10 @@ class PreviewHtmlDocument:
         output_base_dir: Path,
         url_prefix: str = "/api/files",
     ) -> None:
+        # Flat under docs/ (session-file-sandbox D5); kind permanece na URL.
         self._output = DocumentOutput(
             "html",
-            output_dir=output_base_dir / "html",
+            output_dir=output_base_dir,
             url_prefix=url_prefix,
         )
 

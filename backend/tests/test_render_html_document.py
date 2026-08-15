@@ -65,10 +65,8 @@ async def test_converter_failure_leaves_no_partial_nor_ownership(output_dir: Pat
     with pytest.raises(RuntimeError, match="boom"):
         await use_case.execute(html="<p>hi</p>", kind="pdf")
 
-    pdf_dir = output_dir / "pdf"
+    pdf_dir = output_dir
     assert not pdf_dir.exists() or list(pdf_dir.glob("*")) == []
-    html_dir = output_dir / "html"
-    assert not html_dir.exists()
     assert ownership_calls == []
 
 

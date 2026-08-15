@@ -78,13 +78,14 @@ async def test_tool_delegates_and_returns_path_url_metadata(monkeypatch, tmp_pat
     monkeypatch.setattr(gmod, "_DEFAULT_OUTPUT_DIR", tmp_path)
     # A injeção do adapter/Store agora vive em composition.dependencies.
     monkeypatch.setattr(dep, "get_store", lambda: MagicMock())
+    monkeypatch.setattr(gt, "require_user_kind_dir", AsyncMock(return_value=tmp_path))
     stamp = AsyncMock()
     monkeypatch.setattr(gt, "record_ownership", stamp)
 
     result = await gt.create_image_from_prompt.coroutine("um gato astronauta")
 
     assert set(result) == {"path", "url", "metadata"}
-    assert result["url"].startswith("/api/images/") and result["url"].endswith(".png")
+    assert "/api/images/" in result["url"] and result["url"].endswith(".png")
     assert result["metadata"]["prompt"] == "um gato astronauta"
     assert result["metadata"]["art_style"] is None
     filename = result["url"].split("/")[-1]
@@ -107,9 +108,11 @@ async def test_tool_propagates_record_ownership_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(gmod.genai, "Client", lambda *a, **k: client)
     monkeypatch.setattr(gmod, "_DEFAULT_OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(dep, "get_store", lambda: MagicMock())
+    monkeypatch.setattr(gt, "require_user_kind_dir", AsyncMock(return_value=tmp_path))
     monkeypatch.setattr(
         gt, "record_ownership", AsyncMock(side_effect=RuntimeError("db down"))
     )
 
-    with pytest.raises(RuntimeError, match="db down"):
-        await gt.create_image_from_prompt.coroutine("x")
+    out = await gt.create_image_from_prompt.coroutine("x")
+    assert "error" in out
+    assert "path" not in out

@@ -1,15 +1,15 @@
 """Resolução de diretório de saída e URL pública dos documentos gerados.
 
-Compartilhado pelos writers de infraestrutura (docx/xlsx/pptx/pdf). Mantém a mesma
-topologia de `outputs/` usada pelas imagens: arquivos em `backend/outputs/` e URL
-servida pelo servidor de mídia.
+Compartilhado pelos writers de infraestrutura (docx/xlsx/pptx/pdf/html). No
+layout session-file-sandbox o destino canônico é `files/<user_id>/docs/`
+(flat); a URL pública permanece `/api/files/{kind}/{filename}`.
 """
 from __future__ import annotations
 
 import datetime
 from pathlib import Path
 
-# backend/outputs/documents (irmão de outputs/images).
+# Fallback legado só para writers construídos sem output_dir explícito.
 _DEFAULT_BASE = Path(__file__).resolve().parents[3] / "outputs" / "documents"
 
 

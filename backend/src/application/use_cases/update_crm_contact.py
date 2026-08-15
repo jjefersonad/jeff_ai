@@ -39,6 +39,7 @@ class UpdateCrmContact:
         city: str | None = None,
         state: str | None = None,
         custom_values: dict[str, Any] | None = None,
+        whatsapp_opt_in: bool | None = None,
     ) -> Contact | None:
         """Atualiza o contato; ``None`` se miss / cross-user.
 
@@ -82,6 +83,9 @@ class UpdateCrmContact:
 
         new_city = existing.city if city is None else _clean_optional(city)
         new_state = existing.state if state is None else _clean_optional(state)
+        new_opt_in = (
+            existing.whatsapp_opt_in if whatsapp_opt_in is None else whatsapp_opt_in
+        )
 
         updated = Contact(
             id=existing.id,
@@ -95,6 +99,7 @@ class UpdateCrmContact:
             city=new_city,
             state=new_state,
             custom_values=values,
+            whatsapp_opt_in=new_opt_in,
             archived_at=existing.archived_at,
             created_at=existing.created_at,
             updated_at=datetime.now(UTC),

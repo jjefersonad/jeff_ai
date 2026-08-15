@@ -57,6 +57,11 @@ async def test_run_config_includes_user_key_and_thread_id() -> None:
             "src.infrastructure.agent_runtime.langgraph_direct_runner.build_unified",
             return_value=fake_graph,
         ),
+        patch(
+            "src.infrastructure.agent_runtime.langgraph_direct_runner"
+            ".resolve_role_for_user_key",
+            new=AsyncMock(return_value="user"),
+        ),
     ):
         runner = LangGraphDirectAgentRunner(postgres_uri="postgresql://unused")
         await runner.run(
@@ -70,6 +75,7 @@ async def test_run_config_includes_user_key_and_thread_id() -> None:
     config = _config_from_ainvoke(fake_graph)
     assert config["configurable"]["thread_id"] == "thread-abc"
     assert config["configurable"]["user_key"] == "telegram:999"
+    assert config["configurable"]["role"] == "user"
     # Callback global em build_unified — não duplicar na config do run.
     assert "callbacks" not in config
 
@@ -94,6 +100,11 @@ async def test_resume_config_includes_user_key_and_thread_id() -> None:
             "src.infrastructure.agent_runtime.langgraph_direct_runner.build_unified",
             return_value=fake_graph,
         ),
+        patch(
+            "src.infrastructure.agent_runtime.langgraph_direct_runner"
+            ".resolve_role_for_user_key",
+            new=AsyncMock(return_value="user"),
+        ),
     ):
         runner = LangGraphDirectAgentRunner(postgres_uri="postgresql://unused")
         await runner.resume(
@@ -105,4 +116,5 @@ async def test_resume_config_includes_user_key_and_thread_id() -> None:
     config = _config_from_ainvoke(fake_graph)
     assert config["configurable"]["thread_id"] == "thread-abc"
     assert config["configurable"]["user_key"] == "telegram:999"
+    assert config["configurable"]["role"] == "user"
     assert "callbacks" not in config

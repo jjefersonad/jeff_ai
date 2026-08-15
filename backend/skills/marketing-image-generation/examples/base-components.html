@@ -1,0 +1,128 @@
+<!--
+  shadcn/ui component gallery: button, badge, input, checkbox, switch, avatar,
+  slider, progress, and tabs, each under a short label.
+-->
+<div
+  style={{
+    display: 'flex',
+    flexDirection: 'column',
+    height: '100%',
+    width: '100%',
+    backgroundColor: '#ffffff',
+    fontFamily: 'Inter, sans-serif',
+    padding: 56,
+  }}
+>
+  {/* Header */}
+  <div style={{ display: 'flex', flexDirection: 'column', marginBottom: 40 }}>
+    <div style={{ display: 'flex', fontSize: 30, fontWeight: 700, color: '#09090b' }}>Base Components</div>
+    <div style={{ display: 'flex', fontSize: 15, color: '#71717a', marginTop: 6 }}>A set of base components in the shadcn/ui style</div>
+  </div>
+
+  {/* Grid */}
+  <div style={{ display: 'flex', flexWrap: 'wrap', width: '100%' }}>
+
+    {/* Button */}
+    <div style={{ display: 'flex', flexDirection: 'column', width: 244, marginRight: 22, marginBottom: 38 }}>
+      <div style={{ display: 'flex', fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#a1a1aa', marginBottom: 14 }}>BUTTON</div>
+      <div style={{ display: 'flex' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#18181b', color: '#fafafa', fontSize: 14, fontWeight: 500, borderRadius: 8, padding: '9px 18px' }}>Button</div>
+      </div>
+    </div>
+
+    {/* Secondary */}
+    <div style={{ display: 'flex', flexDirection: 'column', width: 244, marginRight: 22, marginBottom: 38 }}>
+      <div style={{ display: 'flex', fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#a1a1aa', marginBottom: 14 }}>SECONDARY</div>
+      <div style={{ display: 'flex' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f4f4f5', color: '#18181b', fontSize: 14, fontWeight: 500, borderRadius: 8, padding: '9px 18px' }}>Secondary</div>
+      </div>
+    </div>
+
+    {/* Outline */}
+    <div style={{ display: 'flex', flexDirection: 'column', width: 244, marginRight: 22, marginBottom: 38 }}>
+      <div style={{ display: 'flex', fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#a1a1aa', marginBottom: 14 }}>OUTLINE</div>
+      <div style={{ display: 'flex' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff', color: '#18181b', fontSize: 14, fontWeight: 500, borderRadius: 8, border: '1px solid #e4e4e7', padding: '8px 18px' }}>Outline</div>
+      </div>
+    </div>
+
+    {/* Destructive */}
+    <div style={{ display: 'flex', flexDirection: 'column', width: 244, marginRight: 0, marginBottom: 38 }}>
+      <div style={{ display: 'flex', fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#a1a1aa', marginBottom: 14 }}>DESTRUCTIVE</div>
+      <div style={{ display: 'flex' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#ef4444', color: '#ffffff', fontSize: 14, fontWeight: 500, borderRadius: 8, padding: '9px 18px' }}>Delete</div>
+      </div>
+    </div>
+
+    {/* Badge */}
+    <div style={{ display: 'flex', flexDirection: 'column', width: 244, marginRight: 22, marginBottom: 38 }}>
+      <div style={{ display: 'flex', fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#a1a1aa', marginBottom: 14 }}>BADGE</div>
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#18181b', color: '#fafafa', fontSize: 12, fontWeight: 600, borderRadius: 999, padding: '3px 11px', marginRight: 8 }}>Badge</div>
+        <div style={{ display: 'flex', alignItems: 'center', backgroundColor: '#ffffff', color: '#18181b', fontSize: 12, fontWeight: 600, borderRadius: 999, border: '1px solid #e4e4e7', padding: '3px 11px' }}>Outline</div>
+      </div>
+    </div>
+
+    {/* Input */}
+    <div style={{ display: 'flex', flexDirection: 'column', width: 244, marginRight: 22, marginBottom: 38 }}>
+      <div style={{ display: 'flex', fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#a1a1aa', marginBottom: 14 }}>INPUT</div>
+      <div style={{ display: 'flex', alignItems: 'center', width: 210, height: 38, borderRadius: 8, border: '1px solid #e4e4e7', padding: '0px 12px', fontSize: 14, color: '#a1a1aa' }}>Email</div>
+    </div>
+
+    {/* Checkbox */}
+    <div style={{ display: 'flex', flexDirection: 'column', width: 244, marginRight: 22, marginBottom: 38 }}>
+      <div style={{ display: 'flex', fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#a1a1aa', marginBottom: 14 }}>CHECKBOX</div>
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 5, backgroundColor: '#18181b' }}>
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+        </div>
+        <div style={{ display: 'flex', fontSize: 14, color: '#18181b', marginLeft: 10 }}>Accept terms</div>
+      </div>
+    </div>
+
+    {/* Switch */}
+    <div style={{ display: 'flex', flexDirection: 'column', width: 244, marginRight: 0, marginBottom: 38 }}>
+      <div style={{ display: 'flex', fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#a1a1aa', marginBottom: 14 }}>SWITCH</div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', width: 42, height: 24, borderRadius: 999, backgroundColor: '#18181b', padding: 2 }}>
+        <div style={{ display: 'flex', width: 20, height: 20, borderRadius: 999, backgroundColor: '#ffffff', boxShadow: '0 1px 3px rgba(0,0,0,0.25)' }} />
+      </div>
+    </div>
+
+    {/* Avatar */}
+    <div style={{ display: 'flex', flexDirection: 'column', width: 244, marginRight: 22, marginBottom: 0 }}>
+      <div style={{ display: 'flex', fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#a1a1aa', marginBottom: 14 }}>AVATAR</div>
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44, borderRadius: 999, backgroundColor: '#e4e4e7', color: '#52525b', fontSize: 15, fontWeight: 600, border: '2px solid #ffffff' }}>CN</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44, borderRadius: 999, backgroundColor: '#18181b', color: '#fafafa', fontSize: 15, fontWeight: 600, border: '2px solid #ffffff', marginLeft: -12 }}>AB</div>
+      </div>
+    </div>
+
+    {/* Slider */}
+    <div style={{ display: 'flex', flexDirection: 'column', width: 244, marginRight: 22, marginBottom: 0 }}>
+      <div style={{ display: 'flex', fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#a1a1aa', marginBottom: 14 }}>SLIDER</div>
+      <div style={{ display: 'flex', position: 'relative', alignItems: 'center', width: 200, height: 16 }}>
+        <div style={{ display: 'flex', position: 'absolute', top: 5, left: 0, width: 200, height: 6, borderRadius: 999, backgroundColor: '#e4e4e7' }} />
+        <div style={{ display: 'flex', position: 'absolute', top: 5, left: 0, width: 108, height: 6, borderRadius: 999, backgroundColor: '#18181b' }} />
+        <div style={{ display: 'flex', position: 'absolute', top: 0, left: 100, width: 16, height: 16, borderRadius: 999, backgroundColor: '#ffffff', border: '2px solid #18181b' }} />
+      </div>
+    </div>
+
+    {/* Progress */}
+    <div style={{ display: 'flex', flexDirection: 'column', width: 244, marginRight: 22, marginBottom: 0 }}>
+      <div style={{ display: 'flex', fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#a1a1aa', marginBottom: 14 }}>PROGRESS</div>
+      <div style={{ display: 'flex', width: 200, height: 8, borderRadius: 999, backgroundColor: '#f4f4f5' }}>
+        <div style={{ display: 'flex', width: 132, height: 8, borderRadius: 999, backgroundColor: '#18181b' }} />
+      </div>
+    </div>
+
+    {/* Tabs */}
+    <div style={{ display: 'flex', flexDirection: 'column', width: 244, marginRight: 0, marginBottom: 0 }}>
+      <div style={{ display: 'flex', fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#a1a1aa', marginBottom: 14 }}>TABS</div>
+      <div style={{ display: 'flex', alignSelf: 'flex-start', alignItems: 'center', backgroundColor: '#f4f4f5', borderRadius: 9, padding: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#ffffff', color: '#09090b', fontSize: 13, fontWeight: 500, borderRadius: 6, padding: '6px 16px', marginRight: 4, boxShadow: '0 1px 2px rgba(0,0,0,0.08)' }}>Account</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#71717a', fontSize: 13, fontWeight: 500, borderRadius: 6, padding: '6px 16px' }}>Password</div>
+      </div>
+    </div>
+
+  </div>
+</div>

@@ -228,7 +228,7 @@ function GitCommitMessageEditor({
           onClick={onCancel}
           disabled={isLoading}
         >
-          Cancel
+          Cancelar
         </Button>
         <Button
           size="sm"
@@ -237,7 +237,7 @@ function GitCommitMessageEditor({
           className="bg-green-600 text-white hover:bg-green-700"
         >
           <Check size={14} />
-          {isLoading ? "Saving..." : "Save Message & Approve"}
+          {isLoading ? "Salvando..." : "Salvar mensagem e aprovar"}
         </Button>
       </div>
     </div>
@@ -379,7 +379,7 @@ export function ToolApprovalInterrupt({
           className="text-yellow-600 dark:text-yellow-400"
         />
         <span className="text-xs font-semibold uppercase tracking-wider">
-          Approval Required
+          Aprovação necessária
         </span>
         {isGitCommit && (
           <span className="ml-auto flex items-center gap-1 rounded-sm bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">
@@ -405,7 +405,7 @@ export function ToolApprovalInterrupt({
       <div className="mt-4 rounded-sm border border-border bg-background p-3">
         <div className="mb-2 flex items-center gap-2">
           <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Tool
+            Ferramenta
           </span>
           <p className="font-mono text-sm font-medium text-foreground">
             {actionRequest.name}
@@ -430,7 +430,7 @@ export function ToolApprovalInterrupt({
           ) : (
             <div>
               <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Edit Arguments
+                Editar argumentos
               </span>
               <div className="mt-2 space-y-3">
                 {Object.entries(actionRequest.args).map(([key, value]) => (
@@ -465,11 +465,11 @@ export function ToolApprovalInterrupt({
           <div>
             <div className="mb-1 flex items-center justify-between">
               <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Arguments
+                Argumentos
               </span>
               {hasDiff && (
                 <span className="font-mono text-xs text-muted-foreground">
-                  full JSON below — see diff above for changes
+                  JSON completo abaixo — veja o diff acima para as mudanças
                 </span>
               )}
             </div>
@@ -502,12 +502,12 @@ export function ToolApprovalInterrupt({
       {showRejectionInput && !isEditing && (
         <div className="mb-4 mt-4">
           <label className="mb-2 block text-xs font-medium text-foreground">
-            Rejection Message (optional)
+            Mensagem de recusa (opcional)
           </label>
           <Textarea
             value={rejectionMessage}
             onChange={(e) => setRejectionMessage(e.target.value)}
-            placeholder="Explain why you're rejecting this action..."
+            placeholder="Explique por que está recusando esta ação..."
             className="text-sm"
             rows={2}
             disabled={isLoading}
@@ -519,7 +519,7 @@ export function ToolApprovalInterrupt({
       <div className="mt-4 flex flex-wrap gap-2">
         {isEditing ? (
           // Em edit mode, GitCommitMessageEditor já tem seus próprios botões
-          // (Save / Cancel). Para outras tools, mostramos Cancel + Save & Approve.
+          // (Salvar / Cancelar). Para outras tools, mostramos Cancelar + Salvar e aprovar.
           !isGitCommit && (
             <>
               <Button
@@ -528,7 +528,7 @@ export function ToolApprovalInterrupt({
                 onClick={cancelEditing}
                 disabled={isLoading}
               >
-                Cancel
+                Cancelar
               </Button>
               <Button
                 size="sm"
@@ -537,7 +537,7 @@ export function ToolApprovalInterrupt({
                 className="bg-green-600 text-white hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-700"
               >
                 <Check size={14} />
-                {isLoading ? "Saving..." : "Save & Approve"}
+                {isLoading ? "Salvando..." : "Salvar e aprovar"}
               </Button>
             </>
           )
@@ -552,7 +552,7 @@ export function ToolApprovalInterrupt({
               }}
               disabled={isLoading}
             >
-              Cancel
+              Cancelar
             </Button>
             <Button
               variant="destructive"
@@ -560,7 +560,7 @@ export function ToolApprovalInterrupt({
               onClick={handleRejectConfirm}
               disabled={isLoading}
             >
-              {isLoading ? "Rejecting..." : "Confirm Reject"}
+              {isLoading ? "Recusando..." : "Confirmar recusa"}
             </Button>
           </>
         ) : (
@@ -574,7 +574,7 @@ export function ToolApprovalInterrupt({
                 className="text-destructive hover:bg-destructive/10"
               >
                 <X size={14} />
-                Reject
+                Recusar
               </Button>
             )}
             {allowedDecisions.includes("edit") && (
@@ -585,7 +585,7 @@ export function ToolApprovalInterrupt({
                 disabled={isLoading}
               >
                 <Pencil size={14} />
-                {isGitCommit ? "Edit Message" : "Edit"}
+                {isGitCommit ? "Editar mensagem" : "Editar"}
               </Button>
             )}
             {allowedDecisions.includes("approve") && (
@@ -599,7 +599,7 @@ export function ToolApprovalInterrupt({
                 )}
               >
                 <Check size={14} />
-                {isLoading ? "Approving..." : "Approve"}
+                {isLoading ? "Aprovando..." : "Aprovar"}
               </Button>
             )}
           </>

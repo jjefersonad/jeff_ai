@@ -208,6 +208,53 @@ def test_crm_field_definitions_unique_user_entity_key(
     assert "field_type IN ('text', 'number', 'boolean')" in executed_sql
 
 
+def test_crm_contacts_whatsapp_opt_in_column_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """REQ-006: coluna whatsapp_opt_in BOOLEAN NOT NULL DEFAULT false.
+
+    CREATE TABLE (instalações novas) e ALTER ADD COLUMN IF NOT EXISTS
+    (bancos existentes) — o segundo ensure é idempotente.
+    """
+    fake_conn = _FakeConnection()
+    monkeypatch.setattr(schema.psycopg, "connect", lambda *a, **kw: fake_conn)
+
+    schema.ensure_crm_schema("postgresql://fake")
+    first_run = list(fake_conn._cursor.executed)
+    schema.ensure_crm_schema("postgresql://fake")
+    second_run = fake_conn._cursor.executed[len(first_run) :]
+
+    first_sql = "\n".join(first_run)
+    second_sql = "\n".join(second_run)
+    create_sql = next(
+        stmt for stmt in first_run if "CREATE TABLE IF NOT EXISTS crm_contacts" in stmt
+    )
+    alter_sql = (
+        "ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS "
+        "whatsapp_opt_in BOOLEAN NOT NULL DEFAULT false"
+    )
+
+    assert "whatsapp_opt_in BOOLEAN NOT NULL DEFAULT false" in create_sql
+    assert alter_sql in first_sql
+    assert alter_sql in second_sql
+
+
+def test_crm_repository_contact_sql_includes_whatsapp_opt_in() -> None:
+    """REQ-006: repositório inclui whatsapp_opt_in em colunas, INSERT e UPDATE."""
+    from src.infrastructure.persistence.crm_repository import _CONTACT_COLUMNS
+
+    src = (
+        Path(__file__).parent.parent
+        / "src"
+        / "infrastructure"
+        / "persistence"
+        / "crm_repository.py"
+    ).read_text()
+    assert "whatsapp_opt_in" in _CONTACT_COLUMNS
+    assert "contact.whatsapp_opt_in" in src
+    assert "whatsapp_opt_in = %s" in src
+
+
 def test_crm_schema_module_does_not_import_sqlalchemy() -> None:
     src = (
         Path(__file__).parent.parent

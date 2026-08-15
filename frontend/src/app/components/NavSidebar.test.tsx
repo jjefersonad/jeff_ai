@@ -169,6 +169,116 @@ describe("NavSidebar — responsive rendering unaffected by hook extraction (mob
   });
 });
 
+describe("NavSidebar — primary nav labels pt-BR (saas-empresario-br-task-ux-2 unit-1 / REQ-003)", () => {
+  const ENGLISH_LABELS = ["Chat", "Images", "MCP Servers", "Email"] as const;
+  const ENGLISH_DESCRIPTIONS = [
+    "Back to the conversation",
+    "Browse generated and reference images",
+    "Manage Model Context Protocol servers",
+    "Token usage by period (admin)",
+    "Link your account to other channels (WhatsApp, Telegram)",
+    "Manage scheduled tasks",
+    "Contacts, companies, and deals",
+    "Inbox and connected IMAP/SMTP accounts",
+  ] as const;
+
+  const labelByHref = (href: string) =>
+    NAV_ENTRIES.find((entry) => entry.href === href)?.label;
+
+  const descriptionByHref = (href: string) =>
+    NAV_ENTRIES.find((entry) => entry.href === href)?.description;
+
+  it("WHEN NAV_ENTRIES is inspected THEN no visible item uses an English label", () => {
+    for (const entry of NAV_ENTRIES) {
+      expect(ENGLISH_LABELS).not.toContain(entry.label);
+    }
+    for (const entry of getVisibleNavEntries("user")) {
+      expect(ENGLISH_LABELS).not.toContain(entry.label);
+    }
+    for (const entry of getVisibleNavEntries("admin")) {
+      expect(ENGLISH_LABELS).not.toContain(entry.label);
+    }
+  });
+
+  it("WHEN NAV_ENTRIES is inspected THEN English labels map to Conversas, Imagens, Servidores MCP, E-mail", () => {
+    expect(labelByHref("/")).toBe("Conversas");
+    expect(labelByHref("/images")).toBe("Imagens");
+    expect(labelByHref("/mcp-servers")).toBe("Servidores MCP");
+    expect(labelByHref("/email")).toBe("E-mail");
+  });
+
+  it("WHEN NAV_ENTRIES is inspected THEN Integrações, Agendamentos, CRM, Consumo, Usuários remain in Portuguese", () => {
+    expect(labelByHref("/integrations")).toBe("Integrações");
+    expect(labelByHref("/scheduling")).toBe("Agendamentos");
+    expect(labelByHref("/crm")).toBe("CRM");
+    expect(labelByHref("/usage")).toBe("Consumo");
+    expect(labelByHref("/admin/users")).toBe("Usuários");
+  });
+
+  it("WHEN NAV_ENTRIES is inspected THEN descriptions that were English are pt-BR equivalents", () => {
+    for (const entry of NAV_ENTRIES) {
+      expect(ENGLISH_DESCRIPTIONS).not.toContain(entry.description);
+    }
+    expect(descriptionByHref("/")).toBe("Voltar para a conversa");
+    expect(descriptionByHref("/images")).toBe(
+      "Ver imagens geradas e de referência"
+    );
+    expect(descriptionByHref("/mcp-servers")).toBe(
+      "Gerenciar servidores Model Context Protocol"
+    );
+    expect(descriptionByHref("/email")).toBe(
+      "Caixa de entrada e contas IMAP/SMTP conectadas"
+    );
+    expect(descriptionByHref("/usage")).toBe("Uso de tokens por período (admin)");
+    expect(descriptionByHref("/integrations")).toBe(
+      "Vincule sua conta a outros canais (WhatsApp, Telegram)"
+    );
+    expect(descriptionByHref("/scheduling")).toBe("Gerenciar tarefas agendadas");
+    expect(descriptionByHref("/crm")).toBe("Contatos, empresas e negócios");
+    expect(descriptionByHref("/admin/users")).toBe("Gerenciar usuários (admin)");
+  });
+});
+
+describe("NavSidebar — sidebar header and MCP for role=user (saas-empresario-br-task-ux-2 unit-2 / REQ-003)", () => {
+  beforeEach(() => {
+    mockUseAuth.mockReset();
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      isRehydrating: false,
+      user: { username: "alice", role: "user" },
+    });
+  });
+
+  it("WHEN role=user THEN the sidebar header is Menu and not Navigation", () => {
+    render(<NavSidebar />);
+
+    expect(screen.getByText("Menu")).toBeInTheDocument();
+    expect(screen.queryByText("Navigation")).not.toBeInTheDocument();
+  });
+
+  it("WHEN role=user THEN Servidores MCP remains listed (renamed, not hidden)", () => {
+    render(<NavSidebar />);
+
+    const mcp = screen.getByRole("link", { name: /servidores mcp/i });
+    expect(mcp).toBeInTheDocument();
+    expect(mcp).toHaveAttribute("href", "/mcp-servers");
+    expect(
+      getVisibleNavEntries("user").some((entry) => entry.href === "/mcp-servers")
+    ).toBe(true);
+  });
+});
+
 describe("NavSidebar — Usuários entry hidden for non-admin (user-management-frontend-5 unit-2 / REQ-005)", () => {
   beforeEach(() => {
     mockUseAuth.mockReset();

@@ -62,10 +62,11 @@ class RenderHtmlDocument:
         # Converter primeiro — falha não deixa arquivo parcial em disco.
         payload = await converter.convert(html=safe_html, css=css, kind=kind)
 
-        kind_dir = self._output_base_dir / kind
-        kind_dir.mkdir(parents=True, exist_ok=True)
+        # Layout flat `files/<user_id>/docs/` (session-file-sandbox D5):
+        # `output_base_dir` já é o diretório final; kind só entra na URL.
+        self._output_base_dir.mkdir(parents=True, exist_ok=True)
         name = datetime.datetime.now().strftime("%Y%m%d%H%M%S%f") + _EXTENSIONS[kind]
-        path = kind_dir / name
+        path = self._output_base_dir / name
         path.write_bytes(payload)
         url = f"{self._url_prefix}/{kind}/{name}"
 

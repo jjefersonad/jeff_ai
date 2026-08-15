@@ -170,15 +170,16 @@ except ImportError as exc:
 import base64
 from fastapi.testclient import TestClient
 
-# Aponta REFERENCES_DIR para /tmp via monkeypatch de atributo de módulo.
+import os
 import src.infrastructure.web.images_router as ir
-ref_dir = Path(tempfile.mkdtemp(prefix="ref-"))
-ir.REFERENCES_DIR = ref_dir
+from unittest.mock import AsyncMock
+
+files_dir = Path(tempfile.mkdtemp(prefix="files-"))
+os.environ["FILES_DIR"] = str(files_dir)
+ir.record_ownership = AsyncMock()
 
 from src.infrastructure.web.webapp import app  # noqa: E402
 
-# `require_auth` (task-rest-3) agora protege /api/references por padrão;
-# este teste cobre python-multipart, não auth, então faz override direto.
 from src.infrastructure.auth.dependencies import require_auth  # noqa: E402
 from src.infrastructure.auth.users import User  # noqa: E402
 

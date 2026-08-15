@@ -24,7 +24,7 @@ def test_pyproject_and_dockerfile_have_no_fpdf2_runtime_dep() -> None:
 
 def test_create_pdf_factory_uses_weasyprint_not_pdf_writer() -> None:
     """Unit-2: factory canônica → WeasyPrintPdfConverter, não PdfWriter."""
-    render = pdf_tool._build_pdf_render()
+    render = pdf_tool._build_pdf_render(Path('/tmp'))
     converter = render._converters["pdf"]
     assert isinstance(converter, WeasyPrintPdfConverter)
     src = Path(pdf_tool.__file__).read_text(encoding="utf-8")

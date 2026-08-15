@@ -275,17 +275,18 @@ async def test_resolve_whatsapp_user_id_ignores_other_phone_numbers(
     assert await store.resolve_whatsapp_user_id("5511888880000") is None
 
 
-async def test_record_ownership_skips_insert_without_user_id(
+async def test_record_ownership_fails_closed_without_user_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Sem `user_id` resolvível, nenhuma linha é inserida (mesmo comportamento
-    "zero servidores" adotado por `mcp_tools_middleware` para sessões sem
-    `user_id` resolvível)."""
+    """Sem `user_id` resolvível, falha fechado (session-file-sandbox D8)."""
+    from src.infrastructure.ownership.session_writers import MissingUserIdentityError
+
     _patch_config(monkeypatch, None)
     cursor = _FakeCursor()
     _patch_pool(monkeypatch, cursor)
 
-    await store.record_ownership(kind="docx", filename="report.docx")
+    with pytest.raises(MissingUserIdentityError):
+        await store.record_ownership(kind="docx", filename="report.docx")
 
     assert cursor.executed == []
 

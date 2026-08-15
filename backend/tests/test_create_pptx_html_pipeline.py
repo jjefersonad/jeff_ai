@@ -15,7 +15,7 @@ from src.models.pptx_document import PptxDocumentInput, PptxSlideInput
 @pytest.fixture
 def documents_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "documents"
-    monkeypatch.setattr(pptx_tool, "_documents_base_dir", lambda: root)
+    monkeypatch.setattr(pptx_tool, "require_user_docs_dir", AsyncMock(return_value=root))
     monkeypatch.setattr(
         pptx_tool,
         "_document_url_prefix",
@@ -60,7 +60,7 @@ async def test_no_slides_rejects_without_file(documents_root: Path) -> None:
 
     assert "error" in out
     assert "path" not in out
-    pptx_dir = documents_root / "pptx"
+    pptx_dir = documents_root
     assert not pptx_dir.exists() or list(pptx_dir.glob("*.pptx")) == []
 
 

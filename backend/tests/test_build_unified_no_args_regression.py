@@ -24,14 +24,23 @@ from unittest.mock import patch
 from src.agents.unified import agent as agent_module
 from src.agents.unified.agent import (
     _SYSTEM_PROMPT,
+    _TOOL_NAMES,
     _UNIFIED_SUBAGENTS,
     _UNIFIED_TOOLS,
     _interrupt_on,
     build_unified,
 )
+from src.agents.unified.chat_attachment_preprocessing_middleware import (
+    ChatAttachmentPreprocessingMiddleware,
+)
 from src.agents.unified.envelope_middleware import EnvelopeMiddleware
 from src.agents.unified.envelope_proposal import EnvelopeLifecycleMiddleware
+from src.agents.unified.mcp_tool_availability import McpToolAvailabilityMiddleware
 from src.agents.unified.mcp_tools_middleware import McpToolsMiddleware
+from src.agents.unified.role_scoped_tools_middleware import (
+    USER_DEV_TOOL_DENYLIST,
+    RoleScopedToolsMiddleware,
+)
 from src.agents.unified.scoped_skills_middleware import ScopedSkillsMiddleware
 from src.models.fallback_model import unified_model
 
@@ -80,15 +89,19 @@ def test_build_unified_without_args_keeps_same_interrupt_on() -> None:
 
 
 def test_build_unified_without_args_keeps_same_middleware_types_and_order() -> None:
-    """`middleware=[...]` (Decision D1, envelope-7) precisa continuar com as
-    mesmas 4 classes, na mesma ordem — a ordem importa para o envelope
-    (`EnvelopeLifecycleMiddleware` antes de `EnvelopeMiddleware`)."""
+    """`middleware=[...]` ordem canônica (D9 session-file-sandbox):
+    EnvelopeLifecycle → McpTools* → RoleScoped → Envelope →
+    ChatAttachmentPreprocessing → ScopedSkills.
+    """
     kwargs = _call_build_unified_and_capture_kwargs()
     middleware_types = [type(m) for m in kwargs["middleware"]]
     assert middleware_types == [
         EnvelopeLifecycleMiddleware,
         McpToolsMiddleware,
+        McpToolAvailabilityMiddleware,
+        RoleScopedToolsMiddleware,
         EnvelopeMiddleware,
+        ChatAttachmentPreprocessingMiddleware,
         ScopedSkillsMiddleware,
     ]
 
@@ -106,3 +119,47 @@ def test_build_unified_without_args_still_defaults_checkpointer_and_store_to_non
     kwargs = _call_build_unified_and_capture_kwargs()
     assert kwargs["checkpointer"] is None
     assert kwargs["store"] is None
+
+
+def _unified_tool_names() -> set[str]:
+    return {
+        getattr(t, "name", None) or getattr(t, "__name__", "") for t in _UNIFIED_TOOLS
+    }
+
+
+def test_unified_tools_keep_shell_git_and_edit_file() -> None:
+    """REQ-007: `run_shell_command`, git e `edit_file` permanecem no set
+    registrado (`_UNIFIED_TOOLS` / `_TOOL_NAMES`). Esta change não filtra
+    o registro por role nem esconde essas tools via RoleScopedToolsMiddleware.
+    """
+    names = _unified_tool_names()
+    required = (
+        "run_shell_command",
+        "edit_file",
+        "git_status",
+        "git_diff",
+        "git_commit",
+        "git_apply_commit",
+        "git_branch",
+    )
+    for tool_name in required:
+        assert tool_name in names, f"{tool_name} missing from _UNIFIED_TOOLS"
+        assert tool_name in _TOOL_NAMES, f"{tool_name} missing from _TOOL_NAMES"
+
+    kwargs = _call_build_unified_and_capture_kwargs()
+    assert kwargs["tools"] is _UNIFIED_TOOLS
+    passed_names = {
+        getattr(t, "name", None) or getattr(t, "__name__", "") for t in kwargs["tools"]
+    }
+    for tool_name in required:
+        assert tool_name in passed_names, f"{tool_name} filtered out of create_deep_agent tools"
+
+    # Esta change não adiciona um RoleScopedToolsMiddleware extra para esconder
+    # shell/git/edit — o wiring existente (session-file-sandbox) permanece 1x.
+    middleware = kwargs["middleware"]
+    role_scoped = [m for m in middleware if isinstance(m, RoleScopedToolsMiddleware)]
+    assert len(role_scoped) == 1
+    # O set registrado NÃO é filtrado pela denylist: as tools continuam no grafo.
+    assert "run_shell_command" in USER_DEV_TOOL_DENYLIST
+    assert "edit_file" in USER_DEV_TOOL_DENYLIST
+    assert names & USER_DEV_TOOL_DENYLIST

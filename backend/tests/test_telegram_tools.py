@@ -76,6 +76,11 @@ def _fake_bot(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(telegram_tools, "Bot", _FakeBot)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy-token")
     monkeypatch.setenv("TELEGRAM_AUTHORIZED_CHAT_ID", "12345")
+
+    async def _allow_paths(_paths: list[str]) -> None:
+        return None
+
+    monkeypatch.setattr(telegram_tools, "authorize_tool_paths", _allow_paths)
     yield
     ChannelRegistry.reset()
 

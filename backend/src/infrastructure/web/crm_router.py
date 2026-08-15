@@ -78,6 +78,7 @@ class ContactCreateRequest(BaseModel):
     city: str | None = None
     state: str | None = None
     custom_values: dict[str, Any] | None = None
+    whatsapp_opt_in: bool = False
 
 
 class ContactUpdateRequest(BaseModel):
@@ -93,6 +94,7 @@ class ContactUpdateRequest(BaseModel):
     city: str | None = None
     state: str | None = None
     custom_values: dict[str, Any] | None = None
+    whatsapp_opt_in: bool | None = None
 
 
 class ContactResponse(BaseModel):
@@ -109,6 +111,7 @@ class ContactResponse(BaseModel):
     city: str | None
     state: str | None
     custom_values: dict[str, Any]
+    whatsapp_opt_in: bool
     archived_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -208,6 +211,7 @@ def _contact_response(contact: Contact) -> ContactResponse:
         city=contact.city,
         state=contact.state,
         custom_values=dict(contact.custom_values),
+        whatsapp_opt_in=contact.whatsapp_opt_in,
         archived_at=contact.archived_at,
         created_at=contact.created_at,
         updated_at=contact.updated_at,
@@ -276,6 +280,7 @@ async def create_contact_endpoint(
             city=body.city,
             state=body.state,
             custom_values=body.custom_values,
+            whatsapp_opt_in=body.whatsapp_opt_in,
         )
     except DomainError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -349,6 +354,7 @@ async def update_contact_endpoint(
             city=body.city,
             state=body.state,
             custom_values=body.custom_values,
+            whatsapp_opt_in=body.whatsapp_opt_in,
         )
     except DomainError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -25,18 +25,12 @@ from src.infrastructure.documents.html_template_repository import (
 )
 from src.infrastructure.documents.html_xlsx_converter import HtmlXlsxConverter
 from src.infrastructure.ownership.store import record_ownership
+from src.infrastructure.ownership.session_writers import (
+    MissingUserIdentityError,
+    require_user_docs_dir,
+)
 from src.models.html_document_input import HtmlDocumentInput
 from src.models.xlsx_document import XlsxDocumentInput, XlsxSheetInput
-
-# backend/outputs/documents
-_DEFAULT_DOCUMENTS = Path(__file__).resolve().parents[2] / "outputs" / "documents"
-
-
-def _documents_base_dir() -> Path:
-    env = os.environ.get("DOCUMENTS_DIR")
-    if env:
-        return Path(env)
-    return _DEFAULT_DOCUMENTS
 
 
 def _document_url_prefix() -> str:
@@ -48,10 +42,10 @@ def _document_url_prefix() -> str:
     return f"{base_url}/api/files"
 
 
-def _build_xlsx_render() -> RenderHtmlDocument:
+def _build_xlsx_render(output_dir: Path) -> RenderHtmlDocument:
     return RenderHtmlDocument(
         converters={"xlsx": HtmlXlsxConverter()},
-        output_base_dir=_documents_base_dir(),
+        output_base_dir=output_dir,
         url_prefix=_document_url_prefix(),
     )
 
@@ -117,7 +111,12 @@ async def create_xlsx_spreadsheet(
     except (DomainError, ValidationError) as exc:
         return {"error": f"Entrada inválida: {exc}"}
 
-    use_case = _build_xlsx_render()
+    try:
+        output_dir = await require_user_docs_dir()
+    except MissingUserIdentityError as exc:
+        return {"error": str(exc)}
+
+    use_case = _build_xlsx_render(output_dir)
     try:
         result = await use_case.execute(
             html=resolved_html,

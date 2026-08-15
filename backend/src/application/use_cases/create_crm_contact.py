@@ -38,6 +38,7 @@ class CreateCrmContact:
         city: str | None = None,
         state: str | None = None,
         custom_values: dict[str, Any] | None = None,
+        whatsapp_opt_in: bool = False,
     ) -> Contact:
         """Valida identificador (email ou phone) e persiste o contato.
 
@@ -80,6 +81,7 @@ class CreateCrmContact:
             city=_clean_optional(city),
             state=_clean_optional(state),
             custom_values=values,
+            whatsapp_opt_in=whatsapp_opt_in,
             created_at=now,
             updated_at=now,
         )
