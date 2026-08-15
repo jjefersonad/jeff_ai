@@ -74,6 +74,8 @@ services:
         condition: service_started
     volumes:
       - ./backend/outputs:/deps/backend/outputs
+      # Árvore por usuário (session-file-sandbox): files/<user_id>/{attachment,images,docs}.
+      - ./backend/files:/deps/backend/files
       - ./backend/langgraph.json:/deps/backend/langgraph.json
       # Persiste skills criadas/instaladas pelo assistant em runtime.
       - ./backend/skills:/deps/backend/skills
@@ -232,10 +234,13 @@ services:
     #   mount, o path absoluto `backend/outputs/...` (resolvido a partir do
     #   WORKDIR `/deps/backend` da imagem) apontaria para o diretório interno
     #   do container, sem os artefatos gerados pelo `backend`.
+    # - `files`: mesma justificativa para o layout por usuário
+    #   (session-file-sandbox) sob `backend/files/<user_id>/…`.
     # - `src`: mesma justificativa do `backend` — DEV/teste sem rebuild. Em
     #   produção real, esse mount é dispensável.
     volumes:
       - ./backend/outputs:/deps/backend/outputs
+      - ./backend/files:/deps/backend/files
       - ./backend/src:/deps/backend/src
     # `entrypoint:` (e não `command:`) é necessário porque o ENTRYPOINT da
     # imagem `langchain/langgraph-api:3.11` é `/storage/entrypoint.sh` que

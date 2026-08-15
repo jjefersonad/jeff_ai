@@ -25,18 +25,16 @@ from src.infrastructure.documents.html_template_repository import (
     FilesystemHtmlTemplateRepository,
 )
 from src.infrastructure.ownership.store import record_ownership
+from src.infrastructure.ownership.session_writers import (
+    MissingUserIdentityError,
+    require_user_docs_dir,
+)
+from src.infrastructure.ownership.tool_path_guard import (
+    PathNotAuthorizedError,
+    authorize_tool_paths,
+)
 from src.models.html_document_input import HtmlDocumentInput
 from src.models.pptx_document import PptxDocumentInput, PptxSlideInput
-
-# backend/outputs/documents
-_DEFAULT_DOCUMENTS = Path(__file__).resolve().parents[2] / "outputs" / "documents"
-
-
-def _documents_base_dir() -> Path:
-    env = os.environ.get("DOCUMENTS_DIR")
-    if env:
-        return Path(env)
-    return _DEFAULT_DOCUMENTS
 
 
 def _document_url_prefix() -> str:
@@ -48,10 +46,10 @@ def _document_url_prefix() -> str:
     return f"{base_url}/api/files"
 
 
-def _build_pptx_render() -> RenderHtmlDocument:
+def _build_pptx_render(output_dir: Path) -> RenderHtmlDocument:
     return RenderHtmlDocument(
         converters={"pptx": HtmlPptxConverter()},
-        output_base_dir=_documents_base_dir(),
+        output_base_dir=output_dir,
         url_prefix=_document_url_prefix(),
     )
 
@@ -151,7 +149,23 @@ async def create_pptx_presentation(
     except (DomainError, ValidationError) as exc:
         return {"error": f"Entrada inválida: {exc}"}
 
-    use_case = _build_pptx_render()
+    if not isinstance(payload, PptxDocumentInput):
+        image_paths = [
+            b.path
+            for b in (parsed.blocks or [])
+            if getattr(b, "type", None) == "image" and getattr(b, "path", None)
+        ]
+        try:
+            await authorize_tool_paths(image_paths)
+        except (PathNotAuthorizedError, MissingUserIdentityError) as exc:
+            return {"error": str(exc)}
+
+    try:
+        output_dir = await require_user_docs_dir()
+    except MissingUserIdentityError as exc:
+        return {"error": str(exc)}
+
+    use_case = _build_pptx_render(output_dir)
     try:
         result = await use_case.execute(
             html=resolved_html,

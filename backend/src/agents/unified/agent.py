@@ -71,10 +71,20 @@ from src.agents.unified.mcp_tool_availability import (
     McpToolAvailabilityMiddleware,
 )
 from src.agents.unified.mcp_tools_middleware import McpToolsMiddleware
+from src.agents.unified.chat_attachment_preprocessing_middleware import (
+    ChatAttachmentPreprocessingMiddleware,
+)
+from src.agents.unified.role_scoped_tools_middleware import RoleScopedToolsMiddleware
 from src.agents.unified.scoped_skills_middleware import ScopedSkillsMiddleware
 from src.agents.unified.tier_config import build_interrupt_on
-from src.composition.backends import FsRoute, make_backend_factory
+from src.composition.backends import (
+    FsRoute,
+    current_role,
+    make_backend_factory,
+    sync_user_id_from_configurable,
+)
 from src.composition.env import load_env
+from src.infrastructure.ownership.paths import files_dir, user_files_root
 from src.infrastructure.usage.callback import UsageRecordingCallback
 from src.infrastructure.usage.repository import UsageRepository
 from src.models.fallback_model import unified_model
@@ -134,6 +144,7 @@ from src.tools.memory_tools import (
 )
 from src.tools.preview_html_document_tool import preview_html_document
 from src.tools.read_document_tool import read_document
+from src.tools.list_owned_files_tool import list_owned_files
 from src.tools.scheduling_tools import (
     cancel_scheduled_task,
     create_scheduled_task,
@@ -384,6 +395,13 @@ usuário.
 # delegação via `task()` e não precisam de suas tools registradas no
 # orquestrador (apenas os nomes importam).
 
+# Tools geradas aprovadas (self-extension). Nomes capturados para D15 —
+# RoleScopedToolsMiddleware omite/bloqueia para non-admin.
+_APPROVED_TOOLS: list = load_approved_tools()
+_APPROVED_TOOL_NAMES: frozenset[str] = frozenset(
+    getattr(t, "name", None) or getattr(t, "__name__", "") for t in _APPROVED_TOOLS
+)
+
 _UNIFIED_TOOLS: list = [
     # --- Memória e utilidades ---------------------------------------------- #
     save_memory,
@@ -415,6 +433,8 @@ _UNIFIED_TOOLS: list = [
     # --- Documentos Office/PDF (markitdown) --------------------------------- #
     # Substitui a change `document-reading-tools`. Tier 1 (auto): só leitura.
     read_document,
+    # --- Arquivos do usuário da sessão (Tier 1) ----------------------------- #
+    list_owned_files,
     # --- Agendamento de tarefas (Tier 2) ----------------------------------- #
     # Cria/lista/cancela tarefas que o agente vai rodar no futuro. `create` e
     # `cancel` precisam do `task_scheduler` (registrar/desagendar trigger);
@@ -455,7 +475,7 @@ _UNIFIED_TOOLS: list = [
     find_external_skills,
     list_skills_in_repo,
     install_external_skill,
-    *load_approved_tools(),
+    *_APPROVED_TOOLS,
     # --- Shell (Tier 4) --------------------------------------------------- #
     run_shell_command,
     # --- Requirements (merge de artefatos) -------------------------------- #
@@ -501,7 +521,7 @@ _UNIFIED_SUBAGENTS: list = [
 
 
 # --------------------------------------------------------------------------- #
-# Backend factory unificado (CompositeBackend com 6 rotas)
+# Backend factory unificado (CompositeBackend role-aware)
 # --------------------------------------------------------------------------- #
 # A rota `/memories/` é SEMPRE montada. Antes ela era condicionada ao "modo" do
 # grafo, mas o sistema de modos nunca existiu de fato — tudo era construído como
@@ -513,33 +533,65 @@ _UNIFIED_SUBAGENTS: list = [
 # injetado pelo runtime via `langgraph.json` — e sempre funcionaram,
 # independentemente daqui. O que faltava era o acesso *filesystem* à memória
 # (`ls` / `read_file` sobre `/memories/`).
+#
+# session-file-sandbox: rotas dependem de `configurable.role` (e `user_id`
+# para montar `files/<uid>/`). Avaliadas a cada run via callable em
+# `make_backend_factory`.
 
 def _build_backend_factory():
-    """Constrói a `backend_factory` unificada.
+    """Constrói a `backend_factory` unificada (role-aware, D3/D11/D14).
 
-    Rotas:
-    - `/workspace/` → WORKSPACE_DIR (per-thread, scratch/artifacts)
-    - `/repo/`      → REPO_ROOT      (shared, código real)
-    - `/outputs/`   → OUTPUTS_DIR    (per-thread, requirements)
-    - `/specify/`   → SPECIFY_DIR    (shared, SDD scaffolding)
-    - `/skills/`    → SKILLS_DIR     (shared, skills carregadas pelo deepagents)
-    - `/memories/`  → StoreBackend   (cross-thread, sempre montada)
+    Rotas comuns:
+    - workspace per-thread (scratch)
+    - `/skills/` (admin gravável; user read-only)
+    - `/memories/` StoreBackend
+
+    Admin adicional: REPO_ROOT, OUTPUTS_DIR, SPECIFY, TEMPLATES, FILES_DIR raiz.
+    User adicional: `files/<user_id>/` se `user_id` resolvível; sem REPO/OUTPUTS/
+    specify/templates (REQ-001–005, D11).
     """
-    return make_backend_factory(
-        routes=[
+
+    def _routes_for_run() -> list[FsRoute]:
+        role = current_role()
+        routes: list[FsRoute] = [
             FsRoute(prefix=f"{WORKSPACE_DIR}", base_dir=WORKSPACE_DIR, per_thread=True),
-            FsRoute(prefix=f"{REPO_ROOT}",    base_dir=REPO_ROOT),
-            FsRoute(prefix=f"{OUTPUTS_DIR}",  base_dir=OUTPUTS_DIR, per_thread=True),
-            FsRoute(
-                prefix=f"{SPECIFY_DIR}",
-                base_dir=SPECIFY_DIR,
-                ensure_subpath="specs",
-            ),
-            FsRoute(prefix=f"{TEMPLATES_DIR}", base_dir=TEMPLATES_DIR),
-            FsRoute(prefix="/skills/",         base_dir=SKILLS_DIR),
-        ],
-        include_store=True,
-    )
+        ]
+        if role == "admin":
+            routes.extend(
+                [
+                    FsRoute(prefix=f"{REPO_ROOT}", base_dir=REPO_ROOT),
+                    FsRoute(prefix=f"{OUTPUTS_DIR}", base_dir=OUTPUTS_DIR, per_thread=True),
+                    FsRoute(
+                        prefix=f"{SPECIFY_DIR}",
+                        base_dir=SPECIFY_DIR,
+                        ensure_subpath="specs",
+                    ),
+                    FsRoute(prefix=f"{TEMPLATES_DIR}", base_dir=TEMPLATES_DIR),
+                    FsRoute(prefix="/skills/", base_dir=SKILLS_DIR),
+                    FsRoute(
+                        prefix=f"{files_dir()}",
+                        base_dir=files_dir(),
+                        ensure_exists=True,
+                    ),
+                ]
+            )
+        else:
+            routes.append(
+                FsRoute(prefix="/skills/", base_dir=SKILLS_DIR, read_only=True)
+            )
+            user_id = sync_user_id_from_configurable()
+            if user_id:
+                root = user_files_root(user_id)
+                routes.append(
+                    FsRoute(
+                        prefix=f"{root}",
+                        base_dir=root,
+                        ensure_exists=True,
+                    )
+                )
+        return routes
+
+    return make_backend_factory(routes=_routes_for_run, include_store=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -572,10 +624,12 @@ def build_unified(
 
     O retorno é um grafo LangGraph configurado com `recursion_limit=1000`.
 
-    `middleware=[EnvelopeLifecycleMiddleware(), EnvelopeMiddleware()]` liga o
-    harness de permissões por tarefa (task `envelope-7`) — antes disso,
-    `envelope-1..6` existiam completos e testados, mas isolados de qualquer
-    grafo real. Aditivo por design (Decision D1): remover a lista
+    `middleware=[EnvelopeLifecycleMiddleware(), McpToolsMiddleware(),
+    McpToolAvailabilityMiddleware(), RoleScopedToolsMiddleware(...),
+    EnvelopeMiddleware(), ChatAttachmentPreprocessingMiddleware(),
+    ScopedSkillsMiddleware(...)]` liga o harness de permissões por tarefa,
+    MCP, filtro por role, injeção path-first de anexos (session-file-sandbox
+    D6/D9) e skills escopadas. Aditivo por design: remover a lista
     `middleware=[...]` restaura o comportamento anterior sem tocar em mais
     nada. `EnvelopeMiddleware()` sem argumento começa com `granted=set()` —
     deny-all acima do piso, o caso mais restritivo (REQ-002).
@@ -607,7 +661,10 @@ def build_unified(
             EnvelopeLifecycleMiddleware(),
             McpToolsMiddleware(),
             McpToolAvailabilityMiddleware(),
+            # D9: RoleScoped depois do MCP load e antes do Envelope.
+            RoleScopedToolsMiddleware(approved_tool_names=_APPROVED_TOOL_NAMES),
             EnvelopeMiddleware(),
+            ChatAttachmentPreprocessingMiddleware(),
             ScopedSkillsMiddleware(backend=backend_factory, sources=["/skills/"]),
         ],
         checkpointer=checkpointer,

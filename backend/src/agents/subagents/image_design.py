@@ -4,8 +4,6 @@ Specialized subagent for planning and designing image generation requests.
 Operates under the deepagents framework; image generation runs without a
 human-approval gate (`create_image_from_prompt` executes immediately).
 """
-from pathlib import Path
-
 from deepagents import SubAgent
 
 from src.tools.deep_agent_tools import read_file, write_file
@@ -19,11 +17,6 @@ from src.tools.style_memory_tools import (
     load_design_style,
     save_design_style,
 )
-
-# Configurações de diretórios
-PATH_DIR = Path(__file__).parent.parent.parent
-OUTPUTS_DIR = PATH_DIR.resolve() / "outputs/"
-
 
 image_design_subagent = SubAgent(
     name="image_design_subagent",
@@ -80,12 +73,14 @@ As referências chegam de três formas — em TODAS, apenas coloque o `path` em 
 A tool `create_image_from_prompt` é quem carrega a imagem; você NUNCA deve tentar `read_file`
 no caminho da referência (ele é do servidor, não do seu workspace):
 1. **Path já fornecido** (upload): se a task/mensagem trouxer um caminho de imagem (ex.:
-   terminando em .jpg/.png em `outputs/references/`), use ESSE path diretamente em `references`.
+   terminando em .jpg/.png sob `files/<user_id>/attachment/`), use ESSE path diretamente em `references`.
    Se quiser validar antes, chame `check_reference_image(path)` — é a ÚNICA forma correta de
    conferir a referência. NUNCA use `read_file` no path (ele não está no seu workspace e falha).
+   NUNCA use o path legado `outputs/references/` — referências owned ficam em
+   `files/<user_id>/attachment/` (via upload, `fetch_reference_image`, ou `list_owned_files`).
    Não peça a imagem de novo; ela já existe no servidor.
-2. **URL**: chame ANTES `fetch_reference_image(url)` para baixá-la e obter o `path`; então use
-   esse path em `references`.
+2. **URL**: chame ANTES `fetch_reference_image(url)` para baixá-la e obter o `path` sob
+   `files/<user_id>/attachment/`; então use esse path em `references`.
 3. **Sem referência**: geração apenas a partir do texto (normal).
 
 ## Ferramentas Disponíveis

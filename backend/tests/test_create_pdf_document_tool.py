@@ -37,7 +37,8 @@ async def test_tool_success_returns_path_url_metadata(
         url="http://localhost:3000/api/files/pdf/20260807120000.pdf",
         metadata={"kind": "pdf", "title": "Relatório"},
     )
-    monkeypatch.setattr(pdf_tool, "_build_pdf_render", lambda: _FakeRender(result))
+    monkeypatch.setattr(pdf_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
+    monkeypatch.setattr(pdf_tool, "_build_pdf_render", lambda _output_dir=None: _FakeRender(result))
     monkeypatch.setattr(pdf_tool, "record_ownership", AsyncMock())
 
     out = await pdf_tool.create_pdf_document.coroutine(_blocks_payload())
@@ -52,6 +53,7 @@ async def test_tool_rejects_plain_string(
 ) -> None:
     """Unit: tool rejeita string simples."""
     called = AsyncMock()
+    monkeypatch.setattr(pdf_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
     monkeypatch.setattr(pdf_tool, "_build_pdf_render", called)
 
     out = await pdf_tool.create_pdf_document.coroutine("Só um título")
@@ -73,7 +75,8 @@ async def test_tool_records_ownership_pdf(
         url="/api/files/pdf/20260807120000.pdf",
         metadata={"kind": "pdf"},
     )
-    monkeypatch.setattr(pdf_tool, "_build_pdf_render", lambda: _FakeRender(result))
+    monkeypatch.setattr(pdf_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
+    monkeypatch.setattr(pdf_tool, "_build_pdf_render", lambda _output_dir=None: _FakeRender(result))
     record = AsyncMock()
     monkeypatch.setattr(pdf_tool, "record_ownership", record)
 
@@ -93,7 +96,8 @@ async def test_ownership_failure_is_fail_closed(
         url="/api/files/pdf/20260807120000.pdf",
         metadata={"kind": "pdf"},
     )
-    monkeypatch.setattr(pdf_tool, "_build_pdf_render", lambda: _FakeRender(result))
+    monkeypatch.setattr(pdf_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
+    monkeypatch.setattr(pdf_tool, "_build_pdf_render", lambda _output_dir=None: _FakeRender(result))
     monkeypatch.setattr(
         pdf_tool, "record_ownership", AsyncMock(side_effect=RuntimeError("db down"))
     )
@@ -109,7 +113,7 @@ async def test_legacy_blocks_still_resolve(
     tmp_path: Path,
 ) -> None:
     """PdfDocumentInput/HtmlDocumentInput com blocks ainda geram PDF."""
-    monkeypatch.setattr(pdf_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(pdf_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
     monkeypatch.setattr(pdf_tool, "_document_url_prefix", lambda: "/api/files")
     monkeypatch.setattr(pdf_tool, "record_ownership", AsyncMock())
 

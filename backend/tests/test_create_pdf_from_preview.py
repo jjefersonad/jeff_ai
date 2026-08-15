@@ -12,10 +12,11 @@ from src.models.html_document_input import HtmlDocumentInput
 
 @pytest.fixture
 def documents_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    root = tmp_path / "documents"
-    (root / "html").mkdir(parents=True)
-    (root / "pdf").mkdir(parents=True)
-    monkeypatch.setattr(pdf_tool, "_documents_base_dir", lambda: root)
+    root = tmp_path / "docs"
+    root.mkdir(parents=True)
+    monkeypatch.setattr(pdf_tool, "require_user_docs_dir", AsyncMock(return_value=root))
+    monkeypatch.setattr(pdf_tool, "resolve_user_id", AsyncMock(return_value="user-a"))
+    monkeypatch.setattr(pdf_tool, "user_kind_dir", lambda _uid, _kind: root)
     monkeypatch.setattr(
         pdf_tool,
         "_document_url_prefix",
@@ -25,7 +26,7 @@ def documents_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _seed_preview(documents_root: Path, name: str, body: str = "<h1>Preview</h1>") -> str:
-    path = documents_root / "html" / name
+    path = documents_root / name
     path.write_text(body, encoding="utf-8")
     return name
 
@@ -91,7 +92,7 @@ async def test_from_preview_unauthorized_rejects_without_pdf(
         AsyncMock(return_value=False),
     )
 
-    before = list((documents_root / "pdf").glob("*.pdf"))
+    before = list(documents_root.glob("*.pdf"))
     out = await pdf_tool.create_pdf_document.coroutine(
         HtmlDocumentInput(from_preview=name)
     )
@@ -100,7 +101,7 @@ async def test_from_preview_unauthorized_rejects_without_pdf(
     assert "path" not in out
     assert "url" not in out
     record.assert_not_called()
-    after = list((documents_root / "pdf").glob("*.pdf"))
+    after = list(documents_root.glob("*.pdf"))
     assert after == before
 
 
@@ -122,4 +123,4 @@ async def test_from_preview_missing_file_rejects(
 
     assert "error" in out
     assert "path" not in out
-    assert list((documents_root / "pdf").glob("*.pdf")) == []
+    assert list(documents_root.glob("*.pdf")) == []

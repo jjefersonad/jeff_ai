@@ -79,13 +79,21 @@ _FAKE_USER = User(
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch: pytest.MonkeyPatch):
     """Cliente FastAPI para o `webapp.app` (sem subir o servidor real).
 
     Faz override de `require_auth` (dependency global aplicada em `webapp.py`,
     task-rest-3) para um usuário fake — estas rotas passaram a exigir sessão
     e este teste cobre apenas o comportamento de `documents_router`, não auth.
+
+    `get_file_owner` → None: estes testes seedam o layout legado
+    `DOCUMENTS_DIR/<kind>/` e o fake user é admin (D12 fallback).
     """
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(
+        documents_router, "get_file_owner", AsyncMock(return_value=None)
+    )
     webapp.app.dependency_overrides[require_auth] = lambda: _FAKE_USER
     try:
         yield TestClient(webapp.app)
@@ -296,6 +304,9 @@ def test_documents_dir_override_via_env_var(
 
     monkeypatch.setenv("DOCUMENTS_DIR", str(root))
     reloaded = importlib.reload(documents_router)
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(reloaded, "get_file_owner", AsyncMock(return_value=None))
     webapp.app.dependency_overrides[require_auth] = lambda: _FAKE_USER
     try:
         assert reloaded.DOCUMENTS_DIR == root

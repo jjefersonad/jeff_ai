@@ -82,6 +82,7 @@ from src.domain.scheduling import ToolScope
 from src.infrastructure.agent_runtime._langgraph_postgres_uuid_patch import (
     install_postgres_uuid_patch,
 )
+from src.infrastructure.ownership.store import resolve_role_for_user_key
 from src.infrastructure.usage.user_key import resolve_user_key
 
 # Aplica o monkey-patch do bug upstream `langgraph-checkpoint-postgres>=3.0.2`
@@ -99,20 +100,24 @@ def _build_run_config(
     *,
     thread_id: str,
     user_key: str | None,
+    role: str | None = None,
 ) -> dict[str, Any]:
     """Monta a config LangGraph com identidade do run.
 
-    `configurable` carrega `thread_id` e `user_key` (resolvido via
-    `resolve_user_key` — sentinel `unknown` se ausente). O
-    `UsageRecordingCallback` vive no grafo (`build_unified` /
+    `configurable` carrega `thread_id`, `user_key` (resolvido via
+    `resolve_user_key` — sentinel `unknown` se ausente) e `role`
+    (`admin`/`user`; default fail-closed `user` quando omitido — session-file-sandbox
+    REQ-001). O `UsageRecordingCallback` vive no grafo (`build_unified` /
     `_unified_run_config`) — não aqui — para cobrir web + DirectRunner
     sem double-record (track-user-token-usage recording-5).
     """
     resolved = resolve_user_key(user_key=user_key)
+    effective_role = role if role in ("admin", "user") else "user"
     return {
         "configurable": {
             "thread_id": thread_id,
             "user_key": resolved,
+            "role": effective_role,
         },
     }
 
@@ -338,9 +343,11 @@ class LangGraphDirectAgentRunner(AgentRunnerPort):
                 AsyncPostgresStore.from_conn_string(self._postgres_uri) as store,
             ):
                 graph = build_unified(checkpointer=saver, store=store)
+                role = await resolve_role_for_user_key(user_key)
                 config = _build_run_config(
                     thread_id=thread_id,
                     user_key=user_key,
+                    role=role,
                 )
                 state = await graph.ainvoke(
                     {"messages": [("user", prompt)]},
@@ -418,9 +425,11 @@ class LangGraphDirectAgentRunner(AgentRunnerPort):
                 AsyncPostgresStore.from_conn_string(self._postgres_uri) as store,
             ):
                 graph = build_unified(checkpointer=saver, store=store)
+                role = await resolve_role_for_user_key(user_key)
                 config = _build_run_config(
                     thread_id=thread_id,
                     user_key=user_key,
+                    role=role,
                 )
                 state = await graph.ainvoke(
                     Command(resume={"decisions": list(decisions)}),

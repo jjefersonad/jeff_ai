@@ -31,7 +31,7 @@ def test_docx_block_does_not_duplicate_header_when_already_in_rows() -> None:
 
 async def test_tool_accepts_header_as_column_name_list(monkeypatch, tmp_path):
     """Reproduz o payload típico do LLM que antes falhava na validação."""
-    monkeypatch.setattr(docx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(docx_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
     monkeypatch.setattr(docx_tool, "_document_url_prefix", lambda: "/api/files")
     monkeypatch.setattr(docx_tool, "record_ownership", AsyncMock())
 

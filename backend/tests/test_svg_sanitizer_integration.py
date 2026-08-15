@@ -85,7 +85,8 @@ async def test_wellformed_svg_passes_through_with_sanitized_true(
 
     mock_use_case = MagicMock()
     mock_use_case.execute = _execute
-    monkeypatch.setattr(gt, "build_plan_and_create_image", lambda: mock_use_case)
+    monkeypatch.setattr(gt, "require_user_kind_dir", AsyncMock(return_value=tmp_path))
+    monkeypatch.setattr(gt, "build_plan_and_create_image", lambda output_dir=None: mock_use_case)
     monkeypatch.setattr(gt, "record_ownership", AsyncMock())
 
     result = await gt.create_image_from_prompt.coroutine("draw a diagram")
@@ -128,7 +129,8 @@ async def test_misplaced_br_stripped_and_file_parses(
 
     mock_use_case = MagicMock()
     mock_use_case.execute = _execute
-    monkeypatch.setattr(gt, "build_plan_and_create_image", lambda: mock_use_case)
+    monkeypatch.setattr(gt, "require_user_kind_dir", AsyncMock(return_value=tmp_path))
+    monkeypatch.setattr(gt, "build_plan_and_create_image", lambda output_dir=None: mock_use_case)
     monkeypatch.setattr(gt, "record_ownership", AsyncMock())
 
     result = await gt.create_image_from_prompt.coroutine("draw a diagram with bug")
@@ -181,7 +183,8 @@ async def test_sanitizer_failure_does_not_persist_broken_svg(
 
     mock_use_case = MagicMock()
     mock_use_case.execute = _execute
-    monkeypatch.setattr(gt, "build_plan_and_create_image", lambda: mock_use_case)
+    monkeypatch.setattr(gt, "require_user_kind_dir", AsyncMock(return_value=tmp_path))
+    monkeypatch.setattr(gt, "build_plan_and_create_image", lambda output_dir=None: mock_use_case)
     monkeypatch.setattr(gt, "record_ownership", AsyncMock())
 
     result = await gt.create_image_from_prompt.coroutine("draw something")
@@ -243,7 +246,8 @@ async def test_metadata_keys_are_additive_only(
 
     mock_use_case = MagicMock()
     mock_use_case.execute = _execute
-    monkeypatch.setattr(gt, "build_plan_and_create_image", lambda: mock_use_case)
+    monkeypatch.setattr(gt, "require_user_kind_dir", AsyncMock(return_value=tmp_path))
+    monkeypatch.setattr(gt, "build_plan_and_create_image", lambda output_dir=None: mock_use_case)
     monkeypatch.setattr(gt, "record_ownership", AsyncMock())
 
     result = await gt.create_image_from_prompt.coroutine("test additive keys")

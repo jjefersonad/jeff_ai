@@ -13,7 +13,7 @@ from src.models.html_document_input import HtmlDocumentInput
 @pytest.fixture
 def documents_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "documents"
-    monkeypatch.setattr(pdf_tool, "_documents_base_dir", lambda: root)
+    monkeypatch.setattr(pdf_tool, "require_user_docs_dir", AsyncMock(return_value=root))
     monkeypatch.setattr(
         pdf_tool,
         "_document_url_prefix",
@@ -42,7 +42,7 @@ async def test_html_payload_writes_pdf_via_pipeline(
     assert "/api/files/pdf/" in out["url"]
     path = Path(out["path"])
     assert path.is_file()
-    assert path.parent == documents_root / "pdf"
+    assert path.parent == documents_root
     assert path.read_bytes()[:4] == b"%PDF"
     record.assert_awaited_once_with(kind="pdf", filename=path.name)
 
@@ -105,5 +105,5 @@ async def test_invalid_plain_string_does_not_write_pdf(
 
     assert "error" in out
     assert "path" not in out
-    pdf_dir = documents_root / "pdf"
+    pdf_dir = documents_root
     assert not pdf_dir.exists() or list(pdf_dir.glob("*.pdf")) == []

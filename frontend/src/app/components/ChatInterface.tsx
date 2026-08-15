@@ -37,7 +37,7 @@ import type {
 import { Assistant, Message } from "@langchain/langgraph-sdk";
 import { extractStringFromMessageContent } from "@/app/utils/utils";
 import { useChatContext } from "@/providers/ChatProvider";
-import { uploadAttachment } from "@/lib/api";
+import { uploadAttachment, uploadReference } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useStickToBottom } from "use-stick-to-bottom";
 import { FilesPopover } from "@/app/components/TasksFilesSidebar";
@@ -183,14 +183,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant, assist
       setUploadError(null);
       setUploading(true);
       try {
-        const form = new FormData();
-        form.append("file", file);
-        const res = await fetch("/api/references", { method: "POST", body: form });
-        if (!res.ok) {
-          const detail = await res.json().catch(() => null);
-          throw new Error(detail?.detail || `Falha no upload (${res.status})`);
-        }
-        const data = await res.json();
+        const data = await uploadReference(file);
         setReference({ path: data.path, url: data.url, filename: data.filename });
       } catch (err) {
         setUploadError(err instanceof Error ? err.message : "Falha no upload");

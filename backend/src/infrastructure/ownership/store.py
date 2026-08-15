@@ -113,34 +113,42 @@ async def resolve_whatsapp_user_id(phone_number: str) -> str | None:
     return None
 
 
-async def record_ownership(*, kind: str, filename: str) -> None:
+async def record_ownership(
+    *,
+    kind: str,
+    filename: str,
+    user_id: str | None = None,
+) -> None:
     """Grava o dono do arquivo recém-gerado (`kind`/`filename`) em `generated_files`.
 
-    Sem `user_id` resolvível (`resolve_user_id()` retornou `None`), a chamada
-    é um no-op. Erros do Postgres SÃO propagados (fail-closed): a tool
-    geradora deve tratar exceção como falha na geração, não deixando o
-    arquivo "sem dono" em silêncio.
+    Sem `user_id` (argumento ou `resolve_user_id()`), falha fechado — não é
+    mais no-op silencioso (session-file-sandbox D8 / media REQ-007). Erros do
+    Postgres também propagam: a tool geradora trata exceção como falha na
+    geração, sem deixar arquivo "sem dono" em silêncio.
     """
-    user_id = await resolve_user_id()
-    if user_id is None:
-        return
+    from src.infrastructure.ownership.session_writers import MissingUserIdentityError
+
+    owner = user_id if user_id is not None else await resolve_user_id()
+    if owner is None:
+        raise MissingUserIdentityError(
+            "user_id is required to record ownership (no session identity)"
+        )
 
     pool = get_pool()
     async with pool.connection() as conn, conn.cursor() as cur:
         await cur.execute(
             "INSERT INTO generated_files (user_id, kind, filename) "
             "VALUES (%s, %s, %s) ON CONFLICT (kind, filename) DO NOTHING",
-            (user_id, kind, filename),
+            (owner, kind, filename),
         )
 
 
 async def list_owned_filenames(*, kind: str, user_id: str) -> frozenset[str]:
     """Nomes de arquivos (`kind`) gravados em `generated_files` para `user_id`.
 
-    Usada pelas listagens (REQ-003 de `media-ownership-authorization`) para
-    filtrar o resultado de uma varredura de diretório aos arquivos do próprio
-    usuário. `role admin` não chama esta função — vê a varredura completa,
-    sem filtro (ver `images_router.list_images`).
+    Usada pelas listagens (REQ-003 / session-file-sandbox D7) para montar a
+    lista a partir do DB + árvore `files/<user_id>/…` — não a partir de um
+    diretório global compartilhado.
     """
     pool = get_pool()
     async with pool.connection() as conn, conn.cursor() as cur:
@@ -150,6 +158,23 @@ async def list_owned_filenames(*, kind: str, user_id: str) -> frozenset[str]:
         )
         rows = await cur.fetchall()
     return frozenset(row[0] for row in rows)
+
+
+async def get_file_owner(*, kind: str, filename: str) -> str | None:
+    """Retorna o `user_id` dono de `(kind, filename)` em `generated_files`, ou None.
+
+    Usado pelos handlers HTTP para derivar o path físico
+    `files/<owner>/{docs|images|attachment}/<filename>` (D13) sem coluna
+    `storage_path`.
+    """
+    pool = get_pool()
+    async with pool.connection() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "SELECT user_id FROM generated_files WHERE kind = %s AND filename = %s",
+            (kind, filename),
+        )
+        row = await cur.fetchone()
+    return str(row[0]) if row is not None else None
 
 
 async def is_authorized(*, kind: str, filename: str, user: User) -> bool:
@@ -172,3 +197,33 @@ async def is_authorized(*, kind: str, filename: str, user: User) -> bool:
         row = await cur.fetchone()
 
     return row is not None and str(row[0]) == user.id
+
+
+async def resolve_role_for_user_key(user_key: str | None) -> str:
+    """Resolve `admin`/`user` a partir de um `user_key` explícito (DirectRunner).
+
+    Fail-closed: chave ausente, `unknown`, canal sem vínculo ou user
+    inexistente ⇒ `\"user\"` (session-file-sandbox REQ-001 / D2).
+    """
+    from src.infrastructure.auth.users import get_user_by_id
+
+    if not user_key or user_key == "unknown":
+        return "user"
+
+    user_id: str | None = None
+    if user_key.startswith(_WEB_USER_KEY_PREFIX):
+        user_id = user_key.removeprefix(_WEB_USER_KEY_PREFIX)
+    elif user_key.startswith(_TELEGRAM_USER_KEY_PREFIX):
+        chat_id = user_key.removeprefix(_TELEGRAM_USER_KEY_PREFIX)
+        user_id = await resolve_telegram_user_id(chat_id)
+    elif user_key.startswith(_WHATSAPP_USER_KEY_PREFIX):
+        phone_number = user_key.removeprefix(_WHATSAPP_USER_KEY_PREFIX)
+        user_id = await resolve_whatsapp_user_id(phone_number)
+
+    if not user_id:
+        return "user"
+
+    user = await get_user_by_id(user_id)
+    if user is None:
+        return "user"
+    return "admin" if user.role == "admin" else "user"

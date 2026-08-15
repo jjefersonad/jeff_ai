@@ -214,7 +214,7 @@ async def test_tool_returns_path_url_metadata(monkeypatch, tmp_path):
     """A tool usa o pipeline HTML e devolve o contrato esperado."""
     from unittest.mock import AsyncMock
 
-    monkeypatch.setattr(xlsx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(xlsx_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
     monkeypatch.setattr(xlsx_tool, "_document_url_prefix", lambda: "/api/files")
     monkeypatch.setattr(xlsx_tool, "record_ownership", AsyncMock())
 
@@ -241,7 +241,7 @@ async def test_tool_returns_error_on_invalid_input(monkeypatch, tmp_path):
     """REQ-005: entrada inválida vira `error` descritivo, sem arquivo parcial."""
     from unittest.mock import AsyncMock
 
-    monkeypatch.setattr(xlsx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(xlsx_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
     monkeypatch.setattr(xlsx_tool, "_document_url_prefix", lambda: "/api/files")
     monkeypatch.setattr(xlsx_tool, "record_ownership", AsyncMock())
 
@@ -260,11 +260,11 @@ async def test_tool_uses_html_xlsx_converter(monkeypatch, tmp_path):
 
     from src.infrastructure.documents.html_xlsx_converter import HtmlXlsxConverter
 
-    monkeypatch.setattr(xlsx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(xlsx_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
     monkeypatch.setattr(xlsx_tool, "_document_url_prefix", lambda: "/api/files")
     monkeypatch.setattr(xlsx_tool, "record_ownership", AsyncMock())
 
-    render = xlsx_tool._build_xlsx_render()
+    render = xlsx_tool._build_xlsx_render(tmp_path)
     assert isinstance(render._converters["xlsx"], HtmlXlsxConverter)
 
     result = await xlsx_tool.create_xlsx_spreadsheet.coroutine(

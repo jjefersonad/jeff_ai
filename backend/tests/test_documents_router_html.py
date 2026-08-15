@@ -103,6 +103,9 @@ def test_serve_html_file_inline(
     monkeypatch.setattr(
         documents_router, "is_authorized", AsyncMock(return_value=True)
     )
+    monkeypatch.setattr(
+        documents_router, "get_file_owner", AsyncMock(return_value=None)
+    )
 
     response = client.get("/api/files/html/test-diagram.html")
 
@@ -149,6 +152,7 @@ def test_serve_docx_still_has_attachment(
 
     monkeypatch.setattr(documents_router, "DOCUMENTS_DIR", tmp_path)
     monkeypatch.setattr(documents_router, "is_authorized", AsyncMock(return_value=True))
+    monkeypatch.setattr(documents_router, "get_file_owner", AsyncMock(return_value=None))
 
     app = FastAPI()
     app.include_router(documents_router.router)

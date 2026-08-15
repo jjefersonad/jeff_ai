@@ -32,7 +32,8 @@ async def test_records_ownership_with_kind_and_basename(
         url="/api/files/xlsx/20260708120000.xlsx",
         metadata={"kind": "xlsx"},
     )
-    monkeypatch.setattr(xlsx_tool, "_build_xlsx_render", lambda: _FakeRender(result))
+    monkeypatch.setattr(xlsx_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
+    monkeypatch.setattr(xlsx_tool, "_build_xlsx_render", lambda _output_dir=None: _FakeRender(result))
     record = AsyncMock()
     monkeypatch.setattr(xlsx_tool, "record_ownership", record)
 
@@ -51,7 +52,8 @@ async def test_ownership_failure_is_fail_closed(
         url="/api/files/xlsx/20260708120000.xlsx",
         metadata={"kind": "xlsx"},
     )
-    monkeypatch.setattr(xlsx_tool, "_build_xlsx_render", lambda: _FakeRender(result))
+    monkeypatch.setattr(xlsx_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
+    monkeypatch.setattr(xlsx_tool, "_build_xlsx_render", lambda _output_dir=None: _FakeRender(result))
     monkeypatch.setattr(
         xlsx_tool, "record_ownership", AsyncMock(side_effect=RuntimeError("db down"))
     )

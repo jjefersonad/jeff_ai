@@ -12,7 +12,7 @@ _MD_TABLE = "| A | B |\n|---|---|\n| 1 | 2 |"
 
 
 def _point_at(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(docx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(docx_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
     monkeypatch.setattr(docx_tool, "_document_url_prefix", lambda: "/api/files")
     monkeypatch.setattr(docx_tool, "record_ownership", AsyncMock())
 

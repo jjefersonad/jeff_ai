@@ -104,6 +104,10 @@ htmlcov/
 dmypy.json
 
 backend/outputs/*
+!backend/outputs/.gitkeep
+# Session-owned files (runtime volume): versiona só o .gitkeep; ignora trees files/<user_id>/**
+backend/files/**
+!backend/files/.gitkeep
 ollama_data/*
 
 .claude/

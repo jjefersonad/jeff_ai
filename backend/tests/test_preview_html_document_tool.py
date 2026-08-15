@@ -14,7 +14,7 @@ from src.models.html_document_input import HtmlDocumentInput
 @pytest.fixture
 def documents_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "documents"
-    monkeypatch.setattr(preview_tool, "_documents_base_dir", lambda: root)
+    monkeypatch.setattr(preview_tool, "require_user_docs_dir", AsyncMock(return_value=root))
     return root
 
 
@@ -49,7 +49,7 @@ async def test_preview_proposal_template_writes_html_and_records_ownership(
     assert "/api/files/html/" in out["url"]
     path = Path(out["path"])
     assert path.is_file()
-    assert path.parent == documents_root / "html"
+    assert path.parent == documents_root
     assert path.suffix == ".html"
     body = path.read_text(encoding="utf-8")
     assert "Acme" in body
@@ -71,8 +71,7 @@ async def test_preview_rejects_invalid_payload_without_file(
     assert "path" not in out
     assert "url" not in out
     record.assert_not_called()
-    html_dir = documents_root / "html"
-    assert not html_dir.exists() or list(html_dir.glob("*.html")) == []
+    assert list(documents_root.glob("*.html")) == []
 
 
 async def test_preview_ownership_failure_is_fail_closed(
@@ -131,7 +130,7 @@ async def test_two_previews_create_distinct_files(
     names = {Path(first["path"]).name, Path(second["path"]).name}
     assert len(names) == 2
     for name in names:
-        assert (documents_root / "html" / name).is_file()
+        assert (documents_root / name).is_file()
     assert record.await_count == 2
 
 
@@ -151,5 +150,4 @@ async def test_preview_rejects_html_and_template_together(
     out = await preview_tool.preview_html_document.coroutine(raw)
     assert "error" in out
     assert "path" not in out
-    html_dir = documents_root / "html"
-    assert not html_dir.exists() or list(html_dir.glob("*.html")) == []
+    assert list(documents_root.glob("*.html")) == []

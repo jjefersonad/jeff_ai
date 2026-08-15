@@ -304,6 +304,7 @@ TOOL_EFFECTS: Final[Mapping[str, tuple[Any, ...]]] = {
     "grep": _read_only(),
     "search_memory": _read_only(),
     "list_memories": _read_only(),
+    "list_owned_files": _read_only(),
     "get_sdd_state": _read_only(),
     "get_next_feature_number": _read_only(),
     "load_template": _read_only(),

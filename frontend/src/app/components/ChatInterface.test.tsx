@@ -39,6 +39,7 @@ vi.mock("use-stick-to-bottom", () => ({
 
 vi.mock("@/lib/api", () => ({
   uploadAttachment: vi.fn(),
+  uploadReference: vi.fn(),
 }));
 
 vi.mock("@/app/components/ChatMessage", () => ({
@@ -397,5 +398,56 @@ describe("ChatInterface — chat-empty-state-input (task-empty-3)", () => {
 
     const wrapper = screen.getByTestId("chat-input-dock");
     expect(wrapper.className).not.toMatch(/\bitems-center\b/);
+  });
+});
+
+describe("ChatInterface — saas-empresario-br-task-ux-3 unit-1 / REQ-004", () => {
+  beforeEach(() => {
+    mockUseChatContext.mockReset();
+  });
+
+  it("exports CHAT_EMPTY_JTBD with three literal prompts in JTBD order", async () => {
+    const mod = await import("./ChatInterface");
+    expect(
+      mod.CHAT_EMPTY_JTBD.map((item: { label: string; prompt: string }) => item.label)
+    ).toEqual([
+      "Falar com o Jeff",
+      "Registrar um cliente",
+      "Conectar meu WhatsApp",
+    ]);
+    expect(
+      mod.CHAT_EMPTY_JTBD.map((item: { label: string; prompt: string }) => item.prompt)
+    ).toEqual([
+      "Olá, Jeff. Preciso da sua ajuda no dia a dia do meu negócio.",
+      "Me ajuda a cadastrar um contato no CRM.",
+      "Como eu conecto o WhatsApp para falar com você pelo celular?",
+    ]);
+  });
+
+  it("shows three clickable pt-BR suggestions in order on an empty conversation", () => {
+    mockUseChatContext.mockReturnValue(baseChatContext({ messages: [] }));
+    render(<ChatInterface assistant={null} assistantId="unified" />);
+
+    const chips = screen.getAllByTestId("chat-empty-jtbd");
+    expect(chips).toHaveLength(3);
+    expect(chips.map((el) => el.textContent)).toEqual([
+      "Falar com o Jeff",
+      "Registrar um cliente",
+      "Conectar meu WhatsApp",
+    ]);
+    for (const chip of chips) {
+      expect(chip.tagName).toBe("BUTTON");
+      expect(chip).not.toBeDisabled();
+    }
+  });
+
+  it("does not render JTBD chips when the thread already has messages", () => {
+    mockUseChatContext.mockReturnValue(
+      baseChatContext({
+        messages: [{ id: "1", type: "human", content: "hi" }],
+      })
+    );
+    render(<ChatInterface assistant={null} assistantId="unified" />);
+    expect(screen.queryAllByTestId("chat-empty-jtbd")).toHaveLength(0);
   });
 });

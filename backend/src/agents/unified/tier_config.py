@@ -46,6 +46,8 @@ TIER_1_TOOLS: tuple[str, ...] = (
     # Substitui a change `document-reading-tools` (que previa 4 readers
     # DDD). Ver `src/tools/read_document_tool.py` para rationale.
     "read_document",
+    # session-file-sandbox REQ-003 — listagem owned (anexos + gerados).
+    "list_owned_files",
     # Buscas e execuções de teste.
     "grep_project",
     "search_memory",

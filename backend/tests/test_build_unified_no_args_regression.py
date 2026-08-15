@@ -29,9 +29,14 @@ from src.agents.unified.agent import (
     _interrupt_on,
     build_unified,
 )
+from src.agents.unified.chat_attachment_preprocessing_middleware import (
+    ChatAttachmentPreprocessingMiddleware,
+)
 from src.agents.unified.envelope_middleware import EnvelopeMiddleware
 from src.agents.unified.envelope_proposal import EnvelopeLifecycleMiddleware
+from src.agents.unified.mcp_tool_availability import McpToolAvailabilityMiddleware
 from src.agents.unified.mcp_tools_middleware import McpToolsMiddleware
+from src.agents.unified.role_scoped_tools_middleware import RoleScopedToolsMiddleware
 from src.agents.unified.scoped_skills_middleware import ScopedSkillsMiddleware
 from src.models.fallback_model import unified_model
 
@@ -80,15 +85,19 @@ def test_build_unified_without_args_keeps_same_interrupt_on() -> None:
 
 
 def test_build_unified_without_args_keeps_same_middleware_types_and_order() -> None:
-    """`middleware=[...]` (Decision D1, envelope-7) precisa continuar com as
-    mesmas 4 classes, na mesma ordem — a ordem importa para o envelope
-    (`EnvelopeLifecycleMiddleware` antes de `EnvelopeMiddleware`)."""
+    """`middleware=[...]` ordem canônica (D9 session-file-sandbox):
+    EnvelopeLifecycle → McpTools* → RoleScoped → Envelope →
+    ChatAttachmentPreprocessing → ScopedSkills.
+    """
     kwargs = _call_build_unified_and_capture_kwargs()
     middleware_types = [type(m) for m in kwargs["middleware"]]
     assert middleware_types == [
         EnvelopeLifecycleMiddleware,
         McpToolsMiddleware,
+        McpToolAvailabilityMiddleware,
+        RoleScopedToolsMiddleware,
         EnvelopeMiddleware,
+        ChatAttachmentPreprocessingMiddleware,
         ScopedSkillsMiddleware,
     ]
 
