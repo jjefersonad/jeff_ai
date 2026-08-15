@@ -1,0 +1,47 @@
+<!--
+  Split hero: copy on the left, a product/visual card on the right. Classic
+  landing layout. Replace the right panel with a screenshot or illustration.
+-->
+<div
+  style={{
+    display: 'flex',
+    height: '100%',
+    width: '100%',
+    alignItems: 'center',
+    fontFamily: 'Inter, sans-serif',
+    backgroundColor: '#ffffff',
+    padding: 72,
+  }}
+>
+  <div style={{ display: 'flex', flexDirection: 'column', flex: 1, paddingRight: 56 }}>
+    <div style={{ display: 'flex', fontSize: 62, fontWeight: 800, color: '#0f172a', letterSpacing: -2, lineHeight: 1.05 }}>Headline that wraps to two lines</div>
+    <div style={{ display: 'flex', fontSize: 22, color: '#64748b', marginTop: 20, lineHeight: 1.45 }}>A supporting paragraph with one clear benefit and no jargon for the reader to scan.</div>
+    <div style={{ display: 'flex', marginTop: 34 }}>
+      <div style={{ display: 'flex', backgroundColor: '#0f172a', color: '#ffffff', fontSize: 19, fontWeight: 600, borderRadius: 12, padding: '13px 28px' }}>Primary action</div>
+    </div>
+  </div>
+  <div
+    style={{
+      display: 'flex',
+      flexDirection: 'column',
+      width: 460,
+      height: 380,
+      borderRadius: 22,
+      backgroundColor: '#0b1020',
+      backgroundImage: 'radial-gradient(circle at 30% 20%, rgba(99,102,241,0.5), transparent 55%), radial-gradient(circle at 80% 80%, rgba(236,72,153,0.4), transparent 55%)',
+      border: '1px solid #1e293b',
+      boxShadow: '0 30px 60px rgba(15,23,42,0.25)',
+      padding: 28,
+    }}
+  >
+    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 20 }}>
+      <div style={{ display: 'flex', width: 12, height: 12, borderRadius: 999, backgroundColor: '#ef4444', marginRight: 8 }} />
+      <div style={{ display: 'flex', width: 12, height: 12, borderRadius: 999, backgroundColor: '#f59e0b', marginRight: 8 }} />
+      <div style={{ display: 'flex', width: 12, height: 12, borderRadius: 999, backgroundColor: '#22c55e' }} />
+    </div>
+    <div style={{ display: 'flex', width: '70%', height: 18, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.85)', marginBottom: 14 }} />
+    <div style={{ display: 'flex', width: '100%', height: 12, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.35)', marginBottom: 10 }} />
+    <div style={{ display: 'flex', width: '90%', height: 12, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.25)', marginBottom: 10 }} />
+    <div style={{ display: 'flex', width: '60%', height: 12, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+  </div>
+</div>

@@ -276,11 +276,11 @@ async def test_tool_returns_path_url_metadata(monkeypatch, tmp_path):
 
     from src.infrastructure.documents.html_pptx_converter import HtmlPptxConverter
 
-    monkeypatch.setattr(pptx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(pptx_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
     monkeypatch.setattr(pptx_tool, "_document_url_prefix", lambda: "/api/files")
     monkeypatch.setattr(pptx_tool, "record_ownership", AsyncMock())
 
-    render = pptx_tool._build_pptx_render()
+    render = pptx_tool._build_pptx_render(tmp_path)
     assert isinstance(render._converters["pptx"], HtmlPptxConverter)
 
     result = await pptx_tool.create_pptx_presentation.coroutine(
@@ -303,7 +303,7 @@ async def test_tool_returns_error_when_all_slides_invalid(monkeypatch, tmp_path)
     """REQ-005: nenhum slide válido → `error` descritivo, sem arquivo parcial."""
     from unittest.mock import AsyncMock
 
-    monkeypatch.setattr(pptx_tool, "_documents_base_dir", lambda: tmp_path)
+    monkeypatch.setattr(pptx_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
     monkeypatch.setattr(pptx_tool, "_document_url_prefix", lambda: "/api/files")
     monkeypatch.setattr(pptx_tool, "record_ownership", AsyncMock())
 

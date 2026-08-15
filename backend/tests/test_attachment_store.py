@@ -55,9 +55,10 @@ def _patch_pool(monkeypatch: pytest.MonkeyPatch, cursor: _FakeCursor) -> None:
 async def test_store_attachment_writes_file_and_inserts_row(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """REQ-004: grava em {output_dir}/{thread_id}/{attachment_id}.{ext} e insere
+    """REQ-004 / session-file-sandbox: grava em files/<uid>/attachment/ e insere
     exatamente uma linha em chat_attachments com thread_id/user_id/filename/
     content_type/size_bytes corretos."""
+    monkeypatch.setenv("FILES_DIR", str(tmp_path))
     cursor = _FakeCursor()
     _patch_pool(monkeypatch, cursor)
     data = b"%PDF-1.4 fake pdf bytes"
@@ -68,12 +69,11 @@ async def test_store_attachment_writes_file_and_inserts_row(
         data=data,
         filename="report.pdf",
         content_type="application/pdf",
-        output_dir=tmp_path,
     )
 
     saved_path = Path(result.storage_path)
     assert saved_path.exists()
-    assert saved_path.parent == tmp_path / "thread-123"
+    assert saved_path.parent == tmp_path / "user-abc" / "attachment"
     assert saved_path.suffix == ".pdf"
     assert saved_path.read_bytes() == data
 
@@ -93,6 +93,7 @@ async def test_store_attachment_generates_id_not_trusting_client_filename(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """O nome em disco é sempre `{attachment_id}{extensão}` — nunca o filename do cliente."""
+    monkeypatch.setenv("FILES_DIR", str(tmp_path))
     cursor = _FakeCursor()
     _patch_pool(monkeypatch, cursor)
 
@@ -102,7 +103,6 @@ async def test_store_attachment_generates_id_not_trusting_client_filename(
         data=b"hello",
         filename="../../etc/passwd",
         content_type="text/plain",
-        output_dir=tmp_path,
     )
 
     saved_path = Path(result.storage_path)

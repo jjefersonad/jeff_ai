@@ -35,7 +35,8 @@ async def test_records_ownership_with_kind_and_basename(
         url="/api/files/docx/20260708120000.docx",
         metadata={"kind": "docx"},
     )
-    monkeypatch.setattr(docx_tool, "_build_docx_render", lambda: _FakeRender(result))
+    monkeypatch.setattr(docx_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
+    monkeypatch.setattr(docx_tool, "_build_docx_render", lambda _output_dir=None: _FakeRender(result))
     record = AsyncMock()
     monkeypatch.setattr(docx_tool, "record_ownership", record)
 
@@ -55,7 +56,8 @@ async def test_ownership_failure_is_fail_closed(
         url="/api/files/docx/20260708120000.docx",
         metadata={"kind": "docx"},
     )
-    monkeypatch.setattr(docx_tool, "_build_docx_render", lambda: _FakeRender(result))
+    monkeypatch.setattr(docx_tool, "require_user_docs_dir", AsyncMock(return_value=tmp_path))
+    monkeypatch.setattr(docx_tool, "_build_docx_render", lambda _output_dir=None: _FakeRender(result))
     monkeypatch.setattr(
         docx_tool, "record_ownership", AsyncMock(side_effect=RuntimeError("db down"))
     )

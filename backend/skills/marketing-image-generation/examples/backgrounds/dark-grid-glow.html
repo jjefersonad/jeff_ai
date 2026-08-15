@@ -1,0 +1,16 @@
+<!--
+  Signature "patterncraft" look: dark grid with a soft radial glow on top.
+  Per-layer backgroundSize: glow fills 100%, grid tiles at 44px. Layer order
+  is top-to-bottom, so the glow sits above the grid.
+-->
+<div
+  style={{
+    display: 'flex',
+    height: '100%',
+    width: '100%',
+    backgroundColor: '#050507',
+    backgroundImage:
+      'radial-gradient(circle at 50% 30%, rgba(99,102,241,0.32), transparent 55%), linear-gradient(rgba(99,102,241,0.16) 1px, transparent 1px), linear-gradient(90deg, rgba(99,102,241,0.16) 1px, transparent 1px)',
+    backgroundSize: '100% 100%, 44px 44px, 44px 44px',
+  }}
+/>

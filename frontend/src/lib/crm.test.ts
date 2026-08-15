@@ -199,10 +199,72 @@ describe("buildContactWritePayload (crm-ext-task-frontend-3 unit-1 / REQ-ADD-001
       company_id: null,
       city: "Curitiba",
       state: "PR",
+      whatsapp_opt_in: false,
       custom_values: { segmento: "PME" },
     });
     expect(payload).not.toHaveProperty("created_at");
     expect(payload).not.toHaveProperty("updated_at");
+  });
+
+  it("includes whatsapp_opt_in in the write payload (saas-empresario-br-task-crm-ui-1 unit-2)", async () => {
+    const { buildContactWritePayload } = await import("./crm");
+    const optedIn = buildContactWritePayload({
+      name: "Ana",
+      email: "ana@x.com",
+      whatsapp_opt_in: true,
+    });
+    expect(optedIn.whatsapp_opt_in).toBe(true);
+
+    const optedOut = buildContactWritePayload({
+      name: "Ana",
+      email: "ana@x.com",
+      whatsapp_opt_in: false,
+    });
+    expect(optedOut.whatsapp_opt_in).toBe(false);
+  });
+});
+
+describe("DEAL_STAGE_LABELS (saas-empresario-br-task-crm-ui-2 unit-1 / REQ-007)", () => {
+  it("maps canonical Deal.stage values to pt-BR labels without changing persisted keys", async () => {
+    const { DEAL_STAGE_LABELS, dealStageLabel } = await import("./crm");
+    expect(DEAL_STAGE_LABELS).toEqual({
+      lead: "Lead",
+      qualified: "Qualificado",
+      proposal: "Proposta",
+      negotiation: "Negociação",
+      won: "Ganho",
+      lost: "Perdido",
+    });
+    expect(dealStageLabel("lead")).toBe("Lead");
+    expect(dealStageLabel("qualified")).toBe("Qualificado");
+    expect(dealStageLabel("proposal")).toBe("Proposta");
+    expect(dealStageLabel("negotiation")).toBe("Negociação");
+    expect(dealStageLabel("won")).toBe("Ganho");
+    expect(dealStageLabel("lost")).toBe("Perdido");
+    expect(dealStageLabel("unknown-stage")).toBe("unknown-stage");
+  });
+});
+
+function visibleCurrency(value: string | null): string | null {
+  return value?.replace(/\u00a0/g, " ") ?? null;
+}
+
+describe("formatDealValue (saas-empresario-br-task-crm-ui-2 unit-2 / REQ-007)", () => {
+  it("formats 1500 as R$ 1.500,00 not BRL 1500", async () => {
+    const { formatDealValue } = await import("./crm");
+    expect(visibleCurrency(formatDealValue(1500))).toBe("R$ 1.500,00");
+    expect(visibleCurrency(formatDealValue(1500, "BRL"))).toBe("R$ 1.500,00");
+    expect(visibleCurrency(formatDealValue(1500, null))).toBe("R$ 1.500,00");
+    expect(visibleCurrency(formatDealValue("1500"))).toBe("R$ 1.500,00");
+    expect(formatDealValue(1500)).not.toMatch(/BRL/);
+  });
+
+  it("returns null for missing values so the UI does not show BRL or undefined", async () => {
+    const { formatDealValue } = await import("./crm");
+    expect(formatDealValue(null)).toBeNull();
+    expect(formatDealValue(undefined)).toBeNull();
+    expect(formatDealValue("")).toBeNull();
+    expect(formatDealValue(Number.NaN)).toBeNull();
   });
 });
 

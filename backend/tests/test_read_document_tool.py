@@ -29,6 +29,18 @@ _SCRATCH_DIR = REPO_ROOT / "backend" / "tests" / "_tmp_read_doc"
 
 
 @pytest.fixture
+def admin_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Legacy tests assume admin can read under REPO_ROOT."""
+    import src.tools.read_document_tool as mod
+
+    monkeypatch.setattr(
+        mod,
+        "get_config",
+        lambda: {"configurable": {"role": "admin", "user_key": "web:admin"}},
+    )
+
+
+@pytest.fixture
 def scratch_dir():
     _SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
     yield _SCRATCH_DIR
@@ -129,33 +141,33 @@ class TestTruncate:
 # read_document — happy path
 # --------------------------------------------------------------------------- #
 class TestReadDocument:
-    def test_text_file_returns_content(self, scratch_dir):
+    async def test_text_file_returns_content(self, scratch_dir, admin_session):
         target = scratch_dir / "test.txt"
         target.write_text("olá mundo", encoding="utf-8")
-        result = read_document.invoke({"path": "backend/tests/_tmp_read_doc/test.txt"})
+        result = await read_document.ainvoke({"path": "backend/tests/_tmp_read_doc/test.txt"})
         assert "olá mundo" in result
         assert "read_document" in result  # header marker
 
-    def test_markdown_file_returns_content(self, scratch_dir):
+    async def test_markdown_file_returns_content(self, scratch_dir, admin_session):
         target = scratch_dir / "test.md"
         target.write_text("# Title\n\nSome **bold** text.", encoding="utf-8")
-        result = read_document.invoke({"path": "backend/tests/_tmp_read_doc/test.md"})
+        result = await read_document.ainvoke({"path": "backend/tests/_tmp_read_doc/test.md"})
         assert "Title" in result
         assert "bold" in result
 
-    def test_csv_file_returns_content(self, scratch_dir):
+    async def test_csv_file_returns_content(self, scratch_dir, admin_session):
         # markitdown converte CSV em markdown table
         target = scratch_dir / "test.csv"
         target.write_text("name,age\nAlice,30\nBob,25", encoding="utf-8")
-        result = read_document.invoke({"path": "backend/tests/_tmp_read_doc/test.csv"})
+        result = await read_document.ainvoke({"path": "backend/tests/_tmp_read_doc/test.csv"})
         assert "Alice" in result
         assert "Bob" in result
 
-    def test_format_hint_overrides_extension(self, scratch_dir):
+    async def test_format_hint_overrides_extension(self, scratch_dir, admin_session):
         # Arquivo sem extensão mas com format_hint="txt"
         target = scratch_dir / "test_noext"
         target.write_text("force this format", encoding="utf-8")
-        result = read_document.invoke(
+        result = await read_document.ainvoke(
             {
                 "path": "backend/tests/_tmp_read_doc/test_noext",
                 "format_hint": "txt",
@@ -168,30 +180,30 @@ class TestReadDocument:
 # read_document — error paths
 # --------------------------------------------------------------------------- #
 class TestReadDocumentErrors:
-    def test_unsupported_format_returns_helpful_error(self, scratch_dir):
+    async def test_unsupported_format_returns_helpful_error(self, scratch_dir, admin_session):
         target = scratch_dir / "test.xyz_unknown"
         target.write_text("data", encoding="utf-8")
-        result = read_document.invoke({"path": "backend/tests/_tmp_read_doc/test.xyz_unknown"})
+        result = await read_document.ainvoke({"path": "backend/tests/_tmp_read_doc/test.xyz_unknown"})
         assert "não suportado" in result.lower()
         assert "txt" in result  # lista inclui .txt
 
-    def test_path_outside_repo_rejected(self):
-        result = read_document.invoke({"path": "/etc/passwd"})
+    async def test_path_outside_repo_rejected(self, admin_session):
+        result = await read_document.ainvoke({"path": "/etc/passwd"})
         assert "negado" in result.lower() or "fora" in result.lower()
 
-    def test_nonexistent_file(self):
-        result = read_document.invoke({"path": "backend/tests/_nope_xyz_zzz.txt"})
+    async def test_nonexistent_file(self, admin_session):
+        result = await read_document.ainvoke({"path": "backend/tests/_nope_xyz_zzz.txt"})
         assert "não encontrado" in result.lower()
 
-    def test_empty_file_returns_empty_message(self, scratch_dir):
+    async def test_empty_file_returns_empty_message(self, scratch_dir, admin_session):
         target = scratch_dir / "test_empty.txt"
         target.write_text("", encoding="utf-8")
-        result = read_document.invoke({"path": "backend/tests/_tmp_read_doc/test_empty.txt"})
+        result = await read_document.ainvoke({"path": "backend/tests/_tmp_read_doc/test_empty.txt"})
         assert "vazio" in result.lower() or "extraível" in result.lower()
 
-    def test_directory_path_rejected(self):
+    async def test_directory_path_rejected(self, admin_session):
         # `backend/tests` existe como diretório
-        result = read_document.invoke({"path": "backend/tests"})
+        result = await read_document.ainvoke({"path": "backend/tests"})
         assert any(
             phrase in result.lower()
             for phrase in ("não é um arquivo", "acesso negado", "não encontrado")

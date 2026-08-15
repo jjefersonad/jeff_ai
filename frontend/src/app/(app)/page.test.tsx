@@ -216,3 +216,27 @@ describe("ChatPage — mobile thread-history drawer dismissal (mobile-conversati
     expect(mockSetSidebar).not.toHaveBeenCalled();
   });
 });
+
+describe("ChatPage — saas-empresario-br-task-ux-3 unit-3 / REQ-004", () => {
+  beforeEach(() => {
+    mockSidebar = null;
+    mockThreadId = "thread-1";
+    mockAssistantId = "unified";
+    mockSetSidebar.mockClear();
+    mockSetThreadId.mockClear();
+    mockSetAssistantId.mockClear();
+    mockIsMobile = false;
+    setMatchMedia();
+  });
+
+  it("labels the new conversation action Nova conversa, not New Thread", () => {
+    render(<ChatPage />);
+
+    expect(
+      screen.getByRole("button", { name: /nova conversa/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /new thread/i })
+    ).not.toBeInTheDocument();
+  });
+});

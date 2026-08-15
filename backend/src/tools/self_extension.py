@@ -12,7 +12,8 @@ Três capacidades, todas com trilhos de segurança:
    Não há hot-load: código novo só entra na próxima subida do servidor.
 
 Obs.: a criação de SKILLS (markdown) não precisa deste módulo — o assistant já tem
-escrita na rota `/skills/` e as skills são carregadas em runtime pelo deepagents.
+escrita nas rotas `/skills/` (admin/projeto) e `/user-skills/` (owned); as skills
+são carregadas em runtime pelo deepagents (camadas project + user).
 """
 import importlib.util
 import json
@@ -25,6 +26,9 @@ import tempfile
 from pathlib import Path
 
 from langchain_core.tools import BaseTool, tool
+
+from src.composition.backends import current_role, sync_user_id_from_configurable
+from src.infrastructure.ownership.paths import user_skills_root
 
 # Logger de auditoria de comandos de shell (REQ-005). Cai nos logs do backend
 # (docker logs / LangSmith). Cada execução aprovada registra command/cwd/exit.
@@ -197,12 +201,76 @@ def _allowed_skill_repos() -> set[str]:
     return repos
 
 
+def _resolve_install_destination(
+    skill: str,
+    *,
+    for_user_id: str | None = None,
+) -> Path | str:
+    """Resolve o diretório destino da skill (D4/D6) ou mensagem de erro.
+
+    - ``role=user``: sempre ``files/<session_uid>/skills/<skill>/``; sem uid → fail-closed.
+      ``for_user_id`` de outro usuário é rejeitado.
+    - ``role=admin`` + ``for_user_id=None``: ``backend/skills/<skill>/`` (projeto).
+    - ``role=admin`` + ``for_user_id=A``: ``files/A/skills/<skill>/``.
+    """
+    role = current_role()
+    target = (for_user_id or "").strip() or None
+    if target is not None and not re.fullmatch(r"[a-zA-Z0-9._-]+", target):
+        return "for_user_id inválido. Use apenas letras, números, '.', '_' e '-'."
+
+    if role == "admin":
+        if target is None:
+            SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+            return SKILLS_DIR / skill
+        root = user_skills_root(target)
+        root.mkdir(parents=True, exist_ok=True)
+        return root / skill
+
+    # Non-admin: owned tree only; never project catalog.
+    session_uid = sync_user_id_from_configurable()
+    if target is not None and session_uid is not None and target != session_uid:
+        return (
+            "for_user_id não permitido nesta sessão: "
+            "apenas o próprio user_id (ou omita o parâmetro)."
+        )
+    if not session_uid:
+        return (
+            "Sem user_id na sessão: instalação recusada (fail-closed). "
+            "Não é possível gravar no catálogo de projeto backend/skills/."
+        )
+    root = user_skills_root(session_uid)
+    root.mkdir(parents=True, exist_ok=True)
+    return root / skill
+
+
+def _format_install_location(dest_dir: Path) -> str:
+    """Mensagem humana com path relativo quando possível."""
+    try:
+        if dest_dir.parent == SKILLS_DIR or SKILLS_DIR in dest_dir.parents:
+            return f"backend/skills/{dest_dir.name}/"
+    except OSError:
+        pass
+    # Owned: files/<uid>/skills/<skill>/
+    parts = dest_dir.parts
+    if "skills" in parts:
+        idx = parts.index("skills")
+        if idx >= 1:
+            uid = parts[idx - 1]
+            return f"files/{uid}/skills/{dest_dir.name}/"
+    return str(dest_dir)
+
+
 @tool
-def install_external_skill(repo: str, skill: str) -> str:
+def install_external_skill(
+    repo: str,
+    skill: str,
+    for_user_id: str | None = None,
+) -> str:
     """Instala uma skill externa via `npx skills add <repo> --skill <skill>` (RESTRITO).
 
     Só aceita repositórios de uma allowlist (por padrão: vercel-labs/skills). Requer Node/npx
-    e acesso de rede. A skill é instalada no diretório de skills e carregada em runtime.
+    e acesso de rede. Destino por role (D4): user → `files/<user_id>/skills/`; admin →
+    `backend/skills/` (default) ou `files/<for_user_id>/skills/` se `for_user_id` for passado.
     Se o repositório não estiver na allowlist, a instalação é recusada.
     """
     allowed = _allowed_skill_repos()
@@ -214,16 +282,19 @@ def install_external_skill(repo: str, skill: str) -> str:
         )
     if not re.fullmatch(r"[a-zA-Z0-9._-]+", skill):
         return "Nome de skill inválido. Use apenas letras, números, '.', '_' e '-'."
+
+    dest = _resolve_install_destination(skill, for_user_id=for_user_id)
+    if isinstance(dest, str):
+        return dest
+
     if shutil.which("npx") is None:
         return "npx não está disponível no ambiente (Node não instalado na imagem)."
-
-    SKILLS_DIR.mkdir(parents=True, exist_ok=True)
 
     # A CLI `skills add` é interativa por padrão (seletor de agentes). As flags
     # `--agent "*" --yes --copy` a tornam não-interativa. Ela instala em
     # `<cwd>/.<agente>/skills/<skill>/SKILL.md` para vários agentes conhecidos;
-    # rodamos num diretório temporário e extraímos uma cópia para SKILLS_DIR no
-    # formato que o deepagents espera: `backend/skills/<skill>/SKILL.md`.
+    # rodamos num diretório temporário e extraímos uma cópia para o destino
+    # resolvido por role (REQ-008).
     with tempfile.TemporaryDirectory() as tmp:
         try:
             proc = subprocess.run(
@@ -259,13 +330,14 @@ def install_external_skill(repo: str, skill: str) -> str:
                 f"(exit {proc.returncode}).\n{output[-1500:]}"
             )
 
-        dest_dir = SKILLS_DIR / skill
+        dest_dir = dest
         if dest_dir.exists():
             shutil.rmtree(dest_dir)
         shutil.copytree(src_dir, dest_dir)
 
+    location = _format_install_location(dest_dir)
     return (
-        f"[OK] Skill '{skill}' instalada em backend/skills/{skill}/ (de {repo}). "
+        f"[OK] Skill '{skill}' instalada em {location} (de {repo}). "
         "Ficará disponível para o assistant nas próximas interações."
     )
 

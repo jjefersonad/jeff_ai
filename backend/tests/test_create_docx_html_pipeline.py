@@ -14,7 +14,7 @@ from src.models.html_document_input import HtmlBlockInput, HtmlDocumentInput
 @pytest.fixture
 def documents_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "documents"
-    monkeypatch.setattr(docx_tool, "_documents_base_dir", lambda: root)
+    monkeypatch.setattr(docx_tool, "require_user_docs_dir", AsyncMock(return_value=root))
     monkeypatch.setattr(
         docx_tool,
         "_document_url_prefix",
@@ -47,8 +47,7 @@ async def test_empty_input_rejects_without_file(documents_root: Path) -> None:
 
     assert "error" in out
     assert "path" not in out
-    docx_dir = documents_root / "docx"
-    assert not docx_dir.exists() or list(docx_dir.glob("*.docx")) == []
+    assert list(documents_root.glob("*.docx")) == []
 
 
 async def test_converter_failure_leaves_no_partial(
@@ -65,7 +64,7 @@ async def test_converter_failure_leaves_no_partial(
     monkeypatch.setattr(
         docx_tool,
         "_build_docx_render",
-        lambda: RenderHtmlDocument(
+        lambda _output_dir=None: RenderHtmlDocument(
             converters={"docx": _Boom()},
             output_base_dir=documents_root,
             url_prefix="/api/files",
@@ -78,7 +77,7 @@ async def test_converter_failure_leaves_no_partial(
 
     assert "error" in out
     assert "path" not in out
-    assert list((documents_root / "docx").glob("*.docx")) == []
+    assert list(documents_root.glob("*.docx")) == []
 
 
 async def test_blocks_still_work(documents_root: Path) -> None:

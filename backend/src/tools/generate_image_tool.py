@@ -15,7 +15,15 @@ from langchain_core.tools import tool
 from src.composition.dependencies import build_plan_and_create_image
 from src.domain.imaging import DesignStyle, ImageDesign, ImageReference
 from src.domain.shared.errors import DomainError
+from src.infrastructure.ownership.session_writers import (
+    MissingUserIdentityError,
+    require_user_kind_dir,
+)
 from src.infrastructure.ownership.store import record_ownership
+from src.infrastructure.ownership.tool_path_guard import (
+    PathNotAuthorizedError,
+    authorize_tool_paths,
+)
 from src.models.image_design import ImageDesignInput
 
 
@@ -76,18 +84,30 @@ async def create_image_from_prompt(
     - metadata: the design metadata used for generation.
 
     Example return:
-    {"path": "/app/backend/outputs/images/20260705091430.png",
+    {"path": "/app/backend/files/<user_id>/images/20260705091430.png",
      "url": "http://localhost:8001/api/images/20260705091430.png",
      "metadata": {"prompt": "Um gato astronauta no espaço", "art_style": "realista",
                   "color_palette": "tons frios", "composition": "centralizada",
                   "dimensions": "1024x1024", "negative_prompt": null}}
     """
-    design = _to_image_design(design_input)
+    try:
+        output_dir = await require_user_kind_dir("image")
+    except MissingUserIdentityError as exc:
+        return {"error": str(exc)}
 
-    use_case = build_plan_and_create_image()
+    design = _to_image_design(design_input)
+    try:
+        await authorize_tool_paths([ref.path for ref in design.references])
+    except (PathNotAuthorizedError, MissingUserIdentityError) as exc:
+        return {"error": str(exc)}
+
+    use_case = build_plan_and_create_image(output_dir=output_dir)
     result = await use_case.execute(design)
 
     # media-ownership-authorization: fail-closed — não devolver URL sem dono.
-    await record_ownership(kind="image", filename=Path(result.path).name)
+    try:
+        await record_ownership(kind="image", filename=Path(result.path).name)
+    except Exception as exc:  # noqa: BLE001 — fail-closed
+        return {"error": f"Falha ao registrar ownership: {exc}"}
 
     return {"path": result.path, "url": result.url, "metadata": result.metadata}

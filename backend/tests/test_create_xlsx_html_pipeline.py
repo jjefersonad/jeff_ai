@@ -16,7 +16,7 @@ from src.models.xlsx_document import XlsxDocumentInput, XlsxSheetInput
 @pytest.fixture
 def documents_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "documents"
-    monkeypatch.setattr(xlsx_tool, "_documents_base_dir", lambda: root)
+    monkeypatch.setattr(xlsx_tool, "require_user_docs_dir", AsyncMock(return_value=root))
     monkeypatch.setattr(
         xlsx_tool,
         "_document_url_prefix",
@@ -63,7 +63,7 @@ async def test_no_table_rejects_without_file(documents_root: Path) -> None:
 
     assert "error" in out
     assert "path" not in out
-    xlsx_dir = documents_root / "xlsx"
+    xlsx_dir = documents_root
     assert not xlsx_dir.exists() or list(xlsx_dir.glob("*.xlsx")) == []
 
 

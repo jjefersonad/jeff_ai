@@ -102,9 +102,41 @@ from src.agents.unified.envelope_middleware import (
     EnvelopeMiddleware,
     EnvelopeState,
 )
+from src.composition.backends import current_role
 
 # Mesmo padrão de `src/tools/self_extension.py:31` (`jeff_ai.shell_audit`).
 _audit_log = logging.getLogger("jeff_ai.envelope_audit")
+
+# REQ-010 (session-file-sandbox): teto por role — non-admin nunca recebe
+# estas capabilities no grant, mesmo com aprovação humana.
+USER_ROLE_ENVELOPE_DENYLIST: frozenset[Capability] = frozenset(
+    {
+        Capability.WRITE_EXISTING,
+        Capability.VCS,
+        Capability.SHELL,
+    }
+)
+
+
+def current_role_for_envelope() -> str:
+    """Alias de `current_role` para o teto de envelope (testável)."""
+    return current_role()
+
+
+def apply_role_envelope_ceiling(
+    granted: set[Capability],
+    *,
+    role: str | None = None,
+) -> tuple[set[Capability], set[Capability]]:
+    """Aplica o teto REQ-010. Devolve `(allowed, stripped)`.
+
+    Admin: sem alteração. User: remove write_existing / vcs / shell.
+    """
+    resolved = role if role is not None else current_role_for_envelope()
+    if resolved == "admin":
+        return set(granted), set()
+    stripped = granted & USER_ROLE_ENVELOPE_DENYLIST
+    return granted - stripped, stripped
 
 # --------------------------------------------------------------------------- #
 # Schema da proposta
@@ -406,19 +438,29 @@ def propose_envelope_tool(
         )
 
     granted_set = previously_granted | decision.to_granted_set()
+    granted_set, stripped = apply_role_envelope_ceiling(granted_set)
     granted = sorted(c.value for c in granted_set)
     granted_strs = ", ".join(granted) or "(nenhuma)"
     edited_marker = " (editado)" if decision.edited else ""
+    ceiling_note = ""
+    if stripped:
+        denied = ", ".join(sorted(c.value for c in stripped))
+        ceiling_note = (
+            f" [política de role: não concedidas — {denied}]"
+        )
     _audit_log.info(
         "envelope_audit event=grant tool_call_id=%r granted=%r edited=%s "
-        "escalation=%s",
+        "escalation=%s stripped_by_role=%r",
         tool_call_id,
         granted,
         decision.edited,
         bool(previously_granted),
+        sorted(c.value for c in stripped),
     )
     return _grant_command(
-        granted, tool_call_id, f"CONCEDIDO{edited_marker}: {granted_strs}"
+        granted,
+        tool_call_id,
+        f"CONCEDIDO{edited_marker}: {granted_strs}{ceiling_note}",
     )
 
 
@@ -450,6 +492,8 @@ def _grant_command(
 def apply_grant_to_middleware(
     decision: GrantDecision,
     middleware: EnvelopeMiddleware,
+    *,
+    role: str | None = None,
 ) -> set[Capability]:
     """Aplica o `GrantDecision` ao `EnvelopeMiddleware` e devolve o set aplicado.
 
@@ -463,11 +507,16 @@ def apply_grant_to_middleware(
     o `decision.granted_capabilities`. Se o `EnvelopeMiddleware`
     está em `frozen=True`, lança `RuntimeError` (segurança contra
     grant acidental que alteraria um envelope já congelado).
+
+    REQ-010: para `role != admin`, `write_existing` / `vcs` / `shell`
+    são removidos do set aplicado (teto por identidade).
     """
     if decision.rejected:
         new_set: set[Capability] = set()
     else:
-        new_set = decision.to_granted_set()
+        new_set, _stripped = apply_role_envelope_ceiling(
+            decision.to_granted_set(), role=role
+        )
 
     # `set_granted` respeita `frozen` — se o envelope está
     # congelado, lança. Isto é o caminho seguro.
@@ -581,13 +630,16 @@ class EnvelopeNotGrantedError(RuntimeError):
 # --------------------------------------------------------------------------- #
 __all__ = [
     "PROPOSE_ENVELOPE_TOOL_NAME",
+    "USER_ROLE_ENVELOPE_DENYLIST",
     "CapabilityProposal",
     "EnvelopeLifecycleMiddleware",
     "EnvelopeNotGrantedError",
     "GrantDecision",
     "ProposeEnvelope",
     "apply_grant_to_middleware",
+    "apply_role_envelope_ceiling",
     "compute_approval_rate",
+    "current_role_for_envelope",
     "detect_shell_contradiction",
     "propose_envelope_tool",
 ]

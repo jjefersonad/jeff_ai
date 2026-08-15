@@ -1,0 +1,53 @@
+<!--
+  Side-by-side comparison: a muted "before/them" column and a highlighted
+  "after/us" column. Generic check vs cross rows.
+-->
+<div
+  style={{
+    display: 'flex',
+    height: '100%',
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontFamily: 'Inter, sans-serif',
+    backgroundColor: '#f1f5f9',
+    padding: 64,
+  }}
+>
+  <div style={{ display: 'flex', flexDirection: 'column', width: 420, backgroundColor: '#ffffff', borderRadius: 20, border: '1px solid #e2e8f0', padding: 34, marginRight: 28 }}>
+    <div style={{ display: 'flex', fontSize: 26, fontWeight: 700, color: '#94a3b8', marginBottom: 24 }}>The old way</div>
+    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 18 }}>
+      <div style={{ display: 'flex', width: 26, height: 26, borderRadius: 999, backgroundColor: '#fee2e2', marginRight: 14 }} />
+      <div style={{ display: 'flex', fontSize: 19, color: '#64748b' }}>A common pain point</div>
+    </div>
+    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 18 }}>
+      <div style={{ display: 'flex', width: 26, height: 26, borderRadius: 999, backgroundColor: '#fee2e2', marginRight: 14 }} />
+      <div style={{ display: 'flex', fontSize: 19, color: '#64748b' }}>Another friction point</div>
+    </div>
+    <div style={{ display: 'flex', alignItems: 'center' }}>
+      <div style={{ display: 'flex', width: 26, height: 26, borderRadius: 999, backgroundColor: '#fee2e2', marginRight: 14 }} />
+      <div style={{ display: 'flex', fontSize: 19, color: '#64748b' }}>A third limitation</div>
+    </div>
+  </div>
+  <div style={{ display: 'flex', flexDirection: 'column', width: 420, backgroundColor: '#0f172a', borderRadius: 20, padding: 34, boxShadow: '0 30px 60px rgba(15,23,42,0.25)' }}>
+    <div style={{ display: 'flex', fontSize: 26, fontWeight: 700, color: '#ffffff', marginBottom: 24 }}>The new way</div>
+    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, backgroundColor: '#22c55e', marginRight: 14 }}>
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#0f172a" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+      </div>
+      <div style={{ display: 'flex', fontSize: 19, color: '#e2e8f0' }}>The clear improvement</div>
+    </div>
+    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, backgroundColor: '#22c55e', marginRight: 14 }}>
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#0f172a" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+      </div>
+      <div style={{ display: 'flex', fontSize: 19, color: '#e2e8f0' }}>A second advantage</div>
+    </div>
+    <div style={{ display: 'flex', alignItems: 'center' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, backgroundColor: '#22c55e', marginRight: 14 }}>
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#0f172a" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+      </div>
+      <div style={{ display: 'flex', fontSize: 19, color: '#e2e8f0' }}>A third advantage</div>
+    </div>
+  </div>
+</div>

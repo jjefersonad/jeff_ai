@@ -14,6 +14,11 @@ from langchain_core.tools import tool
 from src.application.ports.reference_image_fetch import ReferenceImageFetchError
 from src.composition.dependencies import build_reference_image_fetch
 from src.infrastructure.media.image_signatures import sniff_image_mime
+from src.infrastructure.ownership.session_writers import (
+    MissingUserIdentityError,
+    require_user_kind_dir,
+)
+from src.infrastructure.ownership.store import record_ownership
 
 
 @tool
@@ -25,13 +30,24 @@ async def fetch_reference_image(url: str) -> dict:
     that path can be passed as a reference to image generation.
 
     Returns a dict:
-    - {"path": "/.../outputs/references/....png"} on success.
+    - {"path": "/.../files/<user_id>/attachment/....png"} on success.
     - {"error": "<reason>"} when the URL is invalid, unsafe, too large, or not an image.
     """
     try:
-        path = await build_reference_image_fetch().fetch(url)
+        output_dir = await require_user_kind_dir("reference")
+    except MissingUserIdentityError as exc:
+        return {"error": str(exc)}
+
+    try:
+        path = await build_reference_image_fetch(output_dir=output_dir).fetch(url)
     except ReferenceImageFetchError as exc:
         return {"error": str(exc)}
+
+    try:
+        await record_ownership(kind="reference", filename=Path(path).name)
+    except Exception as exc:  # noqa: BLE001 — fail-closed
+        return {"error": f"Falha ao registrar ownership: {exc}"}
+
     return {"path": path}
 
 
@@ -42,11 +58,11 @@ def check_reference_image(path: str) -> dict:
     Use this to confirm an already-uploaded reference image before generating.
     This is the ONLY correct way to "look at" an uploaded reference path — do NOT
     use read_file/ls/glob on it (those operate on your workspace sandbox, not on
-    the server's outputs/references directory, and will fail).
+    the server's user attachment directory, and will fail).
 
     Args:
         path: absolute server path of the uploaded image (e.g. the path given in
-            the user's message, under outputs/references/).
+            the user's message, under files/<user_id>/attachment/).
 
     Returns a dict:
     - {"ok": true, "path": "<path>", "mime": "image/jpeg",

@@ -18,6 +18,7 @@ from langgraph.config import get_config
 
 from src.domain.channels import OutputAttachment
 from src.infrastructure.channels.registry import ChannelRegistry
+from src.infrastructure.ownership.tool_path_guard import authorize_tool_paths
 from src.infrastructure.usage.user_key import from_user_key
 
 
@@ -60,11 +61,14 @@ async def send_message(
             f"reconhecido; recebido: {user_key!r}"
         )
 
+    paths = list(attachment_paths or ())
+    await authorize_tool_paths(paths)
+
     channel = ChannelRegistry.get(kind)
     await channel.deliver(
         user_key=user_key,
         text=text,
-        attachments=_resolve_attachments(attachment_paths or ()),
+        attachments=_resolve_attachments(paths),
         kind="normal",
     )
     return {"success": True}

@@ -3,12 +3,12 @@
 /**
  * Primary navigation sidebar for the authenticated layout.
  *
- * Renders **Chat**, **Images**, **MCP Servers**, **Integrações**,
- * **Agendamentos**, **CRM**, **Email**, and (for `role=admin` only) **Consumo**
+ * Renders **Conversas**, **Imagens**, **Servidores MCP**, **Integrações**,
+ * **Agendamentos**, **CRM**, **E-mail**, and (for `role=admin` only) **Consumo**
  * and **Usuários** — linking to `/`, `/images`, `/mcp-servers`,
  * `/integrations`, `/scheduling`, `/crm`, `/email`, `/usage`, and
  * `/admin/users`.
- * **Chat** exists because the top-bar "JEFF AI" link back to `/` isn't an
+ * **Conversas** exists because the top-bar "JEFF AI" link back to `/` isn't an
  * obvious return path once a user has navigated into a full sidebar
  * destination. The active entry (matching the current pathname) is
  * highlighted with `aria-current="page"`. Admin-only **Consumo** is
@@ -47,6 +47,8 @@ import {
   type NavEntry,
 } from "@/app/components/navEntries";
 import { useAuth } from "@/providers/AuthProvider";
+
+const SIDEBAR_HEADER = "Menu";
 
 /**
  * Close the sidebar on `Esc`. Only attached when the sidebar is open and the
@@ -131,7 +133,7 @@ export function NavSidebar() {
           )}
         >
           <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold">Navigation</span>
+            <span className="text-sm font-semibold">{SIDEBAR_HEADER}</span>
             <Button
               type="button"
               variant="ghost"
@@ -166,7 +168,7 @@ export function NavSidebar() {
       data-testid="nav-sidebar"
       className="flex w-60 shrink-0 flex-col gap-2 border-r border-border bg-card p-4"
     >
-      <span className="text-sm font-semibold">Navigation</span>
+      <span className="text-sm font-semibold">{SIDEBAR_HEADER}</span>
       <ul className="flex flex-col gap-1">
         {entries.map((entry) => (
           <li key={entry.href}>

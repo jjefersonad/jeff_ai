@@ -17,18 +17,16 @@ from src.domain.shared.errors import DomainError
 from src.infrastructure.documents.html_template_repository import (
     FilesystemHtmlTemplateRepository,
 )
+from src.infrastructure.ownership.session_writers import (
+    MissingUserIdentityError,
+    require_user_docs_dir,
+)
 from src.infrastructure.ownership.store import record_ownership
+from src.infrastructure.ownership.tool_path_guard import (
+    PathNotAuthorizedError,
+    authorize_tool_paths,
+)
 from src.models.html_document_input import HtmlDocumentInput
-
-# backend/outputs/documents
-_DEFAULT_DOCUMENTS = Path(__file__).resolve().parents[2] / "outputs" / "documents"
-
-
-def _documents_base_dir() -> Path:
-    env = os.environ.get("DOCUMENTS_DIR")
-    if env:
-        return Path(env)
-    return _DEFAULT_DOCUMENTS
 
 
 def _document_url_prefix() -> str:
@@ -47,7 +45,7 @@ async def preview_html_document(
     """Gera um preview HTML servível no web antes do PDF/Office final.
 
     Resolve a entrada unificada (`html` | `template`+`data` | `title`+`blocks`),
-    sanitiza, embute CSS e grava em `outputs/documents/html/`. Devolve
+    sanitiza, embute CSS e grava em `files/<user_id>/docs/`. Devolve
     `{path, url, metadata}` com `metadata.kind=\"html\"` e `url` em
     `/api/files/html/...` — use essa URL no markdown para o usuário revisar.
 
@@ -70,8 +68,23 @@ async def preview_html_document(
     except (DomainError, ValidationError) as exc:
         return {"error": f"Entrada inválida: {exc}"}
 
+    image_paths = [
+        b.path
+        for b in (parsed.blocks or [])
+        if getattr(b, "type", None) == "image" and getattr(b, "path", None)
+    ]
+    try:
+        await authorize_tool_paths(image_paths)
+    except (PathNotAuthorizedError, MissingUserIdentityError) as exc:
+        return {"error": str(exc)}
+
+    try:
+        output_dir = await require_user_docs_dir()
+    except MissingUserIdentityError as exc:
+        return {"error": str(exc)}
+
     use_case = PreviewHtmlDocument(
-        output_base_dir=_documents_base_dir(),
+        output_base_dir=output_dir,
         url_prefix=_document_url_prefix(),
     )
     try:

@@ -104,6 +104,10 @@ htmlcov/
 dmypy.json
 
 backend/outputs/*
+!backend/outputs/.gitkeep
+# Session-owned files (runtime volume): versiona só o .gitkeep; ignora trees files/<user_id>/**
+backend/files/**
+!backend/files/.gitkeep
 ollama_data/*
 
 .claude/
@@ -112,10 +116,9 @@ ollama_data/*
 .mcp.json
 opensddrag.yaml
 opencode.json
-# Conteúdo dinâmico (runtime/volumes): versiona a pasta, não o conteúdo
-backend/skills/*
-!backend/skills/.gitkeep
-!backend/skills/image-generation
+# Skills default do produto vivem em backend/skills/ e DEVEM ser versionadas.
+# Skills instaladas em runtime via self_extension aparecem como untracked até
+# review/commit (não ignore a pasta inteira).
 !backend/outputs/.gitkeep
 backend/src/workspace/
 backend/src/outputs/

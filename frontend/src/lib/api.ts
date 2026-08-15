@@ -241,3 +241,32 @@ export async function uploadAttachment(
 
   return (await response.json()) as UploadedAttachment;
 }
+
+export interface UploadedReference {
+  path: string;
+  url: string;
+  filename: string;
+}
+
+/**
+ * Uploads a reference image (`POST /api/references`) through `apiFetch`, so
+ * the session cookie is attached and 401s share the same re-auth flow as
+ * every other authenticated call. Bare `fetch()` without credentials fails
+ * once the backend requires auth (session-file-sandbox D7).
+ */
+export async function uploadReference(file: File): Promise<UploadedReference> {
+  const form = new FormData();
+  form.append("file", file);
+
+  const response = await apiFetch("/api/references", {
+    method: "POST",
+    body: form,
+  });
+
+  if (!response.ok) {
+    const message = await parseErrorMessage(response);
+    throw new ApiError(response.status, message);
+  }
+
+  return (await response.json()) as UploadedReference;
+}

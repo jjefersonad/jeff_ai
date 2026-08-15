@@ -22,6 +22,7 @@ import base64
 import io
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -66,13 +67,21 @@ def images_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def client(images_root: Path):
+def client(images_root: Path, monkeypatch: pytest.MonkeyPatch):
     """Cliente FastAPI para o `webapp.app` (sem subir servidor real).
 
     Faz override de `require_auth` (dependency global aplicada em `webapp.py`,
     task-rest-3) para um usuário fake — estas rotas passaram a exigir sessão
     e este teste cobre apenas o comportamento de `images_router`, não auth.
+
+    `get_file_owner` → None: testes admin seedam o layout legado `IMAGES_DIR`
+    (D12 fallback).
     """
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(
+        images_router, "get_file_owner", AsyncMock(return_value=None)
+    )
     webapp.app.dependency_overrides[require_auth] = lambda: _FAKE_USER
     try:
         yield TestClient(webapp.app)
@@ -198,8 +207,19 @@ def test_serve_image_404_when_missing(client: TestClient, images_root: Path):
 # ---------- POST /api/references ----------
 
 
-def test_upload_reference_ok(client: TestClient, images_root: Path, tmp_path: Path):
-    """REQ-002: upload válido retorna {path, url, filename} e o arquivo é salvo."""
+def test_upload_reference_ok(
+    client: TestClient,
+    images_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """REQ-002 / session-file-sandbox: upload válido em files/<uid>/attachment/."""
+    from unittest.mock import AsyncMock
+
+    files_root = tmp_path / "files"
+    monkeypatch.setenv("FILES_DIR", str(files_root))
+    monkeypatch.setattr(images_router, "record_ownership", AsyncMock())
+
     resp = client.post(
         "/api/references",
         files={"file": ("any.png", io.BytesIO(_PNG_1X1), "image/png")},
@@ -209,10 +229,9 @@ def test_upload_reference_ok(client: TestClient, images_root: Path, tmp_path: Pa
     assert set(body.keys()) == {"path", "url", "filename"}
     assert body["url"].startswith("/api/references/")
     assert body["url"].endswith(body["filename"])
-    # O arquivo referenciado existe no REFERENCES_DIR (tmp_path/references).
     saved = Path(body["path"])
     assert saved.exists()
-    assert saved.parent == images_root.parent / "references"
+    assert saved.parent == files_root / "test-user" / "attachment"
 
 
 def test_upload_reference_rejects_empty(client: TestClient):
@@ -298,12 +317,20 @@ def user_client(images_root: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_list_images_user_only_sees_owned(
-    user_client: TestClient, images_root: Path, monkeypatch: pytest.MonkeyPatch
+    user_client: TestClient,
+    images_root: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
-    """REQ-003: role=user lista só filenames em generated_files."""
-    (images_root / "owned.png").write_bytes(_PNG_1X1)
-    (images_root / "other.png").write_bytes(_PNG_1X1)
+    """REQ-003 / D7: role=user lista só filenames owned sob files/<uid>/images/."""
+    files_root = tmp_path / "files"
+    owned_dir = files_root / "user-u" / "images"
+    owned_dir.mkdir(parents=True)
+    (owned_dir / "owned.png").write_bytes(_PNG_1X1)
+    (files_root / "other" / "images").mkdir(parents=True)
+    (files_root / "other" / "images" / "other.png").write_bytes(_PNG_1X1)
     (images_root / "orphan.png").write_bytes(_PNG_1X1)
+    monkeypatch.setenv("FILES_DIR", str(files_root))
 
     async def _owned(*, kind: str, user_id: str):
         assert kind == "image"
@@ -340,15 +367,24 @@ def test_serve_image_user_denied_for_foreign(
 
 
 def test_serve_image_user_allowed_for_own(
-    user_client: TestClient, images_root: Path, monkeypatch: pytest.MonkeyPatch
+    user_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     name = "mine.png"
-    (images_root / name).write_bytes(_PNG_1X1)
+    files_root = tmp_path / "files"
+    path = files_root / "user-u" / "images" / name
+    path.parent.mkdir(parents=True)
+    path.write_bytes(_PNG_1X1)
+    monkeypatch.setenv("FILES_DIR", str(files_root))
 
     async def _allow(*, kind: str, filename: str, user: User):
         return True
 
     monkeypatch.setattr(images_router, "is_authorized", _allow)
+    monkeypatch.setattr(
+        images_router, "get_file_owner", AsyncMock(return_value="user-u")
+    )
 
     resp = user_client.get(f"/api/images/{name}")
     assert resp.status_code == 200

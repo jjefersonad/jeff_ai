@@ -1,0 +1,134 @@
+<!--
+  Blurred page background + one sharp, in focus card. Interchangeable template:
+  swap the foreground card for any component you want to spotlight.
+-->
+<div
+  style={{
+    display: 'flex',
+    position: 'relative',
+    height: '100%',
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontFamily: 'Inter, sans-serif',
+    backgroundColor: '#f1ebe6',
+    overflow: 'hidden',
+  }}
+>
+  {/* Blurred background. Keep elements dense so the blur reads as one
+      frosted page, not separate blocks. scale() hides the soft blur edge. */}
+  <div
+    style={{
+      display: 'flex',
+      flexDirection: 'column',
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      filter: 'blur(18px)',
+      transform: 'scale(1.06)',
+    }}
+  >
+    {/* full width header band */}
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        height: 70,
+        padding: '0px 36px',
+        backgroundColor: '#ffffff',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center' }}>
+        <div style={{ display: 'flex', width: 28, height: 28, borderRadius: 8, backgroundColor: '#2f6bff', marginRight: 14 }} />
+        <div style={{ display: 'flex', width: 80, height: 14, borderRadius: 6, backgroundColor: '#d2ccc7' }} />
+      </div>
+      <div style={{ display: 'flex', width: 260, height: 32, borderRadius: 16, backgroundColor: '#eee9e4' }} />
+      <div style={{ display: 'flex', width: 90, height: 32, borderRadius: 8, backgroundColor: '#2f6bff' }} />
+    </div>
+
+    {/* body: dense hero column + image, minimal gaps */}
+    <div style={{ display: 'flex', flex: 1, padding: 36 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, paddingRight: 32 }}>
+        <div style={{ display: 'flex', width: '92%', height: 30, borderRadius: 8, backgroundColor: '#9c9893', marginBottom: 12 }} />
+        <div style={{ display: 'flex', width: '78%', height: 30, borderRadius: 8, backgroundColor: '#aaa6a1', marginBottom: 24 }} />
+        <div style={{ display: 'flex', width: '100%', height: 14, borderRadius: 6, backgroundColor: '#c8c3be', marginBottom: 10 }} />
+        <div style={{ display: 'flex', width: '96%', height: 14, borderRadius: 6, backgroundColor: '#cdc8c3', marginBottom: 10 }} />
+        <div style={{ display: 'flex', width: '90%', height: 14, borderRadius: 6, backgroundColor: '#c8c3be', marginBottom: 10 }} />
+        <div style={{ display: 'flex', width: '70%', height: 14, borderRadius: 6, backgroundColor: '#cdc8c3', marginBottom: 22 }} />
+        <div style={{ display: 'flex', width: 120, height: 36, borderRadius: 8, backgroundColor: '#5b84ff' }} />
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          width: 300,
+          borderRadius: 18,
+          backgroundImage: 'linear-gradient(135deg, #cddcff, #2f6bff)',
+        }}
+      />
+    </div>
+
+    {/* full width footer card row, tight gaps */}
+    <div style={{ display: 'flex', padding: '0px 36px 36px 36px' }}>
+      <div style={{ display: 'flex', flex: 1, height: 110, borderRadius: 14, backgroundColor: '#ffffff', marginRight: 20 }} />
+      <div style={{ display: 'flex', flex: 1, height: 110, borderRadius: 14, backgroundColor: '#f4efea', marginRight: 20 }} />
+      <div style={{ display: 'flex', flex: 1, height: 110, borderRadius: 14, backgroundColor: '#ffffff' }} />
+    </div>
+  </div>
+
+  {/* Foreground card: the only in focus element. Swap its contents.
+      The soft shadow + blur behind is what makes it pop forward. */}
+  <div
+    style={{
+      display: 'flex',
+      flexDirection: 'column',
+      position: 'relative',
+      width: 380,
+      backgroundColor: '#ffffff',
+      borderRadius: 20,
+      border: '1px solid #efeae6',
+      boxShadow: '0 30px 70px rgba(40,20,10,0.28)',
+      padding: 28,
+    }}
+  >
+    <div style={{ display: 'flex', fontSize: 20, fontWeight: 700, color: '#1a1614', marginBottom: 8 }}>
+      Your component, in focus
+    </div>
+    <div style={{ display: 'flex', fontSize: 13.5, lineHeight: 1.5, color: '#857d77', marginBottom: 22 }}>
+      The page behind is blurred so the eye lands here instantly. Swap this card for any
+      UI you want to spotlight, like a banner, feature, upsell, or dialog.
+    </div>
+
+    <div style={{ display: 'flex', alignItems: 'center' }}>
+      <div
+        style={{
+          display: 'flex',
+          fontSize: 13,
+          fontWeight: 600,
+          color: '#ffffff',
+          backgroundColor: '#1d4ed8',
+          borderRadius: 9,
+          padding: '9px 18px',
+          marginRight: 12,
+        }}
+      >
+        Primary action
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          fontSize: 13,
+          fontWeight: 600,
+          color: '#4a423d',
+          border: '1px solid #e2dcd7',
+          borderRadius: 9,
+          padding: '9px 18px',
+        }}
+      >
+        Secondary
+      </div>
+    </div>
+  </div>
+</div>

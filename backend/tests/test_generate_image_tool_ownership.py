@@ -19,13 +19,17 @@ class _FakeUseCase:
 
 async def test_records_ownership_with_kind_image_and_basename(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     result = GeneratedImage(
         path="/app/backend/outputs/images/20260708120000.png",
         url="/api/images/20260708120000.png",
         metadata={"prompt": "um gato"},
     )
-    monkeypatch.setattr(gt, "build_plan_and_create_image", lambda: _FakeUseCase(result))
+    monkeypatch.setattr(gt, "require_user_kind_dir", AsyncMock(return_value=tmp_path))
+    monkeypatch.setattr(
+        gt, "build_plan_and_create_image", lambda output_dir=None: _FakeUseCase(result)
+    )
     record = AsyncMock()
     monkeypatch.setattr(gt, "record_ownership", record)
 
@@ -35,13 +39,18 @@ async def test_records_ownership_with_kind_image_and_basename(
     record.assert_awaited_once_with(kind="image", filename="20260708120000.png")
 
 
-async def test_ownership_failure_is_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_ownership_failure_is_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
     result = GeneratedImage(
         path="/app/backend/outputs/images/20260708120000.png",
         url="/api/images/20260708120000.png",
         metadata={"prompt": "um gato"},
     )
-    monkeypatch.setattr(gt, "build_plan_and_create_image", lambda: _FakeUseCase(result))
+    monkeypatch.setattr(gt, "require_user_kind_dir", AsyncMock(return_value=tmp_path))
+    monkeypatch.setattr(
+        gt, "build_plan_and_create_image", lambda output_dir=None: _FakeUseCase(result)
+    )
     monkeypatch.setattr(
         gt, "record_ownership", AsyncMock(side_effect=RuntimeError("db down"))
     )

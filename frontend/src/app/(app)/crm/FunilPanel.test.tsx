@@ -81,6 +81,7 @@ function makeContact(overrides: Partial<CrmContact> = {}): CrmContact {
     tags: [],
     city: null,
     state: null,
+    whatsapp_opt_in: false,
     custom_values: {},
     archived_at: null,
     created_at: "2026-08-01T00:00:00Z",
@@ -181,8 +182,8 @@ describe("FunilPanel Kanban/Lista toggle (sales-pipeline-via-agent-task-frontend
     );
 
     // Estado inicial: Kanban visível. Confirma que o header do Kanban
-    // ("qualified", "proposal", ...) está renderizado.
-    expect(screen.getByRole("heading", { name: /qualified/i })).toBeInTheDocument();
+    // ("Qualificado", "Proposta", ...) está renderizado.
+    expect(screen.getByRole("heading", { name: /^Qualificado$/ })).toBeInTheDocument();
 
     // Clica no toggle "Lista" (aria-label canônico).
     const listaToggle = screen.getByRole("tab", {
@@ -199,7 +200,7 @@ describe("FunilPanel Kanban/Lista toggle (sales-pipeline-via-agent-task-frontend
     // A view Kanban anterior sumiu (os títulos de coluna de estágio
     // não estão mais como headings).
     expect(
-      screen.queryByRole("heading", { name: /qualified/i })
+      screen.queryByRole("heading", { name: /^Qualificado$/ })
     ).not.toBeInTheDocument();
 
     // O pathname continua o mesmo.
@@ -323,7 +324,7 @@ describe("FunilPanel Kanban drag-and-drop (sales-pipeline-via-agent-task-fronten
 
     const card = screen.getByRole("button", { name: /acme proposal/i });
     const negotiationColumn = screen.getByRole("group", {
-      name: /coluna negotiation/i,
+      name: "Coluna Negociação",
     });
     const dataTransfer = makeDataTransfer();
 
@@ -364,15 +365,22 @@ describe("FunilPanel Kanban drag-and-drop (sales-pipeline-via-agent-task-fronten
       />
     );
 
-    for (const stage of FUNIL_STAGES) {
+    for (const [, label] of [
+      ["lead", "Lead"],
+      ["qualified", "Qualificado"],
+      ["proposal", "Proposta"],
+      ["negotiation", "Negociação"],
+      ["won", "Ganho"],
+      ["lost", "Perdido"],
+    ] as const) {
       expect(
-        screen.getByRole("group", { name: `Coluna ${stage}` })
+        screen.getByRole("group", { name: `Coluna ${label}` })
       ).toBeInTheDocument();
     }
 
     const card = screen.getByRole("button", { name: /acme qualified/i });
     const proposalColumn = screen.getByRole("group", {
-      name: /coluna proposal/i,
+      name: "Coluna Proposta",
     });
     const dataTransfer = makeDataTransfer();
 
@@ -496,7 +504,7 @@ describe("FunilPanel Lista view (sales-pipeline-via-agent-task-frontend-funil-3)
     expect(dataRow).toHaveTextContent("Acme Co");
     expect(dataRow).toHaveTextContent("João");
     expect(dataRow).toHaveTextContent("Acme");
-    expect(dataRow).toHaveTextContent("proposal");
+    expect(dataRow).toHaveTextContent("Proposta");
   });
 });
 
@@ -637,7 +645,7 @@ describe("FunilPanel drawer inline actions (sales-pipeline-via-agent-task-fronte
     const drawer = screen.getByTestId("deal-drawer");
     await user.click(within(drawer).getByRole("combobox", { name: /mover para/i }));
     await user.click(
-      await screen.findByRole("option", { name: /^negotiation$/i })
+      await screen.findByRole("option", { name: /^Negociação$/ })
     );
 
     expect(onMoveDeal).toHaveBeenCalledWith("deal-1", "negotiation");
@@ -972,5 +980,267 @@ describe("FunilPanel Novo Lead form", () => {
     expect(onUpdateDeal).toHaveBeenCalledWith(
       expect.objectContaining({ title: "Acme novo" })
     );
+  });
+});
+
+const DEAL_STAGE_DISPLAY: ReadonlyArray<readonly [string, string]> = [
+  ["lead", "Lead"],
+  ["qualified", "Qualificado"],
+  ["proposal", "Proposta"],
+  ["negotiation", "Negociação"],
+  ["won", "Ganho"],
+  ["lost", "Perdido"],
+];
+
+describe("FunilPanel stage labels (saas-empresario-br-task-crm-ui-2 unit-1 / REQ-007)", () => {
+  it("kanban column titles and aria-labels use pt-BR DEAL_STAGE_LABELS, not the raw enum", () => {
+    render(
+      <FunilPanel
+        deals={[makeDeal({ id: "deal-1", title: "Acme", stage: "lead" })]}
+        stages={[...FUNIL_STAGES]}
+        contacts={[makeContact()]}
+        companies={[makeCompany()]}
+        selectedDealId={null}
+        onSelectDeal={() => {}}
+        notes={[]}
+        noteBody=""
+        setNoteBody={() => {}}
+        onAddNote={async () => {}}
+        onCreateDeal={async () => {}}
+        onMoveDeal={async () => {}}
+        onArchiveDeal={async () => {}}
+      />
+    );
+
+    for (const [canonical, label] of DEAL_STAGE_DISPLAY) {
+      const heading = screen.getByRole("heading", { name: new RegExp(`^${label}$`) });
+      expect(heading).toHaveTextContent(label);
+      expect(heading.textContent).not.toBe(canonical);
+
+      const column = screen.getByRole("group", { name: `Coluna ${label}` });
+      expect(column).toHaveAttribute("aria-label", `Coluna ${label}`);
+    }
+
+    const leadColumn = screen.getByRole("group", { name: /coluna lead/i });
+    expect(leadColumn).toHaveAttribute("aria-label", "Coluna Lead");
+    expect(leadColumn).not.toHaveAttribute("aria-label", "Coluna lead");
+  });
+
+  it("unknown stage falls back to the raw value in the kanban heading and aria-label", () => {
+    render(
+      <FunilPanel
+        deals={[]}
+        stages={["custom-stage"]}
+        contacts={[]}
+        companies={[]}
+        selectedDealId={null}
+        onSelectDeal={() => {}}
+        notes={[]}
+        noteBody=""
+        setNoteBody={() => {}}
+        onAddNote={async () => {}}
+        onCreateDeal={async () => {}}
+        onMoveDeal={async () => {}}
+        onArchiveDeal={async () => {}}
+      />
+    );
+
+    expect(screen.getByRole("heading", { name: /^custom-stage$/ })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Coluna custom-stage" })).toHaveAttribute(
+      "aria-label",
+      "Coluna custom-stage"
+    );
+  });
+
+  it("lista Estágio column and drawer select show the lookup, not the raw enum", async () => {
+    const user = userEvent.setup();
+    render(
+      <FunilPanel
+        deals={[
+          makeDeal({
+            id: "deal-1",
+            title: "Acme Proposal",
+            stage: "proposal",
+          }),
+        ]}
+        stages={[...FUNIL_STAGES]}
+        contacts={[makeContact()]}
+        companies={[makeCompany()]}
+        selectedDealId="deal-1"
+        onSelectDeal={() => {}}
+        notes={[]}
+        noteBody=""
+        setNoteBody={() => {}}
+        onAddNote={async () => {}}
+        onCreateDeal={async () => {}}
+        onMoveDeal={async () => {}}
+        onArchiveDeal={async () => {}}
+      />
+    );
+
+    const drawer = screen.getByTestId("deal-drawer");
+    await user.click(within(drawer).getByRole("combobox", { name: /mover para/i }));
+    expect(await screen.findByRole("option", { name: /^Negociação$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /^negotiation$/ })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    fireEvent.click(screen.getByRole("tab", { name: /visualização lista/i }));
+    const dataRow = screen.getAllByRole("row")[1];
+    expect(dataRow).toHaveTextContent("Proposta");
+    expect(dataRow).not.toHaveTextContent("proposal");
+  });
+});
+
+function visibleText(value: string | null | undefined): string {
+  return (value ?? "").replace(/\u00a0/g, " ");
+}
+
+describe("FunilPanel deal value (saas-empresario-br-task-crm-ui-2 unit-2 / REQ-007)", () => {
+  it("kanban card and lista show R$ 1.500,00 not BRL 1500", () => {
+    render(
+      <FunilPanel
+        deals={[
+          makeDeal({
+            id: "deal-1",
+            title: "Acme Co",
+            stage: "proposal",
+            value: 1500,
+            currency: "BRL",
+          }),
+        ]}
+        stages={[...FUNIL_STAGES]}
+        contacts={[makeContact()]}
+        companies={[makeCompany()]}
+        selectedDealId={null}
+        onSelectDeal={() => {}}
+        notes={[]}
+        noteBody=""
+        setNoteBody={() => {}}
+        onAddNote={async () => {}}
+        onCreateDeal={async () => {}}
+        onMoveDeal={async () => {}}
+        onArchiveDeal={async () => {}}
+      />
+    );
+
+    const card = screen.getByRole("button", { name: /acme co/i });
+    expect(visibleText(card.textContent)).toMatch(/R\$ 1\.500,00/);
+    expect(card).not.toHaveTextContent("BRL");
+    expect(card).not.toHaveTextContent("BRL 1500");
+
+    fireEvent.click(screen.getByRole("tab", { name: /visualização lista/i }));
+    const dataRow = screen.getAllByRole("row")[1];
+    expect(visibleText(dataRow.textContent)).toMatch(/R\$ 1\.500,00/);
+    expect(dataRow).not.toHaveTextContent("BRL 1500");
+  });
+
+  it("kanban card without value does not render BRL or undefined", () => {
+    render(
+      <FunilPanel
+        deals={[
+          makeDeal({
+            id: "deal-empty",
+            title: "Sem valor",
+            stage: "lead",
+            value: null,
+            currency: null,
+          }),
+        ]}
+        stages={[...FUNIL_STAGES]}
+        contacts={[]}
+        companies={[]}
+        selectedDealId={null}
+        onSelectDeal={() => {}}
+        notes={[]}
+        noteBody=""
+        setNoteBody={() => {}}
+        onAddNote={async () => {}}
+        onCreateDeal={async () => {}}
+        onMoveDeal={async () => {}}
+        onArchiveDeal={async () => {}}
+      />
+    );
+
+    const card = screen.getByRole("button", { name: /sem valor/i });
+    expect(card.textContent).not.toMatch(/BRL/);
+    expect(card.textContent).not.toMatch(/undefined/);
+    expect(visibleText(card.textContent)).not.toMatch(/R\$/);
+  });
+});
+
+describe("FunilPanel move persists canonical stage (saas-empresario-br-task-crm-ui-2 unit-3 / REQ-007)", () => {
+  it("dropping onto Coluna Negociação calls onMoveDeal with negotiation, not the translated label", () => {
+    const onMoveDeal = vi.fn(async () => {});
+
+    render(
+      <FunilPanel
+        deals={[
+          makeDeal({
+            id: "deal-1",
+            title: "Acme Proposal",
+            stage: "proposal",
+          }),
+        ]}
+        stages={[...FUNIL_STAGES]}
+        contacts={[makeContact()]}
+        companies={[makeCompany()]}
+        selectedDealId={null}
+        onSelectDeal={() => {}}
+        notes={[]}
+        noteBody=""
+        setNoteBody={() => {}}
+        onAddNote={async () => {}}
+        onCreateDeal={async () => {}}
+        onMoveDeal={onMoveDeal}
+        onArchiveDeal={async () => {}}
+      />
+    );
+
+    const column = screen.getByRole("group", { name: "Coluna Negociação" });
+    expect(column).toHaveAttribute("aria-label", "Coluna Negociação");
+
+    const card = screen.getByRole("button", { name: /acme proposal/i });
+    const dataTransfer = makeDataTransfer();
+    fireEvent.dragStart(card, { dataTransfer });
+    fireEvent.drop(column, { dataTransfer });
+
+    expect(onMoveDeal).toHaveBeenCalledWith("deal-1", "negotiation");
+    expect(onMoveDeal).not.toHaveBeenCalledWith("deal-1", "Negociação");
+  });
+
+  it("drawer option Negociação still moves with canonical negotiation", async () => {
+    const user = userEvent.setup();
+    const onMoveDeal = vi.fn(async () => {});
+
+    render(
+      <FunilPanel
+        deals={[
+          makeDeal({
+            id: "deal-1",
+            title: "Acme Proposal",
+            stage: "proposal",
+          }),
+        ]}
+        stages={[...FUNIL_STAGES]}
+        contacts={[makeContact()]}
+        companies={[makeCompany()]}
+        selectedDealId="deal-1"
+        onSelectDeal={() => {}}
+        notes={[]}
+        noteBody=""
+        setNoteBody={() => {}}
+        onAddNote={async () => {}}
+        onCreateDeal={async () => {}}
+        onMoveDeal={onMoveDeal}
+        onArchiveDeal={async () => {}}
+      />
+    );
+
+    const drawer = screen.getByTestId("deal-drawer");
+    await user.click(within(drawer).getByRole("combobox", { name: /mover para/i }));
+    await user.click(await screen.findByRole("option", { name: /^Negociação$/ }));
+
+    expect(onMoveDeal).toHaveBeenCalledWith("deal-1", "negotiation");
+    expect(onMoveDeal).not.toHaveBeenCalledWith("deal-1", "Negociação");
   });
 });

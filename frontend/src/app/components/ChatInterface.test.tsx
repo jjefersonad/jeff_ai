@@ -1,6 +1,9 @@
 import { useSyncExternalStore } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, within, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 import { ChatInterface } from "./ChatInterface";
 
@@ -39,6 +42,7 @@ vi.mock("use-stick-to-bottom", () => ({
 
 vi.mock("@/lib/api", () => ({
   uploadAttachment: vi.fn(),
+  uploadReference: vi.fn(),
 }));
 
 vi.mock("@/app/components/ChatMessage", () => ({
@@ -397,5 +401,150 @@ describe("ChatInterface — chat-empty-state-input (task-empty-3)", () => {
 
     const wrapper = screen.getByTestId("chat-input-dock");
     expect(wrapper.className).not.toMatch(/\bitems-center\b/);
+  });
+});
+
+describe("ChatInterface — saas-empresario-br-task-ux-3 unit-1 / REQ-004", () => {
+  beforeEach(() => {
+    mockUseChatContext.mockReset();
+  });
+
+  it("exports CHAT_EMPTY_JTBD with three literal prompts in JTBD order", async () => {
+    const mod = await import("./ChatInterface");
+    expect(
+      mod.CHAT_EMPTY_JTBD.map((item: { label: string; prompt: string }) => item.label)
+    ).toEqual([
+      "Falar com o Jeff",
+      "Registrar um cliente",
+      "Conectar meu WhatsApp",
+    ]);
+    expect(
+      mod.CHAT_EMPTY_JTBD.map((item: { label: string; prompt: string }) => item.prompt)
+    ).toEqual([
+      "Olá, Jeff. Preciso da sua ajuda no dia a dia do meu negócio.",
+      "Me ajuda a cadastrar um contato no CRM.",
+      "Como eu conecto o WhatsApp para falar com você pelo celular?",
+    ]);
+  });
+
+  it("shows three clickable pt-BR suggestions in order on an empty conversation", () => {
+    mockUseChatContext.mockReturnValue(baseChatContext({ messages: [] }));
+    render(<ChatInterface assistant={null} assistantId="unified" />);
+
+    const chips = screen.getAllByTestId("chat-empty-jtbd");
+    expect(chips).toHaveLength(3);
+    expect(chips.map((el) => el.textContent)).toEqual([
+      "Falar com o Jeff",
+      "Registrar um cliente",
+      "Conectar meu WhatsApp",
+    ]);
+    for (const chip of chips) {
+      expect(chip.tagName).toBe("BUTTON");
+      expect(chip).not.toBeDisabled();
+    }
+  });
+
+  it("does not render JTBD chips when the thread already has messages", () => {
+    mockUseChatContext.mockReturnValue(
+      baseChatContext({
+        messages: [{ id: "1", type: "human", content: "hi" }],
+      })
+    );
+    render(<ChatInterface assistant={null} assistantId="unified" />);
+    expect(screen.queryAllByTestId("chat-empty-jtbd")).toHaveLength(0);
+  });
+});
+
+describe("ChatInterface — saas-empresario-br-task-ux-3 unit-2 / REQ-004", () => {
+  beforeEach(() => {
+    mockUseChatContext.mockReset();
+  });
+
+  it("clicking Registrar um cliente sends the canonical CRM prompt via sendMessage", async () => {
+    const sendMessage = vi.fn();
+    mockUseChatContext.mockReturnValue(
+      baseChatContext({ messages: [], sendMessage })
+    );
+    const user = userEvent.setup();
+    render(
+      <ChatInterface
+        assistant={{ assistant_id: "unified" } as never}
+        assistantId="unified"
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Registrar um cliente" })
+    );
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      "Me ajuda a cadastrar um contato no CRM.",
+      []
+    );
+  });
+
+  it("fills the composer with the CRM prompt when send is blocked (loading)", async () => {
+    const sendMessage = vi.fn();
+    mockUseChatContext.mockReturnValue(
+      baseChatContext({ messages: [], sendMessage, isLoading: true })
+    );
+    const user = userEvent.setup();
+    render(
+      <ChatInterface
+        assistant={{ assistant_id: "unified" } as never}
+        assistantId="unified"
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Registrar um cliente" })
+    );
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox")).toHaveValue(
+      "Me ajuda a cadastrar um contato no CRM."
+    );
+  });
+
+  it("does not add an onboarding route, tour, checklist, or onboarding subagent", () => {
+    const source = readFileSync(
+      path.resolve(__dirname, "./ChatInterface.tsx"),
+      "utf8"
+    );
+    expect(source).not.toMatch(/\/onboarding/);
+    expect(source).not.toMatch(/empresario_onboarding/);
+    expect(source).not.toMatch(/\btour\b/i);
+    expect(source).not.toMatch(/checklist persistente/i);
+  });
+});
+
+describe("ChatInterface — saas-empresario-br-task-ux-3 unit-3 / REQ-004", () => {
+  beforeEach(() => {
+    mockUseChatContext.mockReset();
+  });
+
+  it("uses Escreva sua mensagem... instead of Write your message...", () => {
+    mockUseChatContext.mockReturnValue(baseChatContext({ messages: [] }));
+    render(<ChatInterface assistant={null} assistantId="unified" />);
+
+    expect(
+      screen.getByPlaceholderText("Escreva sua mensagem...")
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText("Write your message...")
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses Executando... instead of Running... while loading", () => {
+    mockUseChatContext.mockReturnValue(
+      baseChatContext({
+        messages: [{ id: "1", type: "human", content: "hi" }],
+        isLoading: true,
+      })
+    );
+    render(<ChatInterface assistant={null} assistantId="unified" />);
+
+    expect(screen.getByPlaceholderText("Executando...")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("Running...")).not.toBeInTheDocument();
   });
 });

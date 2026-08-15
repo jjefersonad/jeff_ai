@@ -36,7 +36,7 @@ export interface Assistant {
   description: string;
 }
 
-const ASSISTANTS: readonly Assistant[] = [
+export const ASSISTANTS: readonly Assistant[] = [
   {
     id: "unified",
     name: "Unified",

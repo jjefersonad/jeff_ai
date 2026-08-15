@@ -23,7 +23,7 @@
  * waits for rehydration rather than the whole shell disappearing.
  *
  * Per-page affordances (the `Conversas` thread-history toggle, the
- * `New Thread` button, the `+ Adicionar servidor` action on `/mcp-servers`,
+ * `Nova conversa` button, the `+ Adicionar servidor` action on `/mcp-servers`,
  * etc.) live inside each page's own JSX, not in this shell. The shell
  * owns the chrome only.
  */

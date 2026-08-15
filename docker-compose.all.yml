@@ -48,6 +48,7 @@ services:
         condition: service_started
     volumes:
       - ./backend/outputs:/deps/backend/outputs
+      - ./backend/files:/deps/backend/files
       - ./backend/langgraph.json:/deps/backend/langgraph.json
       - ./backend/skills:/deps/backend/skills
       - ./backend/src:/deps/backend/src
@@ -144,6 +145,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend/outputs:/deps/backend/outputs
+      - ./backend/files:/deps/backend/files
       - ./backend/src:/deps/backend/src
     entrypoint: ["/bin/sh", "/deps/backend/telegram_gateway_entrypoint.sh"]
     networks:
