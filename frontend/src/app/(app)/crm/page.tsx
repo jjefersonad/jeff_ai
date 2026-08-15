@@ -18,6 +18,7 @@ import {
   archiveDeal,
   createDeal,
   createNote,
+  dealStageLabel,
   listCompanies,
   listContacts,
   listDealStages,
@@ -234,7 +235,7 @@ export default function CrmPage() {
         ...prev,
         [dealId]: new Date().toISOString(),
       }));
-      toast.success(`Deal movido para ${stage}`);
+      toast.success(`Deal movido para ${dealStageLabel(stage)}`);
     } catch (err) {
       setError(errMessage(err));
     }

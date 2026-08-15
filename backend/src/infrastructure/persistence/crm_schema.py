@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS crm_contacts (
     city TEXT,
     state TEXT,
     custom_values JSONB NOT NULL DEFAULT '{}'::jsonb,
+    whatsapp_opt_in BOOLEAN NOT NULL DEFAULT false,
     archived_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -146,6 +147,8 @@ _ALTER_STATEMENTS = (
     "ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS state TEXT",
     "ALTER TABLE crm_contacts "
     "ADD COLUMN IF NOT EXISTS custom_values JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE crm_contacts ADD COLUMN IF NOT EXISTS "
+    "whatsapp_opt_in BOOLEAN NOT NULL DEFAULT false",
     "ALTER TABLE crm_deals "
     "ADD COLUMN IF NOT EXISTS custom_values JSONB NOT NULL DEFAULT '{}'::jsonb",
     "ALTER TABLE crm_notes ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ",

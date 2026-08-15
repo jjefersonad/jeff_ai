@@ -10,6 +10,7 @@ from src.infrastructure.ownership.paths import (
     resolve_owned_file_path,
     user_files_root,
     user_kind_dir,
+    user_skills_root,
     workspace_dir,
 )
 from src.infrastructure.ownership.session_writers import (
@@ -31,5 +32,6 @@ __all__ = [
     "resolve_owned_file_path",
     "user_files_root",
     "user_kind_dir",
+    "user_skills_root",
     "workspace_dir",
 ]

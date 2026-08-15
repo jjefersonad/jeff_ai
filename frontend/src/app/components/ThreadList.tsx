@@ -33,11 +33,11 @@ import { useThreads } from "@/app/hooks/useThreads";
 type StatusFilter = "all" | "idle" | "busy" | "interrupted" | "error";
 
 const GROUP_LABELS = {
-  interrupted: "Requiring Attention",
-  today: "Today",
-  yesterday: "Yesterday",
-  week: "This Week",
-  older: "Older",
+  interrupted: "Precisa de atenção",
+  today: "Hoje",
+  yesterday: "Ontem",
+  week: "Esta semana",
+  older: "Anteriores",
 } as const;
 
 const STATUS_COLORS: Record<ThreadItem["status"], string> = {
@@ -56,7 +56,7 @@ function formatTime(date: Date, now = new Date()): string {
   const days = Math.floor(diff / (1000 * 60 * 60 * 24));
 
   if (days === 0) return format(date, "HH:mm");
-  if (days === 1) return "Yesterday";
+  if (days === 1) return "Ontem";
   if (days < 7) return format(date, "EEEE");
   return format(date, "MM/dd");
 }
@@ -114,7 +114,7 @@ function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center p-8 text-center">
       <MessageSquare className="mb-2 h-12 w-12 text-gray-300" />
-      <p className="text-sm text-muted-foreground">No threads found</p>
+      <p className="text-sm text-muted-foreground">Nenhuma conversa encontrada</p>
     </div>
   );
 }
@@ -241,7 +241,7 @@ export function ThreadList({
     <div className="absolute inset-0 flex flex-col">
       {/* Header with title, filter, and close button */}
       <div className="grid flex-shrink-0 grid-cols-[1fr_auto] items-center gap-3 border-b border-border p-4">
-        <h2 className="text-lg font-semibold tracking-tight">Threads</h2>
+        <h2 className="text-lg font-semibold tracking-tight">Conversas</h2>
         <div className="flex items-center gap-2">
           <Select
             value={statusFilter}
@@ -251,37 +251,37 @@ export function ThreadList({
               <SelectValue />
             </SelectTrigger>
             <SelectContent align="end">
-              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="all">Todos os status</SelectItem>
               <SelectSeparator />
               <SelectGroup>
-                <SelectLabel>Active</SelectLabel>
+                <SelectLabel>Ativas</SelectLabel>
                 <SelectItem value="idle">
                   <StatusFilterItem
                     status="idle"
-                    label="Idle"
+                    label="Livre"
                   />
                 </SelectItem>
                 <SelectItem value="busy">
                   <StatusFilterItem
                     status="busy"
-                    label="Busy"
+                    label="Ocupada"
                   />
                 </SelectItem>
               </SelectGroup>
               <SelectSeparator />
               <SelectGroup>
-                <SelectLabel>Attention</SelectLabel>
+                <SelectLabel>Atenção</SelectLabel>
                 <SelectItem value="interrupted">
                   <StatusFilterItem
                     status="interrupted"
-                    label="Interrupted"
+                    label="Interrompida"
                     badge={interruptedCount}
                   />
                 </SelectItem>
                 <SelectItem value="error">
                   <StatusFilterItem
                     status="error"
-                    label="Error"
+                    label="Erro"
                   />
                 </SelectItem>
               </SelectGroup>
@@ -377,7 +377,7 @@ export function ThreadList({
                           type="button"
                           variant="ghost"
                           size="icon"
-                          aria-label="Delete thread"
+                          aria-label="Excluir conversa"
                           className="h-8 w-8 text-muted-foreground hover:text-destructive"
                           onClick={(e) => {
                             e.stopPropagation();
@@ -424,10 +424,10 @@ export function ThreadList({
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete thread</DialogTitle>
+            <DialogTitle>Excluir conversa</DialogTitle>
             <DialogDescription>
               {threadPendingDelete
-                ? `This will permanently delete "${threadPendingDelete.title}". This action cannot be undone.`
+                ? `Isso excluirá permanentemente "${threadPendingDelete.title}". Esta ação não pode ser desfeita.`
                 : null}
             </DialogDescription>
           </DialogHeader>
@@ -437,14 +437,14 @@ export function ThreadList({
               variant="outline"
               onClick={handleCancelDelete}
             >
-              Cancel
+              Cancelar
             </Button>
             <Button
               type="button"
               variant="destructive"
               onClick={handleConfirmDelete}
             >
-              Delete
+              Excluir
             </Button>
           </DialogFooter>
         </DialogContent>

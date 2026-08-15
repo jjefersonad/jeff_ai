@@ -20,7 +20,7 @@ Se aparecerem tools como `contacts_list_contacts`, `lead_gen_list_leads`,
 | Tool | Quando usar |
 |------|-------------|
 | `crm_search_contacts` | Buscar/listar contatos (`query`, opcional `company_id`) |
-| `crm_upsert_contact` | Criar (sem `contact_id`) ou atualizar. Exige email e/ou phone. Aceita `city`/`state`/`custom_values` |
+| `crm_upsert_contact` | Criar (sem `contact_id`) ou atualizar. Exige email e/ou phone. Aceita `city`/`state`/`custom_values` e `whatsapp_opt_in` (create: omitido→false; update: omitido→preserva). NÃO dispara WhatsApp. |
 | `crm_add_note` | Follow-up; exatamente um alvo; `source=agent` |
 | `crm_list_deals` | Listar deals do funil |
 | `crm_create_deal` | Abrir oportunidade (default stage = `lead`; `value`/`custom_values`) |

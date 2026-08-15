@@ -53,6 +53,21 @@ interface ChatInterfaceProps {
   assistantId: string;
 }
 
+export const CHAT_EMPTY_JTBD = [
+  {
+    label: "Falar com o Jeff",
+    prompt: "Olá, Jeff. Preciso da sua ajuda no dia a dia do meu negócio.",
+  },
+  {
+    label: "Registrar um cliente",
+    prompt: "Me ajuda a cadastrar um contato no CRM.",
+  },
+  {
+    label: "Conectar meu WhatsApp",
+    prompt: "Como eu conecto o WhatsApp para falar com você pelo celular?",
+  },
+] as const;
+
 const getStatusIcon = (status: TodoItem["status"], className?: string) => {
   switch (status) {
     case "completed":
@@ -192,6 +207,17 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant, assist
       }
     },
     []
+  );
+
+  const handleEmptyJtbd = useCallback(
+    (prompt: string) => {
+      if (submitDisabled) {
+        setInput(prompt);
+        return;
+      }
+      sendMessage(prompt, []);
+    },
+    [sendMessage, submitDisabled]
   );
 
   const handleKeyDown = useCallback(
@@ -556,6 +582,21 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant, assist
               : "flex-shrink-0"
         )}
       >
+        {isEmptyState && (
+          <div className="mb-4 flex max-w-[1024px] flex-wrap justify-center gap-2 px-4">
+            {CHAT_EMPTY_JTBD.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                data-testid="chat-empty-jtbd"
+                className="rounded-full border border-border bg-background px-3 py-1.5 text-sm text-foreground hover:bg-accent"
+                onClick={() => handleEmptyJtbd(item.prompt)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        )}
         <div
           className={cn(
             "mx-4 mb-6 flex flex-shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-background",
@@ -802,7 +843,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant, assist
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={isLoading ? "Running..." : "Write your message..."}
+              placeholder={isLoading ? "Executando..." : "Escreva sua mensagem..."}
               className="font-inherit field-sizing-content flex-1 resize-none border-0 bg-transparent px-[18px] pb-[13px] pt-[14px] text-sm leading-7 text-primary outline-none placeholder:text-tertiary"
               rows={1}
             />

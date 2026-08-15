@@ -32,7 +32,8 @@ from src.domain.crm import (
 
 _CONTACT_COLUMNS = (
     "id, user_id, name, email, phone, company_id, status, tags, "
-    "city, state, custom_values, archived_at, created_at, updated_at"
+    "city, state, custom_values, whatsapp_opt_in, archived_at, "
+    "created_at, updated_at"
 )
 _COMPANY_COLUMNS = (
     "id, user_id, name, website, domain, phone, notes, "
@@ -68,6 +69,7 @@ def _row_to_contact(row: tuple[Any, ...]) -> Contact:
         city,
         state,
         custom_values,
+        whatsapp_opt_in,
         archived_at,
         created_at,
         updated_at,
@@ -84,6 +86,7 @@ def _row_to_contact(row: tuple[Any, ...]) -> Contact:
         city=city,
         state=state,
         custom_values=dict(custom_values or {}),
+        whatsapp_opt_in=bool(whatsapp_opt_in),
         archived_at=archived_at,
         created_at=created_at,
         updated_at=updated_at,
@@ -356,7 +359,7 @@ class PostgresCrmRepository(CrmRepositoryPort):
                     f"""
                     INSERT INTO crm_contacts ({_CONTACT_COLUMNS})
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s
                     )
                     RETURNING {_CONTACT_COLUMNS}
                     """,
@@ -372,6 +375,7 @@ class PostgresCrmRepository(CrmRepositoryPort):
                         contact.city,
                         contact.state,
                         _as_jsonb(contact.custom_values),
+                        contact.whatsapp_opt_in,
                         contact.archived_at,
                         contact.created_at,
                         contact.updated_at,
@@ -504,7 +508,8 @@ class PostgresCrmRepository(CrmRepositoryPort):
                     UPDATE crm_contacts SET
                         name = %s, email = %s, phone = %s, company_id = %s,
                         status = %s, tags = %s, city = %s, state = %s,
-                        custom_values = %s::jsonb, archived_at = %s, updated_at = %s
+                        custom_values = %s::jsonb, whatsapp_opt_in = %s,
+                        archived_at = %s, updated_at = %s
                     WHERE id = %s AND user_id = %s
                     RETURNING {_CONTACT_COLUMNS}
                     """,
@@ -518,6 +523,7 @@ class PostgresCrmRepository(CrmRepositoryPort):
                         contact.city,
                         contact.state,
                         _as_jsonb(contact.custom_values),
+                        contact.whatsapp_opt_in,
                         contact.archived_at,
                         contact.updated_at,
                         contact.id,

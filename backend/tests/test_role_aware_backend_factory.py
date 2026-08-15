@@ -8,7 +8,7 @@ import pytest
 
 from src.agents.unified import agent as agent_mod
 from src.composition.backends import MEMORIES_PREFIX
-from src.infrastructure.ownership.paths import user_files_root
+from src.infrastructure.ownership.paths import user_files_root, user_skills_root
 
 
 def _patch_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
@@ -57,6 +57,131 @@ def _fs_root_dirs(routes: dict) -> list[Path]:
         if root is not None:
             roots.append(Path(root).resolve())
     return roots
+
+
+# --- user-project-skills-layers backend-1 unit-1 (REQ-007 / D3) --------------
+
+
+def test_user_backend_mounts_user_skills_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WHEN user_id=A THEN /user-skills/ → user_skills_root(A) and is writable."""
+    from deepagents.backends import FilesystemBackend
+
+    from src.composition.backends import ReadOnlyFilesystemBackend
+
+    _patch_dirs(tmp_path, monkeypatch)
+    routes = _routes_for(role="user", user_key="web:user-a")
+
+    assert "/user-skills/" in routes
+    user_skills = routes["/user-skills/"]
+    assert not isinstance(user_skills, ReadOnlyFilesystemBackend)
+    assert isinstance(user_skills, FilesystemBackend)
+    root = Path(getattr(user_skills, "cwd", None) or user_skills.root_dir).resolve()
+    assert root == user_skills_root("user-a").resolve()
+    assert root.is_dir()
+
+
+# --- backend-1 unit-2 (user-owned-skills REQ-002 / D8) -----------------------
+
+
+def test_backend_without_identity_does_not_mount_user_skills(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WHEN no resolvable user_id THEN /user-skills/ is not mounted."""
+    _patch_dirs(tmp_path, monkeypatch)
+
+    routes_none = _routes_for(role="user", user_key=None)
+    assert "/user-skills/" not in routes_none
+
+    routes_tg = _routes_for(role="user", user_key="telegram:12345")
+    assert "/user-skills/" not in routes_tg
+    assert user_skills_root("12345").resolve() not in _fs_root_dirs(routes_tg)
+
+
+# --- backend-1 unit-3 (agent-filesystem REQ-007) ----------------------------
+
+
+def test_user_can_write_under_user_skills_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WHEN role=user writes /user-skills/my-skill/SKILL.md THEN file lands under owned tree."""
+    _patch_dirs(tmp_path, monkeypatch)
+    routes = _routes_for(role="user", user_key="web:user-a")
+    backend = routes["/user-skills/"]
+
+    result = backend.write("my-skill/SKILL.md", "---\nname: my-skill\n---\nbody")
+    assert result.error is None
+    owned = user_skills_root("user-a") / "my-skill" / "SKILL.md"
+    assert owned.is_file()
+    assert "my-skill" in owned.read_text(encoding="utf-8")
+
+
+# --- backend-1 unit-4 (REQ-003 / REQ-007): project /skills/ RO for user ------
+
+
+def test_user_cannot_write_project_skills_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WHEN role=user write_file on /skills/ THEN refused; backend/skills unchanged."""
+    from src.composition.backends import ReadOnlyFilesystemBackend
+
+    dirs = _patch_dirs(tmp_path, monkeypatch)
+    routes = _routes_for(role="user", user_key="web:user-a")
+    skills = routes["/skills/"]
+    assert isinstance(skills, ReadOnlyFilesystemBackend)
+    result = skills.write("new-skill/SKILL.md", "hacked")
+    assert result.error is not None
+    assert not (dirs["SKILLS_DIR"] / "new-skill" / "SKILL.md").exists()
+    assert (dirs["SKILLS_DIR"] / "demo" / "SKILL.md").read_text(encoding="utf-8") == "skill"
+
+
+# --- backend-1 unit-5 (user-owned-skills REQ-002): no cross-user ------------
+
+
+def test_user_a_cannot_access_user_b_skills_via_files_mount(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WHEN user A attempts paths under files/B/skills/ THEN refused / no leak."""
+    _patch_dirs(tmp_path, monkeypatch)
+    other_skill = user_skills_root("user-b") / "secret" / "SKILL.md"
+    other_skill.parent.mkdir(parents=True)
+    other_skill.write_text("---\nname: secret\n---\nleak", encoding="utf-8")
+
+    routes = _routes_for(role="user", user_key="web:user-a")
+    roots = _fs_root_dirs(routes)
+    assert user_skills_root("user-b").resolve() not in roots
+    assert user_files_root("user-b").resolve() not in roots
+
+    # Owned mount is only A's root — traversal to B must raise.
+    a_files = routes[str(user_files_root("user-a"))]
+    with pytest.raises(ValueError, match="[Tt]raversal"):
+        a_files.read("../user-b/skills/secret/SKILL.md")
+    with pytest.raises(ValueError, match="[Tt]raversal"):
+        a_files.write("../user-b/skills/hacked/SKILL.md", "nope")
+
+    assert other_skill.read_text(encoding="utf-8") == "---\nname: secret\n---\nleak"
+    assert not (user_skills_root("user-b") / "hacked" / "SKILL.md").exists()
+
+
+# --- backend-1 unit-6 (REQ-006): admin writable project /skills/ ------------
+
+
+def test_admin_can_write_project_skills_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WHEN role=admin writes /skills/<name>/SKILL.md THEN project catalog is updated."""
+    from src.composition.backends import ReadOnlyFilesystemBackend
+
+    dirs = _patch_dirs(tmp_path, monkeypatch)
+    routes = _routes_for(role="admin", user_key="web:admin-1")
+    skills = routes["/skills/"]
+    assert not isinstance(skills, ReadOnlyFilesystemBackend)
+    result = skills.write("admin-skill/SKILL.md", "---\nname: admin-skill\n---\nok")
+    assert result.error is None
+    written = dirs["SKILLS_DIR"] / "admin-skill" / "SKILL.md"
+    assert written.is_file()
+    assert "admin-skill" in written.read_text(encoding="utf-8")
 
 
 # --- unit-1 (REQ-001): no REPO_ROOT for role=user -----------------------------
@@ -205,9 +330,11 @@ def test_user_backend_without_identity_does_not_mount_files(
     roots_none = _fs_root_dirs(routes_none)
     assert files_root not in roots_none
     assert not any(str(files_root) in str(r) for r in roots_none)
+    assert "/user-skills/" not in routes_none
 
     # Telegram-style key without explicit user_id → fail-closed (no files/).
     routes_tg = _routes_for(role="user", user_key="telegram:12345")
     roots_tg = _fs_root_dirs(routes_tg)
     assert files_root not in roots_tg
     assert user_files_root("12345").resolve() not in roots_tg
+    assert "/user-skills/" not in routes_tg

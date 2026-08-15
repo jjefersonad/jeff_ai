@@ -16,6 +16,21 @@ export type DealStage =
   | "won"
   | "lost";
 
+/** Rótulos pt-BR de display. Chaves = Deal.stage persistido (não traduzir no payload). */
+export const DEAL_STAGE_LABELS: Record<DealStage, string> = {
+  lead: "Lead",
+  qualified: "Qualificado",
+  proposal: "Proposta",
+  negotiation: "Negociação",
+  won: "Ganho",
+  lost: "Perdido",
+};
+
+/** Lookup de rótulo do funil; estágio desconhecido cai no valor cru. */
+export function dealStageLabel(stage: string): string {
+  return DEAL_STAGE_LABELS[stage as DealStage] ?? stage;
+}
+
 export type FieldEntity = "contact" | "company" | "deal";
 export type FieldType = "text" | "number" | "boolean";
 
@@ -30,6 +45,7 @@ export interface CrmContact {
   tags: string[];
   city: string | null;
   state: string | null;
+  whatsapp_opt_in: boolean;
   custom_values: Record<string, unknown>;
   archived_at: string | null;
   created_at: string;
@@ -105,6 +121,7 @@ export interface ContactCreatePayload {
   tags?: string[] | null;
   city?: string | null;
   state?: string | null;
+  whatsapp_opt_in?: boolean;
   custom_values?: Record<string, unknown> | null;
 }
 
@@ -118,6 +135,7 @@ export interface ContactUpdatePayload {
   tags?: string[] | null;
   city?: string | null;
   state?: string | null;
+  whatsapp_opt_in?: boolean;
   custom_values?: Record<string, unknown> | null;
 }
 
@@ -504,6 +522,34 @@ export function formatCrmTimestamp(iso: string | null | undefined): string {
 }
 
 /**
+ * Formata valor de deal para display (Intl pt-BR).
+ * null / '' / NaN → null (a UI não renderiza montante / BRL / undefined).
+ */
+export function formatDealValue(
+  value: string | number | null | undefined,
+  currency?: string | null
+): string | null {
+  if (value == null || value === "") return null;
+  const amount = typeof value === "number" ? value : Number(value);
+  if (Number.isNaN(amount)) return null;
+  const code =
+    !currency || currency.trim() === "" || currency === "BRL"
+      ? "BRL"
+      : currency;
+  try {
+    return new Intl.NumberFormat("pt-BR", {
+      style: "currency",
+      currency: code,
+    }).format(amount);
+  } catch {
+    return new Intl.NumberFormat("pt-BR", {
+      style: "currency",
+      currency: "BRL",
+    }).format(amount);
+  }
+}
+
+/**
  * Gera slug de chave de campo personalizado (`^[a-z][a-z0-9_]*$`).
  * Aceita rótulo ou chave digitada; remove acentos e caracteres inválidos.
  */
@@ -538,6 +584,7 @@ export function buildContactWritePayload(input: {
   company_id?: string | null;
   city?: string | null;
   state?: string | null;
+  whatsapp_opt_in?: boolean;
   custom_values?: Record<string, unknown> | null;
   created_at?: string;
   updated_at?: string;
@@ -551,6 +598,7 @@ export function buildContactWritePayload(input: {
     company_id: input.company_id ?? null,
     city: input.city?.trim() || null,
     state: input.state?.trim() || null,
+    whatsapp_opt_in: input.whatsapp_opt_in ?? false,
     custom_values: input.custom_values ?? {},
   };
 }

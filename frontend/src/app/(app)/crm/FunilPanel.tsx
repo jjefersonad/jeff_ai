@@ -66,7 +66,9 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { daysSinceActivity, isStale } from "@/lib/crm-stagnation";
 import {
+  dealStageLabel,
   formatCrmTimestamp,
+  formatDealValue,
   type CrmCompany,
   type CrmContact,
   type CrmDeal,
@@ -497,16 +499,17 @@ export function FunilPanel({
             <div
               key={stage}
               role="group"
-              aria-label={`Coluna ${stage}`}
+              aria-label={`Coluna ${dealStageLabel(stage)}`}
               className="flex min-h-[200px] flex-col gap-2 rounded-md border border-border p-3"
               onDragOverCapture={handleColumnDragOver}
               onDrop={(event) => handleColumnDrop(event, stage)}
             >
-              <h3 className="text-sm font-semibold capitalize">{stage}</h3>
+              <h3 className="text-sm font-semibold">{dealStageLabel(stage)}</h3>
               {(dealsByStage[stage] ?? []).map((deal) => {
                 const contact = contacts.find((c) => c.id === deal.contact_id);
                 const lastNoteAt = lastNoteAtByDealId[deal.id] ?? null;
                 const stale = isStale(deal, lastNoteAt);
+                const formattedValue = formatDealValue(deal.value, deal.currency);
                 return (
                 <button
                   key={deal.id}
@@ -526,9 +529,9 @@ export function FunilPanel({
                       {contact.name}
                     </span>
                   )}
-                  {deal.value != null && (
+                  {formattedValue && (
                     <span className="mt-1 block text-xs text-muted-foreground">
-                      {deal.currency ?? "BRL"} {deal.value}
+                      {formattedValue}
                     </span>
                   )}
                   {stale && (
@@ -621,12 +624,10 @@ export function FunilPanel({
                           {company?.name ?? "—"}
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">
-                          {deal.value != null
-                            ? `${deal.currency ?? "BRL"} ${deal.value}`
-                            : "—"}
+                          {formatDealValue(deal.value, deal.currency) ?? "—"}
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">
-                          {String(deal.stage)}
+                          {dealStageLabel(String(deal.stage))}
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">
                           {formatCrmTimestamp(deal.updated_at)}
@@ -848,7 +849,7 @@ export function FunilPanel({
                     <SelectContent>
                       {stages.map((stage) => (
                         <SelectItem key={stage} value={stage}>
-                          {stage}
+                          {dealStageLabel(stage)}
                         </SelectItem>
                       ))}
                     </SelectContent>

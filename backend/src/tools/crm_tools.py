@@ -90,6 +90,7 @@ def _contact_dict(contact: Contact) -> dict[str, Any]:
         "city": contact.city,
         "state": contact.state,
         "custom_values": dict(contact.custom_values),
+        "whatsapp_opt_in": contact.whatsapp_opt_in,
         "archived_at": contact.archived_at.isoformat() if contact.archived_at else None,
         "created_at": contact.created_at.isoformat(),
         "updated_at": contact.updated_at.isoformat(),
@@ -195,13 +196,16 @@ async def crm_upsert_contact(
     city: str | None = None,
     state: str | None = None,
     custom_values: dict[str, Any] | None = None,
+    whatsapp_opt_in: bool | None = None,
     user_id: str | None = None,
 ) -> dict[str, Any]:
     """[CRM Jeff AI] `crm_upsert_contact` — cria ou atualiza contato no CRM nativo.
 
     Sem `contact_id` → cria. Com `contact_id` → atualiza. Exige `email` e/ou
-    `phone`. Aceita `city`/`state`/`custom_values`. NÃO usar MCP `contacts_*` /
-    `lead_gen_*` no lugar desta tool. `user_id` do modelo é IGNORADO.
+    `phone`. Aceita `city`/`state`/`custom_values` e `whatsapp_opt_in`
+    (create: None→false; update: None→preserva). NÃO dispara WhatsApp. NÃO
+    usar MCP `contacts_*` / `lead_gen_*` no lugar desta tool. `user_id` do
+    modelo é IGNORADO.
     """
     del user_id
     resolved = await _require_user_id()
@@ -221,6 +225,7 @@ async def crm_upsert_contact(
                 city=city,
                 state=state,
                 custom_values=custom_values,
+                whatsapp_opt_in=whatsapp_opt_in,
             )
             if contact is None:
                 return {"error": "Contact not found"}
@@ -236,6 +241,7 @@ async def crm_upsert_contact(
                 city=city,
                 state=state,
                 custom_values=custom_values,
+                whatsapp_opt_in=False if whatsapp_opt_in is None else whatsapp_opt_in,
             )
     except DomainError as exc:
         return {"error": str(exc)}

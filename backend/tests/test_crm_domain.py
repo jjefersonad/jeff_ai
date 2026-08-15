@@ -119,6 +119,17 @@ def test_field_definition_and_enums_v1() -> None:
     assert {e.value for e in FieldEntity} == {"contact", "company", "deal"}
 
 
+def test_contact_whatsapp_opt_in_defaults_false() -> None:
+    """REQ-006: Contact.whatsapp_opt_in defaulta False quando omitido."""
+    contact = Contact(
+        id="c1",
+        user_id="u1",
+        name="Ana",
+        email="ana@ex.com",
+    )
+    assert contact.whatsapp_opt_in is False
+
+
 def test_note_optional_archived_at() -> None:
     note = Note(
         id="n1",

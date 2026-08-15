@@ -110,6 +110,7 @@ class Contact:
     city: str | None = None
     state: str | None = None
     custom_values: dict[str, Any] = field(default_factory=dict)
+    whatsapp_opt_in: bool = False
     archived_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))

@@ -64,6 +64,7 @@ type ContactFormState = {
   company_id: string;
   city: string;
   state: string;
+  whatsapp_opt_in: boolean;
   custom_values: Record<string, string>;
 };
 
@@ -74,6 +75,7 @@ const emptyForm = (): ContactFormState => ({
   company_id: "none",
   city: "",
   state: "",
+  whatsapp_opt_in: false,
   custom_values: {},
 });
 
@@ -89,6 +91,7 @@ function formFromContact(contact: CrmContact): ContactFormState {
     company_id: contact.company_id ?? "none",
     city: contact.city ?? "",
     state: contact.state ?? "",
+    whatsapp_opt_in: contact.whatsapp_opt_in === true,
     custom_values: custom,
   };
 }
@@ -277,6 +280,7 @@ export function ContactsPanel({
         company_id: form.company_id === "none" ? null : form.company_id,
         city: form.city,
         state: form.state,
+        whatsapp_opt_in: form.whatsapp_opt_in,
         custom_values: customValuesPayload(defs),
         created_at: editing?.created_at,
         updated_at: editing?.updated_at,
@@ -691,6 +695,23 @@ export function ContactsPanel({
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="modal-contact-whatsapp-opt-in"
+                className="size-4"
+                checked={form.whatsapp_opt_in}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    whatsapp_opt_in: e.target.checked,
+                  }))
+                }
+              />
+              <Label htmlFor="modal-contact-whatsapp-opt-in">
+                Cliente autorizou contato por WhatsApp
+              </Label>
             </div>
 
             {definitions.length > 0 && (

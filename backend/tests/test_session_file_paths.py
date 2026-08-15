@@ -33,6 +33,36 @@ def test_user_files_root_and_kind_dirs(tmp_path: Path, monkeypatch: pytest.Monke
     )
 
 
+def test_user_skills_root_equals_files_dir_user_skills(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """user-project-skills-layers-task-paths-1-unit-1 (user-owned-skills REQ-001)."""
+    monkeypatch.setenv("FILES_DIR", str(tmp_path))
+    assert file_paths.user_skills_root("A") == tmp_path / "A" / "skills"
+    assert file_paths.user_skills_root("A") == file_paths.user_files_root("A") / "skills"
+
+
+def test_user_skills_root_not_under_project_skills_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """user-project-skills-layers-task-paths-1-unit-2 (user-owned-skills REQ-001/005)."""
+    files = tmp_path / "files"
+    workspace = tmp_path / "workspace"
+    project_skills = tmp_path / "backend" / "skills"
+    files.mkdir()
+    workspace.mkdir()
+    project_skills.mkdir(parents=True)
+    monkeypatch.setenv("FILES_DIR", str(files))
+    monkeypatch.setenv("WORKSPACE_DIR", str(workspace))
+
+    root = file_paths.user_skills_root("user-a")
+    assert root == files / "user-a" / "skills"
+    assert root.is_relative_to(files)
+    assert not root.is_relative_to(project_skills)
+    # Durable under owned files, not per-thread workspace (REQ-005).
+    assert not root.is_relative_to(workspace)
+
+
 @pytest.mark.asyncio
 async def test_authorize_denies_other_users_files_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

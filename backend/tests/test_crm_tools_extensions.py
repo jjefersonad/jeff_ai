@@ -242,5 +242,6 @@ async def test_crm_upsert_contact_ignores_alien_user_id_and_saves_extensions(
     assert created["city"] == "Curitiba"
     assert created["state"] == "PR"
     assert created["custom_values"] == {"segmento": "PME"}
+    assert created["whatsapp_opt_in"] is False
     assert "user-alien" not in {c.user_id for c in repo.contacts.values()}
     assert all(d.user_id == session_user for d in repo.definitions.values())

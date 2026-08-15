@@ -1,4 +1,4 @@
-"""Layout canônico `files/<user_id>/{attachment,images,docs}` (session-file-sandbox D5/D13)."""
+"""Layout canônico `files/<user_id>/{attachment,images,docs,skills}` (D5/D13 + user skills)."""
 from __future__ import annotations
 
 import os
@@ -48,6 +48,11 @@ def user_files_root(user_id: str) -> Path:
     if not user_id:
         raise ValueError("user_id is required")
     return files_dir() / user_id
+
+
+def user_skills_root(user_id: str) -> Path:
+    """Raiz de skills owned: `FILES_DIR / <user_id> / skills` (não `backend/skills/`)."""
+    return user_files_root(user_id) / "skills"
 
 
 def user_kind_dir(user_id: str, kind: str) -> Path:

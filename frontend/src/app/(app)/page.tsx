@@ -31,7 +31,7 @@ interface HomePageInnerProps {
  * `NavSidebarProvider`) is provided by the parent `(app)/layout.tsx`.
  * This file is responsible only for the chat panel itself plus the
  * chat-specific controls (`Conversas` thread-history toggle and
- * `New Thread`).
+ * `Nova conversa`).
  */
 function ChatPageInner({ config }: HomePageInnerProps) {
   const client = useClient();
@@ -138,7 +138,7 @@ function ChatPageInner({ config }: HomePageInnerProps) {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Chat-specific toolbar: thread-history toggle + new-thread action.
+      {/* Chat-specific toolbar: thread-history toggle + nova conversa.
           The authenticated shell (top bar + sidebar) lives in the parent
           (app)/layout.tsx; this bar is page-specific and lives in the slot. */}
       <div className="flex items-center gap-2 border-b border-border bg-card px-4 py-2">
@@ -166,7 +166,7 @@ function ChatPageInner({ config }: HomePageInnerProps) {
           className="ml-auto border-[#2F6868] bg-[#2F6868] text-white hover:bg-[#2F6868]/80"
         >
           <SquarePen className="mr-2 h-4 w-4" />
-          New Thread
+          Nova conversa
         </Button>
       </div>
       <div className="flex-1 overflow-hidden">

@@ -11,7 +11,9 @@ via `write_file` sobre um arquivo existente. Um envelope que lista nomes
 
 A enum `Capability` lista os efeitos possíveis. Cada tool é mapeada para
 **uma ou mais** capacidades — `install_external_skill` é simultaneamente
-`network` (download via `npx`) e `write_new` (escreve em `backend/skills/`).
+`network` (download via `npx`) e `write_new` (escreve no destino por role:
+`backend/skills/` para admin default, ou `files/<user_id>/skills/` para user /
+admin com `for_user_id`).
 
 | Capability       | Significado                                                              |
 |------------------|--------------------------------------------------------------------------|
@@ -409,8 +411,9 @@ TOOL_EFFECTS: Final[Mapping[str, tuple[Any, ...]]] = {
     "internet_search": _network(),
     "search_arxiv": _network(),
     "web_fetch": _network(),
-    # `install_external_skill`: baixa de um repositório remoto, escreve em
-    # `backend/skills/` E roda `npx` (shell). Ver `_network_write_new_shell`.
+    # `install_external_skill`: baixa de um repositório remoto, escreve no
+    # destino por role (projeto ou owned) E roda `npx` (shell).
+    # Ver `_network_write_new_shell`.
     "install_external_skill": _network_write_new_shell(),
     # --- Execução de testes (Tier 1) -------------------------------------
     "run_tests": _read_only(),

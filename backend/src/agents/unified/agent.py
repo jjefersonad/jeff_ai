@@ -84,7 +84,7 @@ from src.composition.backends import (
     sync_user_id_from_configurable,
 )
 from src.composition.env import load_env
-from src.infrastructure.ownership.paths import files_dir, user_files_root
+from src.infrastructure.ownership.paths import files_dir, user_files_root, user_skills_root
 from src.infrastructure.usage.callback import UsageRecordingCallback
 from src.infrastructure.usage.repository import UsageRepository
 from src.models.fallback_model import unified_model
@@ -209,10 +209,10 @@ for d in (WORKSPACE_DIR, OUTPUTS_DIR, SPECIFY_DIR, TEMPLATES_DIR.parent):
 # System prompt
 # --------------------------------------------------------------------------- #
 # Prompt único e estático — não há mais seções por "modo" (task `modes-1`).
-# O bloco "Ferramentas disponíveis" abaixo é o que rodava em produção como
-# `_PROMPT_CHAT` (o único modo que o classificador morto jamais deixou de
-# selecionar, na prática); preservado tal como estava para não mudar
-# comportamento, só a fachada em torno dele.
+# Identidade (saas-empresario-br REQ-007): assistente de negócio em pt-BR,
+# não agente estilo Claude Code / Hermes. O bloco "Ferramentas disponíveis"
+# permanece o do antigo `_PROMPT_CHAT`, com orientação extra de CRM
+# (`whatsapp_opt_in`, valores em `R$`).
 #
 # Drift de data: a primeira linha (`Data atual: ...`) é computada UMA VEZ no
 # import do módulo. Em processos long-running, a data fica velha (drift de até
@@ -224,9 +224,15 @@ _CURRENT_TZ: str = os.environ.get("JEFF_AI_TZ") or os.environ.get("TZ") or "UTC"
 
 _SYSTEM_PROMPT = f"""Data atual: {_CURRENT_DATE} ({_CURRENT_TZ})
 
-Você é **Jeff AI**, um agente de desenvolvimento unificado no estilo
-Claude Code / Hermes. Você é inteligente, direto, técnico e cuida do
+Você é **Jeff AI**, assistente de negócio e tarefas do dia a dia, em
+português, para o dono (MEI/ME). Você é inteligente, direto e cuida do
 usuário.
+
+Exemplos do dia a dia: cadastrar contato no CRM (inclua `whatsapp_opt_in`
+quando o dono informar consentimento), valores em reais (`R$`), WhatsApp
+do dono (canal Jeff↔você — nunca dispare mensagem a cliente). No funil,
+use os estágios canônicos (`lead` → `qualified` → `proposal` →
+`negotiation` → `won`/`lost`) — nunca strings traduzidas.
 
 ## Princípios
 1. **Memória persistente**: você tem memória cross-thread, em duas camadas.
@@ -259,9 +265,14 @@ usuário.
     vazio/omitido nem `create_xlsx_spreadsheet` com uma aba sem linhas;
     esses casos são rejeitados com `error`. Uma string simples não é
     atalho válido — as tools exigem input estruturado.
-7. **Auto-extensão**: skills em `/skills/<nome>/SKILL.md` (carregam ao
-   vivo). Tools Python via `save_generated_tool` (precisa aprovação
-   humana + restart).
+7. **Auto-extensão**: para criar/editar uma skill **sua**, escreva
+   `/user-skills/<nome>/SKILL.md` (camada owned sob `files/<user_id>/skills/`).
+   A rota `/skills/` é o catálogo de **projeto** (`backend/skills/`) —
+   somente leitura para `role=user`; admin grava defaults do projeto aí.
+   Skills das duas camadas carregam ao vivo (nova thread / estado fresco).
+   `install_external_skill` respeita o mesmo destino por role (user → owned;
+   admin → projeto, ou owned com `for_user_id`). Tools Python via
+   `save_generated_tool` (precisa aprovação humana + restart).
 8. **Edição de código** (quando ativa): tools de Tier 3 (edit_file,
    patch_file, multi_file_edit, git_commit) pausam o framework para
    aprovação humana com diff preview. Aprove SOMENTE se o diff
@@ -295,7 +306,8 @@ usuário.
 - Workspace isolado: `{WORKSPACE_DIR}` (artefatos, scratch)
 - Outputs: `{OUTPUTS_DIR}` (documentos de requisitos)
 - SDD spec dir: `{SPECIFY_DIR}` (artefatos spec-kit)
-- Skills: `{SKILLS_DIR}` (carregadas automaticamente)
+- Skills (projeto): `{SKILLS_DIR}` via `/skills/` (RO para user; RW admin)
+- Skills (suas): `/user-skills/` → `files/<user_id>/skills/` (quando houver user_id)
 
 ## Ferramentas disponíveis
 
@@ -351,7 +363,8 @@ usuário.
   - NÃO procure módulo CRM no repositório com `list_project_files`/
     `grep_project`. Ownership vem da sessão; ignore `user_id` inventado.
   - Contatos: `crm_search_contacts` / `crm_upsert_contact` (exige email
-    e/ou phone; aceita `city`/`state`/`custom_values`).
+    e/ou phone; aceita `city`/`state`/`custom_values` e `whatsapp_opt_in`
+    quando o dono informar consentimento).
   - Campos personalizados: `crm_list_field_definitions` ANTES de criar;
     `crm_create_field_definition` só se a chave ainda não existir;
     `crm_update_field_definition` altera só o label.
@@ -359,7 +372,7 @@ usuário.
     alvo (`contact_id` | `company_id` | `deal_id`); `add_deal_note(deal_id, text)`
     é o atalho equivalente restrito a deal.
   - Funil: `crm_list_deals`, `crm_create_deal` (default `lead`,
-    `value`/`custom_values` do deal; campos de contato `contact_name`/
+    `value` em reais (`R$`) / `custom_values` do deal; campos de contato `contact_name`/
     `email`/`phone`/`city`/`state`/`tags`/`status`/`contact_custom_values`
     no mesmo call — sem `crm_upsert_contact` prévio), `crm_move_deal`
     (`lead` → `qualified` → `proposal` → `negotiation` → `won`/`lost`).
@@ -543,7 +556,8 @@ def _build_backend_factory():
 
     Rotas comuns:
     - workspace per-thread (scratch)
-    - `/skills/` (admin gravável; user read-only)
+    - `/skills/` (admin gravável; user read-only) — catálogo de projeto
+    - `/user-skills/` → `files/<user_id>/skills/` quando `user_id` resolvível (RW)
     - `/memories/` StoreBackend
 
     Admin adicional: REPO_ROOT, OUTPUTS_DIR, SPECIFY, TEMPLATES, FILES_DIR raiz.
@@ -556,6 +570,7 @@ def _build_backend_factory():
         routes: list[FsRoute] = [
             FsRoute(prefix=f"{WORKSPACE_DIR}", base_dir=WORKSPACE_DIR, per_thread=True),
         ]
+        user_id = sync_user_id_from_configurable()
         if role == "admin":
             routes.extend(
                 [
@@ -579,7 +594,6 @@ def _build_backend_factory():
             routes.append(
                 FsRoute(prefix="/skills/", base_dir=SKILLS_DIR, read_only=True)
             )
-            user_id = sync_user_id_from_configurable()
             if user_id:
                 root = user_files_root(user_id)
                 routes.append(
@@ -589,6 +603,16 @@ def _build_backend_factory():
                         ensure_exists=True,
                     )
                 )
+        # D3/D6/D8: alias /user-skills/ only when identity is resolvable (fail-closed).
+        if user_id:
+            skills_root = user_skills_root(user_id)
+            routes.append(
+                FsRoute(
+                    prefix="/user-skills/",
+                    base_dir=skills_root,
+                    ensure_exists=True,
+                )
+            )
         return routes
 
     return make_backend_factory(routes=_routes_for_run, include_store=True)
@@ -637,8 +661,11 @@ def build_unified(
     `ScopedSkillsMiddleware` substitui o `skills=[...]` do `create_deep_agent`
     (task `ctx-2`, design Q8): a `SkillsMiddleware` padrão do deepagents lista
     as 11 skills inteiras em todo turno; a variante escopada só injeta as
-    relevantes à conversa. Passada explicitamente em `middleware=[...]` em vez
-    do atalho `skills=` para poder trocar a classe sem mexer no resto.
+    relevantes à conversa. Sources: `("/skills/", "Project")` then
+    `("/user-skills/", "User")` — deepagents last-wins by frontmatter `name`
+    (user-project-skills-layers D1/D2). Passada explicitamente em
+    `middleware=[...]` em vez do atalho `skills=` para poder trocar a classe
+    sem mexer no resto.
 
     Os parâmetros `checkpointer` e `store` são opcionais (default `None`):
     quando omitidos, o grafo é compilado sem eles e a plataforma LangGraph os
@@ -665,7 +692,11 @@ def build_unified(
             RoleScopedToolsMiddleware(approved_tool_names=_APPROVED_TOOL_NAMES),
             EnvelopeMiddleware(),
             ChatAttachmentPreprocessingMiddleware(),
-            ScopedSkillsMiddleware(backend=backend_factory, sources=["/skills/"]),
+            # D1/D2: Project then User — deepagents last-wins by frontmatter name.
+            ScopedSkillsMiddleware(
+                backend=backend_factory,
+                sources=[("/skills/", "Project"), ("/user-skills/", "User")],
+            ),
         ],
         checkpointer=checkpointer,
         store=store,
