@@ -15,6 +15,9 @@ from pathlib import Path
 
 from langgraph.config import get_store
 
+from src.application.ports.agent_profile_repository import (
+    AgentProfileRepositoryPort,
+)
 from src.application.ports.document_writer import DocumentWriterPort
 from src.application.ports.reference_image_fetch import ReferenceImageFetchPort
 from src.application.use_cases import (
@@ -26,22 +29,27 @@ from src.application.use_cases import (
     ListScheduledTasks,
     PlanAndCreateImage,
 )
+from src.application.use_cases.archive_agent_profile import ArchiveAgentProfile
 from src.application.use_cases.complete_scheduled_task_after_resume import (
     CompleteScheduledTaskAfterResume,
 )
+from src.application.use_cases.create_agent_profile import CreateAgentProfile
 from src.application.use_cases.create_crm_contact import CreateCrmContact
 from src.application.use_cases.create_crm_deal import CreateCrmDeal
 from src.application.use_cases.create_crm_field_definition import (
     CreateCrmFieldDefinition,
 )
 from src.application.use_cases.create_crm_note import CreateCrmNote
+from src.application.use_cases.get_agent_profile import GetAgentProfile
 from src.application.use_cases.get_crm_deal import GetCrmDeal
+from src.application.use_cases.list_agent_profiles import ListAgentProfiles
 from src.application.use_cases.list_crm_contacts import ListCrmContacts
 from src.application.use_cases.list_crm_deals import ListCrmDeals
 from src.application.use_cases.list_crm_field_definitions import ListCrmFieldDefinitions
 from src.application.use_cases.list_crm_notes import ListCrmNotes
 from src.application.use_cases.move_crm_deal import MoveCrmDeal
 from src.application.use_cases.resolve_delivery_target import ResolveDeliveryTarget
+from src.application.use_cases.update_agent_profile import UpdateAgentProfile
 from src.application.use_cases.update_crm_contact import UpdateCrmContact
 from src.application.use_cases.update_crm_field_definition import (
     UpdateCrmFieldDefinition,
@@ -59,6 +67,9 @@ from src.infrastructure.filesystem.filesystem_sdd_artifact_store import (
     FilesystemSddArtifactStore,
 )
 from src.infrastructure.llm.gemini_image_adapter import GeminiImageAdapter
+from src.infrastructure.persistence.agent_profile_repository import (
+    PostgresAgentProfileRepository,
+)
 from src.infrastructure.persistence.crm_repository import PostgresCrmRepository
 from src.infrastructure.persistence.scheduled_task_repository import (
     PostgresScheduledTaskRepository,
@@ -295,3 +306,27 @@ def build_list_crm_field_definitions() -> ListCrmFieldDefinitions:
 def build_update_crm_field_definition() -> UpdateCrmFieldDefinition:
     """Monta UpdateCrmFieldDefinition para API/tools."""
     return UpdateCrmFieldDefinition(repository=_crm_repository())
+
+
+def _agent_profile_repository() -> AgentProfileRepositoryPort:
+    return PostgresAgentProfileRepository(os.environ["POSTGRES_URI"])
+
+
+def _create_agent_profile_use_case() -> CreateAgentProfile:
+    return CreateAgentProfile(repository=_agent_profile_repository())
+
+
+def _update_agent_profile_use_case() -> UpdateAgentProfile:
+    return UpdateAgentProfile(repository=_agent_profile_repository())
+
+
+def _archive_agent_profile_use_case() -> ArchiveAgentProfile:
+    return ArchiveAgentProfile(repository=_agent_profile_repository())
+
+
+def _list_agent_profiles_use_case() -> ListAgentProfiles:
+    return ListAgentProfiles(repository=_agent_profile_repository())
+
+
+def _get_agent_profile_use_case() -> GetAgentProfile:
+    return GetAgentProfile(repository=_agent_profile_repository())
