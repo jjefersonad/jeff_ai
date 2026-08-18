@@ -44,9 +44,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <Link
               href="/"
               className="text-on-surface text-xl font-semibold hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
-              aria-label="JEFF"
+              aria-label="Jeff AI"
             >
-              JEFF
+              Jeff AI
             </Link>
           </div>
           <div className="flex items-center gap-2">

@@ -85,6 +85,128 @@ Para EXIBIR ou COMPARTILHAR a imagem com o usuário, use SEMPRE o campo `url`
 
 Um sidecar `..._metadata.json` é salvo junto do PNG em `backend/outputs/images/`.
 
+## Catálogo de tipos de imagem
+
+Ao planejar uma imagem, identifique se o pedido corresponde a um dos tipos abaixo e aplique
+as convenções de dimensão/composição/estilo correspondentes. Essas convenções não são campos
+novos — elas se fundem nos campos já existentes de `ImageDesignInput` (ver "Como aplicar o
+catálogo" ao final desta seção).
+
+### Banner / post social
+- **Dimensões:** 1200x628 ou proporção 16:9 / 1.91:1.
+- **Composição:** ponto focal único; evite colagens.
+- **Estilo:** texto curto, legível em tamanho de feed; uma mensagem central por imagem.
+
+### Ícone / logo
+- **Dimensões:** quadradas — 512x512 ou 1024x1024.
+- **Composição:** centralizada, simétrica.
+- **Estilo:** `art_style` simples/flat.
+- **Evitar:** use `negative_prompt` para afastar texto denso ou detalhe excessivo.
+
+### Hero image
+- **Dimensões:** largas — 1920x1080 ou 21:9.
+- **Composição:** espaço negativo reservado para overlay de título/CTA.
+- **Estilo:** `art_style`/paleta consistentes com a marca, nunca decoração genérica.
+
+### Thumbnail
+- **Dimensões:** otimizadas para miniatura — ex. 1280x720.
+- **Composição:** alto contraste, ponto focal único legível mesmo em tamanho reduzido.
+- **Estilo:** texto grande (se houver) em vez de copy densa.
+
+### Foto de produto
+- **Dimensões:** conforme o canal — ex. 1080x1080 ou 16:9.
+- **Composição:** mostrar uma interface/fluxo plausível, nunca fragmentos decorativos de UI.
+- **Estilo:** `art_style` realista/estúdio.
+
+### Avatar
+- **Dimensões:** quadradas — 512x512.
+- **Composição:** centralizada, close-up (rosto/personagem/mascote); fundo simples, sem
+  competir com o sujeito.
+- **Evitar:** use `negative_prompt` para afastar elementos cortados nas bordas.
+
+### Ilustração
+- **Dimensões:** conforme o canal de destino — sem convenção fixa própria do tipo.
+- **Composição:** priorizar um conceito visual coerente com a mensagem, em vez de repetir o
+  título literalmente.
+- **Estilo:** liberdade maior de `art_style` — este é o tipo menos restritivo em composição.
+
+Esses 7 tipos (banner/post social, ícone/logo, hero image, thumbnail, foto de produto, avatar,
+ilustração) são exaustivos para efeitos de cobertura de cenário — não é uma lista "pelo menos
+estes".
+
+### Como aplicar o catálogo
+
+O `image_design_subagent` funde as convenções do tipo identificado exclusivamente nos campos
+JÁ EXISTENTES de `ImageDesignInput` — `prompt`, `art_style`, `composition` e `dimensions` (e,
+quando fizer sentido, `negative_prompt`). NUNCA introduza, referencie ou exija um campo novo
+(`type`, `asset_type` ou equivalente) — nem no schema de `ImageDesignInput`, nem na chamada a
+`create_image_from_prompt`. A tradução segue a regra já documentada de "fundir no prompt final"
+sempre que o tipo afeta estilo, paleta ou composição.
+
+Se o pedido do usuário não corresponder a nenhum tipo do catálogo (ex.: "um wallpaper para meu
+desktop"), siga o processo de planejamento genérico já existente — pergunte pelos essenciais
+que faltarem ou use julgamento próprio de estilo/composição/dimensões — sem bloquear a geração
+por falta de correspondência com um tipo catalogado.
+
+## Checklist "AI Slop" (evitar por padrão)
+
+Estes são os tiques do design gerado por máquina. Eles se agrupam porque são exatamente o que
+um modelo de imagem/layout busca por padrão — e é exatamente por isso que soam genéricos. O
+objetivo não é decorar uma lista negra; é reconhecer a família para evitar a próxima variante
+também. O princípio de fundo: todo elemento deve justificar sua presença carregando significado
+ou hierarquia. Se está ali só para parecer "desenhado", corte.
+
+Evite os itens abaixo a menos que o usuário peça explicitamente por um deles:
+
+- **Eyebrow pill acima do título.** O badge arredondado com texto ("✨ INTRODUCING", "NEW",
+  "v2.0") flutuando acima do H1. Quase nunca acrescenta informação que o título já não carrega,
+  e é o tique de layout de IA mais comum. Comece pelo próprio título.
+- **Botões com gradiente ou brilho.** Preenchimentos multicoloridos, glow neon, ou brilho
+  animado em CTAs. Use uma cor de destaque sólida, com sombra plana ou bem sutil. Um botão deve
+  parecer clicável, não radioativo.
+- **O gradiente padrão roxo→rosa/violeta de "tech".** Fundos índigo-para-magenta (o "lavado de
+  startup de IA" genérico) sinalizam template, não marca. Ancore a cor na paleta real do
+  produto. Um gradiente é aceitável quando é contido e alinhado à marca — o problema é recorrer
+  a *esse* gradiente por padrão.
+- **Ornamentos de emoji e brilho (✨/🚀/⚡).** Emoji decorativo usado como elemento de design em
+  vez de conteúdo. Empobrecem a composição e datam a peça instantaneamente.
+- **Glassmorphism em todo lugar.** Cartões translúcidos com blur empilhados em profundidade sem
+  motivo funcional. Um único cartão em primeiro plano com blur pode funcionar; uma cena inteira
+  deles é slop.
+- **Imagética genérica de startup.** Dashboards flutuantes sem contexto, fotos de aperto de mão,
+  metáforas de foguete/lâmpada, abstrações 3D vagas — blobs, esferas glossy, isométricos
+  aleatórios, orbes de gradiente que não representam nada.
+- **Decoração no lugar de hierarquia.** Sombras pesadas em todo elemento, border-radius
+  exagerado em tudo, texto com glow neon, e tudo centralizado sem contraste de tamanho/peso.
+  Polish vem de hierarquia clara e espaçamento, não de efeitos.
+- **Copy densa.** Parágrafos, subtítulos com múltiplas frases, ou listas de features empilhadas
+  dentro de uma imagem. Se não dá para ler em tamanho de thumbnail, não pertence à imagem — mova
+  para o texto ao redor.
+- **Credibilidade falsa.** Fileiras de logos "Trusted by" inventadas, avaliações com estrelas
+  placeholder, ou trios de estatísticas com números inventados. Use ativos reais ou omita.
+
+Se o usuário *quiser* um desses (ex.: "quero aquele visual glassy com gradiente"), execute bem —
+esta lista trata de padrões default, não de proibição absoluta.
+
+## Template de prompt
+
+Use esta estrutura ao montar o `prompt` final para `create_image_from_prompt` (funda os campos
+estruturados de `ImageDesignInput` no texto conforme a "Nota importante" acima):
+
+```text
+Create a [tipo de asset] for [produto/empresa/campanha].
+
+Goal: [objetivo de conversão ou mensagem]
+Audience: [público específico]
+Format: [dimensões/proporção/canal]
+Composition: [sujeito principal, layout, ponto focal, profundidade, enquadramento]
+Style: [estilo visual, medium, sensação de marca]
+Color and lighting: [paleta, contraste, mood]
+Text: [texto exato, ou "no text"]
+Brand constraints: [uso de logo, direção tipográfica, do/don't]
+Avoid: [clichês visuais específicos, poluição visual, objetos errados, alegações inseguras]
+```
+
 ## Memória de estilos (por thread)
 
 Ferramentas em `backend/src/tools/style_memory_tools.py`, sobre o Store do LangGraph

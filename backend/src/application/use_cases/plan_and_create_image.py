@@ -1,4 +1,4 @@
-"""Caso de uso: planejar e gerar uma imagem (após aprovação do usuário)."""
+"""Caso de uso: planejar e gerar uma imagem (execução imediata, sem gate de aprovação)."""
 from __future__ import annotations
 
 from src.application.ports.image_gen import GeneratedImage, ImageGenPort
@@ -7,11 +7,14 @@ from src.domain.imaging import ImageDesign, ImageReference, same_vibe
 
 
 class PlanAndCreateImage:
-    """Orquestra a geração de imagem a partir de um `ImageDesign` aprovado.
+    """Orquestra a geração de imagem a partir de um `ImageDesign` já montado.
 
-    A APROVAÇÃO do usuário acontece FORA deste caso de uso (na borda deepagents,
-    via interrupt) — aqui a execução só ocorre depois de aprovada. Depende apenas
-    do domínio de imaging e dos ports; não conhece Gemini, o Store nem deepagents.
+    A execução é IMEDIATA: não há gate de aprovação (HITL/interrupt) nesta
+    camada nem em nenhuma outra do fluxo de imagem — o `image_design_subagent`
+    apresenta o design plan e chama esta execução na mesma resposta, sem esperar
+    confirmação do usuário (ver `backend/skills/image-generation/SKILL.md`).
+    Depende apenas do domínio de imaging e dos ports; não conhece Gemini, o
+    Store nem deepagents.
     """
 
     def __init__(self, image_gen: ImageGenPort, styles: StyleRepositoryPort) -> None:
