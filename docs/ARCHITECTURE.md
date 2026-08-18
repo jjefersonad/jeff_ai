@@ -11,68 +11,47 @@
 
 ## 1. Agentes e Grafos LangGraph
 
-O sistema registra **dois grafos** LangGraph em [backend/langgraph.json](../backend/langgraph.json) (chave `graphs`), ambos
-construídos com `create_deep_agent` da biblioteca `deepagents`:
+O sistema registra **quatro grafos** em `backend/langgraph.json` (chave `graphs`), mas eles são,
+na prática, **um grafo só**:
 
 ```json
 "graphs": {
-  "agent": "src.agents.requirements_specialist:agent",
-  "sdd_agent": "src.agents.sdd.orchestrator:sdd_agent"
+  "unified": "src.composition.graphs:unified",
+  "agent": "src.composition.graphs:agent",
+  "sdd_agent": "src.composition.graphs:sdd_agent",
+  "assistant": "src.composition.graphs:assistant"
 }
 ```
 
-### 1.1 Grafo `agent` — Gerador de Documentos de Requisitos
-Arquivo: [backend/src/agents/requirements_specialist.py](../backend/src/agents/requirements_specialist.py)
+- **`unified`** — o grafo real (`src/agents/unified/agent.py`), construído com
+  `create_deep_agent` (`deepagents`): um único system prompt, o conjunto plano de tools
+  (`src/tools/`), um único subagente (`image_design_subagent`), e `interrupt_on` calculado
+  dinamicamente por `src/agents/unified/tier_config.py:build_interrupt_on()`.
+- **`agent`, `sdd_agent`, `assistant`** — **aliases diretos** para o mesmo objeto Python
+  compilado: `backend/src/composition/graphs.py` define literalmente `agent = unified`,
+  `sdd_agent = unified`, `assistant = unified`. Não são shims nem wrappers — é atribuição do
+  mesmo objeto a três nomes adicionais. Mantidos por retrocompatibilidade com valores de
+  `assistantId` já salvos no `localStorage` do frontend; remover custaria uma migração de
+  configuração client-side por ~zero ganho (três linhas de código).
 
-| Aspecto | Detalhe | Referência |
-|---------|---------|------------|
-| Papel | Agente **orquestrador**; nunca implementa código diretamente | `requirements_specialist.py:39-72` |
-| Modelo | `ollama_model` | `requirements_specialist.py:6,40` |
-| Subagentes | `fullstack_subagent`, `image_design_subagent` | `requirements_specialist.py` |
-| Ferramentas | `merge_generated_files`, `get_date_time_current` | `requirements_specialist.py` |
-| Skills | `/skills/` | `requirements_specialist.py` |
-| Saída | `backend/outputs/{thread_id}/` (arquivo consolidado obrigatório via `merge_generated_files`) | `requirements_specialist.py` |
-| Recursion limit | 1000 | `requirements_specialist.py` |
+**Sistema de "modos" removido.** Havia um classificador de 7 modos
+(`requirements`/`sdd`/`chat`/`code`/`test`/`git`/`refactor`) com um prompt por modo. Foi
+**removido do código** pela change `unified-agent-realignment` (tasks `modes-1`/`modes-2`), não
+apenas documentado como quebrado: `classify_mode()`, `mode_detector` e `with_mode()` não existem
+mais em `src/agents/unified/agent.py` nem em `src/composition/graphs.py`. Os quatro `graph_id`
+sempre rodam o mesmo prompt e o mesmo conjunto de tools; um `configurable["mode"]` enviado por um
+frontend antigo é silenciosamente ignorado (nada no grafo lê essa chave).
 
-**Fluxo de orquestração** (do system_prompt):
-1. Analisa o pedido do usuário.
-2. Usa `write_todos` para criar tarefas (cada sessão do documento = uma tarefa).
-3. Delega cada tarefa via `task(name="fullstack_subagent", task="...")`.
-4. Consolida os resultados e usa **obrigatoriamente** `merge_generated_files` para unificar, na ordem.
-5. Salva o arquivo final em `backend/outputs/`.
-
-**Subagente `fullstack_subagent`** ([backend/src/agents/subagents/fullstack.py](../backend/src/agents/subagents/fullstack.py)):
-escritor técnico que cria seções de documento de requisitos (`ls`, `read_file`, `write_file`).
-
-### 1.2 Grafo `sdd_agent` — Pipeline SDD (spec-kit)
-Arquivo: [backend/src/agents/sdd/orchestrator.py](../backend/src/agents/sdd/orchestrator.py)
-
-Orquestrador de um **pipeline de 7 fases**, cada fase delegada a um subagente via `task()`:
-
-```
-1. CONSTITUTION → 2. SPECIFY → 3. CLARIFY → 4. PLAN → 5. ANALYZE → 6. TASKS → 7. IMPLEMENT
-```
-
-| Fase | Subagente | Módulo |
-|------|-----------|--------|
-| 1. Constitution | `constitution_subagent` | `sdd/subagents/constitution.py` |
-| 2. Specify | `specify_subagent` | `sdd/subagents/specify.py` |
-| 3. Clarify | `clarify_subagent` | `sdd/subagents/clarify.py` |
-| 4. Plan | `plan_subagent` | `sdd/subagents/plan.py` |
-| 5. Analyze | `analyze_subagent` | `sdd/subagents/analyze.py` |
-| 6. Tasks | `tasks_subagent` | `sdd/subagents/tasks.py` |
-| 7. Implement | `implement_subagent` | `sdd/subagents/implement.py` |
-
-Ferramentas: `create_feature_directory`, `load_template`, `validate_artifact`, `get_sdd_state`,
-`get_next_feature_number`. Saída em `outputs/.specify/` (`memory/constitution.md` global +
-`specs/{NNN}-{feature}/`). Recursion limit 1000.
-
-**Regras-chave:** o orquestrador nunca escreve artefatos diretamente (delega via `task()`); a
-constitution é global; cada subagente de fase é stateless; há um loop de validação após ANALYZE.
-
-> **Nota (pós-`adotar-ddd-clean-architecture`):** há também um terceiro grafo `assistant`
-> ([backend/src/agents/assistant/agent.py](../backend/src/agents/assistant/agent.py)), e o `langgraph.json` passou a expor os grafos via
-> `src.composition.graphs:<graph>` (os `graph_id` foram preservados). Ver Seção 6.
+**Subagentes.** `_UNIFIED_SUBAGENTS` contém exatamente `image_design_subagent` (contexto
+isolado, geração de imagem sem gate de aprovação, memória de estilo por thread — a única exceção
+legítima a subagente neste produto, ver harness rule `skill-or-mcp-never-subagent`). O antigo
+`fullstack_subagent`, os 7 subagentes de SDD (`src/agents/sdd/subagents/`),
+`requirements_specialist.py`, `sdd/orchestrator.py` e `src/agents/assistant/` já foram
+**removidos do repositório** — não é código legado "ainda em disco", eles simplesmente não
+existem mais: `backend/src/agents/` hoje contém só `unified/` e `subagents/` (com um único
+arquivo, `image_design.py`); a remoção está registrada no próprio comentário de
+`unified/agent.py` acima de `_UNIFIED_SUBAGENTS`. SDD e geração de requisitos hoje são entregues
+como skills (`backend/skills/{sdd,requirements}/SKILL.md`), não subagentes.
 
 ## 2. Persistência e Backends
 
@@ -225,11 +204,43 @@ Rodar: `make arch` a partir de `backend/` (gate no [backend/Makefile](../backend
 
 ### 6.3 Mapeamento dos verticais migrados
 
-| Vertical | Domínio | Aplicação (use case + ports) | Infra (adapters) | Tool/borda deepagents |
-|----------|---------|------------------------------|------------------|-----------------------|
-| **Imaging** | `domain/imaging` — `ImageDesign`, `DesignStyle`, `same_vibe` | `PlanAndCreateImage` + `ImageGenPort`/`StyleRepositoryPort` | `GeminiImageAdapter`, `StoreStyleRepository` | `create_image_from_prompt` |
-| **Requirements** | `domain/requirements` — `RequirementDocument`, `DocumentSection`, `consolidate` | `GenerateRequirementsDocument` + `DocumentSinkPort` | `FilesystemDocumentSink` | `merge_generated_files` |
-| **SDD** | `domain/sdd` — `Feature`, `FeatureNumber`, `pipeline`, `validation` | `GetNextFeatureNumber` + `SddArtifactStorePort` | `FilesystemSddArtifactStore` | `get_next_feature_number` / `get_sdd_state` / `validate_artifact` |
+11 verticais de negócio hoje têm `domain/` próprio; a tabela agrupa cada um com sua camada de
+aplicação (use cases + ports) e adapters de infraestrutura. `domain/shared` é transversal (usado
+por todos, sem use case próprio) e fica fora da tabela, listado à parte.
+
+| Vertical | Domínio (`src/domain/`) | Aplicação (`src/application/`) | Infra (`src/infrastructure/`) | Tool/borda deepagents |
+|----------|--------------------------|----------------------------------|----------------------------------|------------------------|
+| **Imaging** | `imaging/` — `ImageDesign`, `DesignStyle`, `ImageReference`, `style_consistency` | `use_cases/plan_and_create_image.py` + `ports/{image_gen,style_repository,reference_image_fetch}.py` | `llm/gemini_image_adapter.py`, `persistence/store_style_repository.py`, `media/*`, `web/httpx_reference_image_fetch.py`, `web/images_router.py` | `create_image_from_prompt` |
+| **Requirements** | `requirements/` — `RequirementDocument`, `DocumentSection`, `merge` | `use_cases/generate_requirements_document.py` + `ports/document_sink.py` | `filesystem/filesystem_document_sink.py` | `merge_generated_files` |
+| **SDD** | `sdd/` — `Feature`, `FeatureNumber`, `Phase`, `pipeline`, `validation` | `use_cases/get_next_feature_number.py` + `ports/sdd_artifact_store.py` | `filesystem/filesystem_sdd_artifact_store.py` | `get_next_feature_number` / `get_sdd_state` / `validate_artifact` |
+| **Documents** (Office/PDF) | `documents/` — `blocks`, `blocks_to_html`, `document_content`/`result`/`spec`, `{docx,pptx,xlsx,pdf}_spec`, `embed_css`, `html_sanitizer`, `markdown_table`, `read_limits` | `application/documents/resolve_html_document_input.py` + `use_cases/{create_document,preview_html_document,render_html_document}.py` + `ports/{document_writer,html_document_converter}.py` | `documents/*` (`docx_writer`, `pptx_writer`, `xlsx_writer`, `html_{docx,pptx,xlsx}_converter`, `weasyprint_pdf_converter`, `html_template_repository`, `output_target`), `web/documents_router.py` | `create_docx_document`, `create_xlsx_spreadsheet`, `create_pptx_presentation`, `create_pdf_document`, `preview_html_document` |
+| **Email** | `email/` — `models` | `use_cases/{connect_email_account,list_email_accounts,get_email_account,update_email_account,update_email_account_config,delete_email_account,send_email,search_emails,list_emails,get_email,classify_email_by_contact,start_gmail_oauth,complete_gmail_oauth}.py` + `ports/{email_repository,email_account_repository}.py` | `email/*` (`imap_client`, `smtp_client`, `gmail_oauth`, `sync_worker`, `email_sync_worker`), `persistence/{email_repository,email_schema}.py`, `web/email_router.py` | (via skills / futuras tools de email) |
+| **Channels** (mensageria) | `channels/` — `chat_channel` | `ports/chat_channel.py` + `use_cases/{handle_chat_message,resolve_delivery_target}.py` | `channels/*` (`registry`, `scheduled_channel`, `telegram_channel`, `web_channel`, `whatsapp_channel`), `telegram/*`, `whatsapp/*`, `web/whatsapp_webhook_router.py` | entrega de mensagens (web/Telegram/WhatsApp) |
+| **CRM** | `crm/` — `errors`, `followup_scan`, `models`, `next_best_action`, `stagnation` | `use_cases/{create,get,list,update,archive}_crm_{company,contact,deal}.py`, `create_crm_field_definition.py`, `list_crm_field_definitions.py`, `update_crm_field_definition.py`, `create_crm_note.py`, `list_crm_notes.py`, `move_crm_deal.py`, `list_crm_deal_stages.py`, `crm_custom_values.py` + `ports/crm_repository.py` | `persistence/{crm_repository,crm_schema}.py`, `web/crm_router.py` | (via `web/crm_router.py`, sem tool deepagents direta hoje) |
+| **Integrations** (link codes / contas conectadas) | `integrations/` — `telegram_link_code`, `whatsapp_link_code`, `user_integration` | `use_cases/{create_telegram_link_code,redeem_telegram_link_code,create_whatsapp_link_code,redeem_whatsapp_link_code,get_user_integration,list_user_integrations,save_user_integration,delete_user_integration}.py` + `ports/{telegram_link_code_repository,whatsapp_link_code_repository,user_integration_repository}.py`, `application/integrations/config_schemas.py` | `persistence/{telegram_link_codes_repository,telegram_link_codes_schema,whatsapp_link_codes_repository,whatsapp_link_codes_schema,user_integrations_repository,user_integrations_schema}.py`, `web/integrations_router.py` | `GET /api/integrations/channel-config` |
+| **Scheduling** | `scheduling/` — `scheduled_task` | `use_cases/{create,cancel,list,update,run}_scheduled_task.py`, `complete_scheduled_task_after_resume.py` + `ports/{scheduled_task_repository,task_scheduler}.py` | `scheduling/*` (`apscheduler_task_scheduler`, `complete_after_resume`, `scheduler_instance`), `persistence/{scheduled_task_repository,scheduled_tasks_schema}.py`, `web/scheduling_router.py` | agendamento de tarefas |
+| **MCP** (servidores configurados pelo usuário) | `mcp/` — `mcp_server_config` | `application/mcp/mcp_server_schema.py` + `ports/mcp_server_repository.py` | `persistence/mcp_server_repository.py` | configuração de MCP servers |
+
+**Transversal:** `domain/shared/errors.py` — tipos de erro comuns, usados por todos os verticais
+acima; sem use case ou adapter próprio.
+
+**Infraestrutura sem vertical de domínio dedicado** (plataforma/composição-adjacente —
+`src/infrastructure/` tem 17 subdiretórios ao todo. **11** já apareceram na tabela acima (`llm`,
+`persistence`, `media`, `web`, `filesystem`, `documents`, `email`, `channels`, `telegram`,
+`whatsapp`, `scheduling`) — note que `web/` está contado aqui porque hospeda os routers
+específicos de vertical citados nas linhas da tabela (`documents_router.py`, `email_router.py`,
+`crm_router.py`, `whatsapp_webhook_router.py`, `integrations_router.py`, `scheduling_router.py`,
+`images_router.py`), embora também contenha arquivos de plataforma sem dono único
+(`webapp.py`, `url_safety.py`, `delivery_tokens.py`, `media_delivery_router.py`,
+`admin_users_router.py`). Os **6 restantes**, sem nenhuma linha na tabela, são puramente
+transversais:
+`agent_runtime/` (plumbing do runtime do grafo: checkpoint schema, `langgraph_direct_runner`),
+`attachments/` (schema + store de anexos de chat, compartilhado por todos os canais),
+`auth/` (usuários, sessões, segurança — plataforma, não um vertical de negócio),
+`cli/` (`jeff_cli.py`, entrypoint bare-metal),
+`ownership/` (`path_guard`, `paths`, `session_writers`, `store`, `tool_path_guard` — sandbox de
+arquivos por sessão, usado por todas as tools de arquivo),
+`usage/` (tracking de uso/billing, transversal).
 
 ### 6.4 Composição e grafos
 - [`composition/dependencies.py`](../backend/src/composition/dependencies.py) — **fiação manual (DI)**: fábricas que injetam os adapters concretos nos use cases. Trocar um adapter muda só este módulo (domínio/use cases intactos).

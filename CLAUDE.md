@@ -103,16 +103,34 @@ docker compose down
 `backend/langgraph.json` exposes four graph IDs, but they are **one graph**:
 
 - **`unified`** — the real graph (`src/agents/unified/agent.py`). Built via `create_deep_agent` with the full flat tool set, the subagents, and a tier-based `interrupt_on`.
-- **`agent`, `sdd_agent`, `assistant`** — backward-compat shims in `src/composition/graphs.py`. They wrap the same compiled `unified` object. See Known Debt: they do **not** currently change behaviour.
+- **`agent`, `sdd_agent`, `assistant`** — direct aliases to the same compiled `unified` object in `src/composition/graphs.py` (`agent = unified`, `sdd_agent = unified`, `assistant = unified`), not wrappers around it. Kept only for backward compatibility with `assistantId` values already saved in the frontend's `localStorage` — see Known Debt #1.
 
 ### Backend layout
 
-- `src/agents/unified/agent.py` — the graph. Tool registry, subagent registry, prompts, backend routes.
+The backend is organized in **4 Clean Architecture layers** under `backend/src/`, enforced by
+`import-linter` (`backend/pyproject.toml`, contracts `layers` + `forbidden`; run via `make arch`
+from `backend/`). Dependencies point inward: `composition → infrastructure → application → domain`.
+
+| Layer | Directory | Holds |
+|-------|-----------|-------|
+| Domain | `src/domain/` | Entities, value objects, pure domain services — no framework/I/O. 11 verticals: `channels`, `crm`, `documents`, `email`, `imaging`, `integrations`, `mcp`, `requirements`, `scheduling`, `sdd`, plus cross-cutting `shared` |
+| Application | `src/application/` | Use cases (`use_cases/`) + ports/interfaces (`ports/`) |
+| Infrastructure | `src/infrastructure/` | Adapters implementing the ports — LLM, Postgres persistence, filesystem, web routers, channel gateways (Telegram/WhatsApp), auth, scheduling |
+| Composition | `src/composition/` | Graph assembly (`graphs.py`), dependency injection (`dependencies.py`), virtual-filesystem backends (`backends.py`), env loading (`env.py`) |
+
+Full vertical-to-layer mapping: `docs/ARCHITECTURE.md` § 6.3.
+
+**Not yet migrated into the 4 layers** (deliberate strangler-pattern scope — see
+`docs/ARCHITECTURE.md` § 6.4):
+- `src/agents/unified/agent.py` — the graph itself. Tool registry, subagent registry
+  (`image_design_subagent` — the only subagent left), prompts, tier-based `interrupt_on`.
 - `src/agents/unified/tier_config.py` — declarative approval tiers (see below).
-- `src/tools/` — the flat tool set: file ops, code editing, git, tests, web search (Tavily), scientific search, image generation, Office documents, memory, self-extension, SDD scaffolding.
+- `src/tools/` — the flat tool set: file ops, code editing, git, tests, web search (Tavily),
+  scientific search, image generation, Office documents, memory, self-extension, SDD scaffolding.
 - `src/models/` — Ollama/Gemini model config + Pydantic schemas for tool inputs.
-- `backend/skills/` — skills loaded live by deepagents from the `/skills/` route.
-- `backend/outputs/` — generated artifacts (documents, images, `.specify/` SDD scaffolding).
+
+`backend/skills/` — skills loaded live by deepagents from the `/skills/` route.
+`backend/outputs/` — generated artifacts (documents, images, `.specify/` SDD scaffolding).
 
 ### Approval tiers (`tier_config.py`)
 
@@ -149,7 +167,18 @@ Image requests go to `image_design_subagent`, which presents a design plan and t
 
 The `unified-dev-agent` change was archived as complete while parts of it were not built. **Docstrings in `src/agents/unified/agent.py` describe behaviour the code does not have.** Verify before you rely on any of it.
 
-1. **The mode system is a facade.** `classify_mode()` has zero call sites. `mode_detector` exists only in comments. Nothing reads `configurable["mode"]`. `with_mode()` does not rebuild the graph — it only attaches config, and its `"recurable"` key is a typo for `recursion_limit`. **Consequence: `agent`, `sdd_agent` and `assistant` all run the `chat` prompt.** `_PROMPT_SDD` and `_PROMPT_REQUIREMENTS` are dead strings. The frontend `ModeSelector` sends a mode the backend ignores.
+1. **The mode system was removed, not left broken.** `with_mode()`, `classify_mode()`,
+   `mode_detector`, and the `"recurable"` typo no longer exist in the code — they were deleted
+   by `unified-agent-realignment` (tasks `modes-1`, `modes-2`), not merely documented as
+   non-functional. Today `backend/src/composition/graphs.py` defines `agent = unified`,
+   `sdd_agent = unified`, `assistant = unified`: three direct aliases (the same compiled Python
+   object) for the one real graph, `unified` (`src/agents/unified/agent.py`). All four graph IDs
+   in `langgraph.json` run the same system prompt and the same tool set — there is no per-mode
+   prompt selection. The aliases exist only for backward compatibility with `assistantId` values
+   already saved in the frontend's `localStorage` (see the docstring of
+   `src/composition/graphs.py`); nothing reads `configurable["mode"]`, so a `mode` sent by an old
+   frontend `ModeSelector` is silently ignored. `_PROMPT_SDD` and `_PROMPT_REQUIREMENTS`, if still
+   present anywhere in `src/agents/`, are dead strings from the same removed system.
 2. **Memory: two paths, don't confuse them.** `save_memory` / `search_memory` use `get_store()` — the LangGraph store, injected by the runtime from `langgraph.json` (`store: postgres` + pgvector `index`). **They work, and always have** (verified: 5 items in the `("memories",)` namespace, 5 embeddings). Separately, the `/memories/` **filesystem** route (`StoreBackend` — lets the agent `ls`/`read_file` its memory) used to be gated on the non-existent mode system and was left unmounted; that is fixed. An earlier version of this file claimed "memory is off" — that was **wrong**.
 3. **No tests on the dangerous tools.** `code_editing_tools.py`, `git_tools.py`, `test_runner_tools.py` and `tier_config.py` (~1,066 lines that edit source files, commit, and run shell) have **zero tests**.
 4. **`.gitignore` swallows real source.** The unanchored `lib/` rule (line 15, a Python-venv idiom) ignores `frontend/src/lib/` and `frontend/src/app/lib/`. `utils.ts` (the `cn` helper, imported by 21 files), `config.ts` and `modes.ts` are **not in git**. The frontend does not build from a fresh clone.

@@ -28,6 +28,16 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // Unauthenticated requests for the root path serve the public landing page
+  // in place (rewrite, not redirect) so crawlers — including Google's OAuth
+  // brand verification crawler — and human visitors without a session cookie
+  // both receive 200 with real content at `/` instead of a redirect to
+  // `/public/login`. See `public-marketing-landing-page` REQ-001 / REQ-004
+  // and design D1 of change `google-oauth-verification-brand-fix`.
+  if (pathname === "/" && !request.cookies.has(SESSION_COOKIE_NAME)) {
+    return NextResponse.rewrite(new URL("/public/landing", request.url));
+  }
+
   if (request.cookies.has(SESSION_COOKIE_NAME)) {
     return NextResponse.next();
   }

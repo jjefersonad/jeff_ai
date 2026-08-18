@@ -39,3 +39,17 @@ describe("AppLayout — chat-viewport-docking REQ-004 (task-verify-1)", () => {
     expect(childrenRegion.className).toMatch(/\boverflow-y-auto\b/);
   });
 });
+
+describe("AppLayout — app-branding-consistency REQ-001 (task-branding-1)", () => {
+  it('renders the header brand link as "Jeff AI", not the bare "JEFF"', () => {
+    render(
+      <AppLayout>
+        <div data-testid="page-content">content</div>
+      </AppLayout>
+    );
+
+    const brandLink = screen.getByRole("link", { name: "Jeff AI" });
+    expect(brandLink).toHaveTextContent("Jeff AI");
+    expect(brandLink).not.toHaveTextContent(/^JEFF$/);
+  });
+});
