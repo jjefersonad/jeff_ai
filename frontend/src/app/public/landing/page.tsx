@@ -39,8 +39,8 @@ export default function LandingPage() {
 
         <section className="space-y-4">
           <p>
-            O Jeff AI é o seu próprio Claude: um assistente de IA que você
-            hospeda na sua infraestrutura, e que usa para qualquer tarefa —
+            O Jeff AI é um assistente de IA que você
+            hospeda na sua infraestrutura, e que usa para qualquer tarefa, seja
             escrever e revisar código, pesquisar, organizar campanhas de
             marketing, gerar documentos e imagens, ou conversar sobre o que
             for preciso. Não existe uma lista fixa de casos de uso: novas
