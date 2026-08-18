@@ -133,6 +133,35 @@ export default function LandingPage() {
           </div>
         </section>
 
+        <section className="space-y-4">
+          <h2 className="text-2xl font-semibold tracking-tight">
+            Acesso à sua conta Google
+          </h2>
+          <p className="text-muted-foreground">
+            Se você conectar uma conta Gmail, o Jeff AI solicita, via OAuth do
+            Google, acesso à sua caixa de entrada apenas para sincronizar
+            e-mails e enviar mensagens em seu nome, dentro do escopo que você
+            autorizar no momento da conexão. Os tokens de acesso ficam
+            armazenados de forma criptografada, e você pode revogar esse
+            acesso quando quiser — pela própria interface do Jeff AI ou em{" "}
+            <a
+              href="https://myaccount.google.com/permissions"
+              className="underline underline-offset-4"
+              rel="noreferrer"
+            >
+              myaccount.google.com/permissions
+            </a>
+            . Detalhes completos na{" "}
+            <Link
+              href="/public/privacy"
+              className="underline underline-offset-4"
+            >
+              Política de Privacidade
+            </Link>
+            .
+          </p>
+        </section>
+
         <section className="space-y-6">
           <h2 className="text-2xl font-semibold tracking-tight">
             Como usar

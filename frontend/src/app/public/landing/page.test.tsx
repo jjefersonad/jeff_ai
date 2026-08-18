@@ -57,9 +57,13 @@ describe("LandingPage — design D2 links", () => {
 
   it("contains a link to /public/privacy", () => {
     render(<LandingPage />);
-    expect(
-      screen.getByRole("link", { name: /política de privacidade/i })
-    ).toHaveAttribute("href", "/public/privacy");
+    const privacyLinks = screen.getAllByRole("link", {
+      name: /política de privacidade/i,
+    });
+    expect(privacyLinks.length).toBeGreaterThan(0);
+    for (const link of privacyLinks) {
+      expect(link).toHaveAttribute("href", "/public/privacy");
+    }
   });
 
   it("contains a link to /public/terms", () => {
