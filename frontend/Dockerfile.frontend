@@ -17,9 +17,16 @@ EXPOSE 3000
 # docker-compose.prod.yml via `build.target: prod`. NEXT_PUBLIC_API_URL
 # precisa estar disponível em build time — `next build` inlina NEXT_PUBLIC_*
 # no bundle do browser, diferente do `next dev` (que relê a cada compilação).
+# GOOGLE_SITE_VERIFICATION não é NEXT_PUBLIC_* (não vai pro bundle do
+# browser), mas `frontend/src/app/layout.tsx` a lê num `metadata` estático,
+# que o `next build` também resolve e prerenderiza em build time — por isso
+# precisa do mesmo tratamento de ARG aqui, senão a tag de verificação nunca
+# aparece mesmo com a env var setada em runtime no container.
 FROM base AS prod
 ARG NEXT_PUBLIC_API_URL
+ARG GOOGLE_SITE_VERIFICATION
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV GOOGLE_SITE_VERIFICATION=$GOOGLE_SITE_VERIFICATION
 RUN yarn build
 CMD ["yarn", "start", "-p", "3000"]
 
