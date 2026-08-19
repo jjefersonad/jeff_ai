@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
@@ -54,6 +56,36 @@ describe("LandingPage — app-branding-consistency REQ-002", () => {
   it('shows the same app name "Jeff AI" used on the privacy and terms pages', () => {
     render(<LandingPage />);
     expect(screen.getAllByText("Jeff AI").length).toBeGreaterThan(0);
+  });
+
+  it('exposes "Jeff AI" as the logo accessible name, matching the h1 and consent screen', () => {
+    render(<LandingPage />);
+    expect(screen.getByRole("img", { name: "Jeff AI" })).toBeInTheDocument();
+  });
+
+  it('embeds JSON-LD SoftwareApplication with name "Jeff AI"', () => {
+    const { container } = render(<LandingPage />);
+    const script = container.querySelector('script[type="application/ld+json"]');
+    expect(script).not.toBeNull();
+    const payload = JSON.parse(script?.textContent ?? "{}") as {
+      "@type"?: string;
+      name?: string;
+    };
+    expect(payload["@type"]).toBe("SoftwareApplication");
+    expect(payload.name).toBe("Jeff AI");
+  });
+});
+
+describe("LandingPage metadata — Google brand crawler tags", () => {
+  it("exports applicationName, openGraph.siteName, and appleWebApp.title as Jeff AI", () => {
+    const source = readFileSync(
+      path.resolve(__dirname, "./page.tsx"),
+      "utf8"
+    );
+    expect(source).toMatch(/applicationName:\s*APP_NAME/);
+    expect(source).toMatch(/siteName:\s*APP_NAME/);
+    expect(source).toMatch(/appleWebApp:\s*\{[\s\S]*title:\s*APP_NAME/);
+    expect(source).toMatch(/const APP_NAME = "Jeff AI"/);
   });
 });
 

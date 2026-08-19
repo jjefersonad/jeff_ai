@@ -9,8 +9,18 @@ const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Jeff AI",
+  applicationName: "Jeff AI",
   description:
     "Jeff AI — assistente de inteligência artificial auto-hospedado.",
+  openGraph: {
+    title: "Jeff AI",
+    siteName: "Jeff AI",
+    locale: "pt_BR",
+    type: "website",
+  },
+  appleWebApp: {
+    title: "Jeff AI",
+  },
   verification: process.env.GOOGLE_SITE_VERIFICATION
     ? { google: process.env.GOOGLE_SITE_VERIFICATION }
     : undefined,
