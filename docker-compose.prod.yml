@@ -103,6 +103,9 @@ services:
       target: prod
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?defina NEXT_PUBLIC_API_URL em .env}
+        # Opcional: token do Google Search Console (meta tag de verificação
+        # de propriedade). Sem ela, a tag simplesmente não é renderizada.
+        GOOGLE_SITE_VERIFICATION: ${GOOGLE_SITE_VERIFICATION:-}
     container_name: jeff_ia_frontend
     ports:
       - "3002:3000"

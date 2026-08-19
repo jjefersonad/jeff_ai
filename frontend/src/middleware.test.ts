@@ -11,7 +11,7 @@ vi.mock("next/server", () => ({
   },
 }));
 
-import { isPublicPath } from "./middleware";
+import { config, isPublicPath } from "./middleware";
 
 /**
  * frontend-route-guard REQ-007 (add-privacy-policy-and-terms):
@@ -78,4 +78,43 @@ describe("middleware source — google-oauth-verification-brand-fix REQ-001 / RE
     expect(redirectIdx).toBeGreaterThanOrEqual(0);
     expect(publicIdx).toBeLessThan(redirectIdx);
   });
+});
+
+/**
+ * The middleware `matcher` decides which requests reach the auth gate at all.
+ * Listing single filenames (the original `favicon.ico`) left every other
+ * static file gated: an unauthenticated `GET /logo-conexao-elite.png` or
+ * `GET /icon.png` answered 307 → `/public/login`, so the landing page's logo
+ * and browser-tab icon were invisible to exactly the logged-out audience the
+ * page targets.
+ */
+describe("middleware matcher — static assets are never auth-gated", () => {
+  const matcher = new RegExp(`^${config.matcher[0]}$`);
+
+  it.each([
+    "/logo-conexao-elite.png",
+    "/icon.png",
+    "/apple-icon.png",
+    "/favicon.ico",
+    "/robots.txt",
+    "/sitemap.xml",
+    "/next.svg",
+    "/fonts/inter.woff2",
+  ])("does not run middleware for %s", (pathname) => {
+    expect(matcher.test(pathname)).toBe(false);
+  });
+
+  it.each(["/_next/static/chunk.js", "/_next/image", "/api/me"])(
+    "keeps the pre-existing exclusion for %s",
+    (pathname) => {
+      expect(matcher.test(pathname)).toBe(false);
+    },
+  );
+
+  it.each(["/", "/email", "/crm", "/admin/users", "/public/landing"])(
+    "still runs middleware for the protected/app route %s",
+    (pathname) => {
+      expect(matcher.test(pathname)).toBe(true);
+    },
+  );
 });

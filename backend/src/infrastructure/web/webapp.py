@@ -41,6 +41,9 @@ from src.infrastructure.auth.db import close_pool, init_pool
 from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.schema import init_auth_schema
 from src.infrastructure.ownership.schema import ensure_schema as ensure_ownership_schema
+from src.infrastructure.persistence.agent_profiles_schema import (
+    ensure_schema as ensure_agent_profiles_schema,
+)
 from src.infrastructure.persistence.crm_schema import (
     ensure_crm_schema,
 )
@@ -68,6 +71,9 @@ from src.infrastructure.persistence.whatsapp_link_codes_schema import (
 from src.infrastructure.scheduling.scheduler_instance import task_scheduler
 from src.infrastructure.usage.schema import ensure_schema as ensure_usage_schema
 from src.infrastructure.web.admin_users_router import router as admin_users_router
+from src.infrastructure.web.agent_profiles_router import (
+    router as agent_profiles_router,
+)
 from src.infrastructure.web.attachments_router import router as attachments_router
 from src.infrastructure.web.auth_router import router as auth_router
 from src.infrastructure.web.crm_router import router as crm_router
@@ -136,8 +142,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     ensure_whatsapp_link_codes_schema(conninfo)
     ensure_whatsapp_threads_schema(conninfo)
     ensure_scheduled_tasks_schema(conninfo)
-    # CRM simples (add-simple-crm-module): depende de `users` (FK). Sem o
-    # bootstrap no lifespan, `/api/crm/*` quebraria no primeiro INSERT.
+    ensure_agent_profiles_schema(conninfo)
     ensure_crm_schema(conninfo)
     # email-client-imap-mvp: `email_accounts` depende de `user_integrations`
     # (FK) e `emails.contact_id` depende de `crm_contacts` (FK) — roda depois
@@ -230,3 +235,5 @@ app.include_router(crm_router)
 # Contas de email genéricas IMAP/SMTP (`/api/email/accounts/*` — change
 # email-client-imap-mvp).
 app.include_router(email_router)
+
+app.include_router(agent_profiles_router)
