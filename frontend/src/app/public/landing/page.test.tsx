@@ -20,6 +20,16 @@ vi.mock("next/link", () => ({
   ),
 }));
 
+vi.mock("next/image", () => ({
+  default: ({ src, alt, ...rest }: { src: string; alt: string }) => (
+    <img
+      src={src}
+      alt={alt}
+      {...rest}
+    />
+  ),
+}));
+
 import LandingPage from "./page";
 
 describe("LandingPage — public-marketing-landing-page REQ-002", () => {
