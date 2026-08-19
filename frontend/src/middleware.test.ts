@@ -102,6 +102,7 @@ describe("middleware matcher — static assets are never auth-gated", () => {
     "/favicon.ico",
     "/robots.txt",
     "/sitemap.xml",
+    "/jeff-ai.html",
     "/next.svg",
     "/fonts/inter.woff2",
   ])("does not run middleware for %s", (pathname) => {
