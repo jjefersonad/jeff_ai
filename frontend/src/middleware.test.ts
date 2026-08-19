@@ -28,6 +28,10 @@ describe("isPublicPath — frontend-route-guard REQ-007", () => {
     expect(isPublicPath("/public/terms")).toBe(true);
   });
 
+  it("treats /public/about as public", () => {
+    expect(isPublicPath("/public/about")).toBe(true);
+  });
+
   it("does not treat a protected app path as public", () => {
     expect(isPublicPath("/email")).toBe(false);
   });
@@ -111,7 +115,7 @@ describe("middleware matcher — static assets are never auth-gated", () => {
     },
   );
 
-  it.each(["/", "/email", "/crm", "/admin/users", "/public/landing"])(
+  it.each(["/", "/email", "/crm", "/admin/users", "/public/landing", "/public/about"])(
     "still runs middleware for the protected/app route %s",
     (pathname) => {
       expect(matcher.test(pathname)).toBe(true);

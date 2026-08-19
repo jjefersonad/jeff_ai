@@ -137,9 +137,26 @@ export default function LandingPage() {
             produzir documentos e cuidar dos seus e-mails — tudo em uma só
             conversa.
           </p>
+          <p className="text-base">
+            Jeff AI is a self-hosted AI assistant. Connecting Gmail via Google
+            OAuth is optional and used only to sync and send email.{" "}
+            <Link
+              href="/public/privacy"
+              className="underline underline-offset-4"
+            >
+              Privacy Policy
+            </Link>
+            .
+          </p>
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
             <Button asChild>
               <Link href="/public/login">Entrar</Link>
+            </Button>
+            <Button
+              asChild
+              variant="outline"
+            >
+              <Link href="/public/about">Sobre o Jeff AI</Link>
             </Button>
           </div>
         </header>
