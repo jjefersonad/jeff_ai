@@ -52,6 +52,12 @@ describe("RootLayout metadata — google-site-verification REQ-001", () => {
     expect(source).toMatch(/description:\s*"[^"]+"/);
   });
 
+  it('exports applicationName, openGraph.siteName, and appleWebApp.title as "Jeff AI"', () => {
+    expect(source).toMatch(/applicationName:\s*"Jeff AI"/);
+    expect(source).toMatch(/siteName:\s*"Jeff AI"/);
+    expect(source).toMatch(/appleWebApp:\s*\{[\s\S]*title:\s*"Jeff AI"/);
+  });
+
   it("sources verification.google from process.env.GOOGLE_SITE_VERIFICATION (server-only, no NEXT_PUBLIC_ prefix)", () => {
     expect(source).toMatch(/process\.env\.GOOGLE_SITE_VERIFICATION/);
     expect(source).not.toMatch(/NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION/);

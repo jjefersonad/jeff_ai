@@ -4,14 +4,33 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 
+const APP_NAME = "Jeff AI";
+const APP_DESCRIPTION =
+  "Jeff AI é um assistente de inteligência artificial auto-hospedado para o trabalho do dia a dia: escrever e revisar código, pesquisar, criar documentos e planilhas, e organizar e-mails.";
+
 export const metadata: Metadata = {
   // Kept as the exact string configured on the Google OAuth consent screen
   // ("Nome do app"), with no suffix, so an exact-match check against the
   // page title cannot fail — the longer explainer lives in `description`
   // instead. See app-branding-consistency REQ-003.
-  title: "Jeff AI",
-  description:
-    "Jeff AI é um assistente de inteligência artificial auto-hospedado para o trabalho do dia a dia: escrever e revisar código, pesquisar, criar documentos e planilhas, e organizar e-mails.",
+  //
+  // applicationName / openGraph / appleWebApp duplicate that same string in
+  // the meta tags Google's brand crawler also reads (og:title, og:site_name,
+  // application-name, apple-mobile-web-app-title). A mismatch between any of
+  // those and the consent-screen name is a documented rejection reason.
+  title: APP_NAME,
+  applicationName: APP_NAME,
+  description: APP_DESCRIPTION,
+  openGraph: {
+    title: APP_NAME,
+    siteName: APP_NAME,
+    description: APP_DESCRIPTION,
+    locale: "pt_BR",
+    type: "website",
+  },
+  appleWebApp: {
+    title: APP_NAME,
+  },
 };
 
 const CAPABILITIES = [
@@ -80,22 +99,35 @@ const HOW_TO_USE = [
  * the name shown on the privacy and terms pages.
  */
 export default function LandingPage() {
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: APP_NAME,
+    applicationCategory: "BusinessApplication",
+    operatingSystem: "Web",
+    description: APP_DESCRIPTION,
+  };
+
   return (
     <main className="min-h-screen bg-background px-6 py-16 text-foreground">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       <div className="mx-auto flex max-w-3xl flex-col gap-16">
         <header className="space-y-4 text-center">
-          {/* Mesmo arquivo de logotipo enviado à tela de consentimento OAuth
-              do Google. A correspondência visual entre as duas superfícies é
-              parte do que a verificação de marca do Google confere. */}
+          {/* Visual mark sent to the Google OAuth consent screen. `alt` is the
+              consent-screen app name ("Jeff AI"), not the operator brand,
+              so the crawler's accessible-name check matches the h1 / title. */}
           <Image
             src="/logo-conexao-elite.png"
-            alt="Conexão Elite"
+            alt={APP_NAME}
             width={80}
             height={80}
             priority
             className="mx-auto h-20 w-20"
           />
-          <h1 className="text-4xl font-semibold tracking-tight">Jeff AI</h1>
+          <h1 className="text-4xl font-semibold tracking-tight">{APP_NAME}</h1>
           <p className="text-sm font-medium text-muted-foreground">
             Um produto da Conexão Elite
           </p>
