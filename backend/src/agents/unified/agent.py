@@ -59,6 +59,10 @@ from langgraph.store.base import BaseStore
 from langgraph.types import Checkpointer
 
 from src.agents.subagents.image_design import image_design_subagent
+from src.agents.unified.agent_profile_middleware import AgentProfileMiddleware
+from src.agents.unified.chat_attachment_preprocessing_middleware import (
+    ChatAttachmentPreprocessingMiddleware,
+)
 from src.agents.unified.datetime_utils import (
     _resolve_tz,  # noqa: F401  (re-export p/ spec REQ-003)
 )
@@ -71,9 +75,6 @@ from src.agents.unified.mcp_tool_availability import (
     McpToolAvailabilityMiddleware,
 )
 from src.agents.unified.mcp_tools_middleware import McpToolsMiddleware
-from src.agents.unified.chat_attachment_preprocessing_middleware import (
-    ChatAttachmentPreprocessingMiddleware,
-)
 from src.agents.unified.role_scoped_tools_middleware import RoleScopedToolsMiddleware
 from src.agents.unified.scoped_skills_middleware import ScopedSkillsMiddleware
 from src.agents.unified.tier_config import build_interrupt_on
@@ -84,7 +85,11 @@ from src.composition.backends import (
     sync_user_id_from_configurable,
 )
 from src.composition.env import load_env
-from src.infrastructure.ownership.paths import files_dir, user_files_root, user_skills_root
+from src.infrastructure.ownership.paths import (
+    files_dir,
+    user_files_root,
+    user_skills_root,
+)
 from src.infrastructure.usage.callback import UsageRecordingCallback
 from src.infrastructure.usage.repository import UsageRepository
 from src.models.fallback_model import unified_model
@@ -135,6 +140,7 @@ from src.tools.git_tools import (
 from src.tools.list_mcp_servers_status import (
     list_mcp_servers_status,
 )
+from src.tools.list_owned_files_tool import list_owned_files
 from src.tools.memory_tools import (
     delete_memory,
     list_memories,
@@ -144,7 +150,6 @@ from src.tools.memory_tools import (
 )
 from src.tools.preview_html_document_tool import preview_html_document
 from src.tools.read_document_tool import read_document
-from src.tools.list_owned_files_tool import list_owned_files
 from src.tools.scheduling_tools import (
     cancel_scheduled_task,
     create_scheduled_task,
@@ -648,10 +653,11 @@ def build_unified(
 
     O retorno é um grafo LangGraph configurado com `recursion_limit=1000`.
 
-    `middleware=[EnvelopeLifecycleMiddleware(), McpToolsMiddleware(),
-    McpToolAvailabilityMiddleware(), RoleScopedToolsMiddleware(...),
-    EnvelopeMiddleware(), ChatAttachmentPreprocessingMiddleware(),
-    ScopedSkillsMiddleware(...)]` liga o harness de permissões por tarefa,
+    `middleware=[EnvelopeLifecycleMiddleware(), AgentProfileMiddleware(),
+    McpToolsMiddleware(), McpToolAvailabilityMiddleware(),
+    RoleScopedToolsMiddleware(...), EnvelopeMiddleware(),
+    ChatAttachmentPreprocessingMiddleware(), ScopedSkillsMiddleware(...)]`
+    liga o overlay de perfil, o harness de permissões por tarefa,
     MCP, filtro por role, injeção path-first de anexos (session-file-sandbox
     D6/D9) e skills escopadas. Aditivo por design: remover a lista
     `middleware=[...]` restaura o comportamento anterior sem tocar em mais
@@ -686,6 +692,7 @@ def build_unified(
         backend=backend_factory,
         middleware=[
             EnvelopeLifecycleMiddleware(),
+            AgentProfileMiddleware(),
             McpToolsMiddleware(),
             McpToolAvailabilityMiddleware(),
             # D9: RoleScoped depois do MCP load e antes do Envelope.

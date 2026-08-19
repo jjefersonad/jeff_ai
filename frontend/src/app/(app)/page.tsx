@@ -24,6 +24,7 @@ import { useIsMobile } from "@/app/hooks/useIsMobile";
 
 interface HomePageInnerProps {
   config: StandaloneConfig;
+  onConfigChange: (config: StandaloneConfig) => void;
 }
 
 /**
@@ -33,7 +34,7 @@ interface HomePageInnerProps {
  * chat-specific controls (`Conversas` thread-history toggle and
  * `Nova conversa`).
  */
-function ChatPageInner({ config }: HomePageInnerProps) {
+function ChatPageInner({ config, onConfigChange }: HomePageInnerProps) {
   const client = useClient();
   const [threadId, setThreadId] = useQueryState("threadId");
   const [sidebar, setSidebar] = useQueryState("sidebar");
@@ -218,11 +219,21 @@ function ChatPageInner({ config }: HomePageInnerProps) {
           >
             <ChatProvider
               activeAssistant={assistant}
+              profileId={config.profileId}
               onHistoryRevalidate={() => mutateThreads?.()}
             >
               <ChatInterface
                 assistant={assistant}
                 assistantId={config.assistantId}
+                profileId={config.profileId}
+                onProfileChange={(profileId) => {
+                  const next: StandaloneConfig = {
+                    assistantId: config.assistantId,
+                    ...(profileId ? { profileId } : {}),
+                  };
+                  saveConfig(next);
+                  onConfigChange(next);
+                }}
               />
             </ChatProvider>
           </ResizablePanel>
@@ -239,9 +250,10 @@ function ChatPageContent() {
   // On mount, check for saved config; otherwise auto-provision a default.
   // The backend URL is fixed via NEXT_PUBLIC_API_URL (see lib/api.ts) — Jeff
   // AI is self-hosted with exactly one deployment, so there's no first-run
-  // Settings step. The persisted config now only tracks the assistant graph
-  // id; the LangSmith API key (formerly here) is read from the backend env
-  // var `LANGSMITH_API_KEY` (see `langsmith-api-key-config`).
+  // Settings step. The persisted config tracks the assistant graph id and
+  // an optional profileId; the LangSmith API key (formerly here) is read
+  // from the backend env var `LANGSMITH_API_KEY` (see
+  // `langsmith-api-key-config`).
   useEffect(() => {
     const savedConfig = getConfig();
     if (savedConfig) {
@@ -274,7 +286,7 @@ function ChatPageContent() {
     );
   }
 
-  return <ChatPageInner config={config} />;
+  return <ChatPageInner config={config} onConfigChange={setConfig} />;
 }
 
 export default function ChatPage() {

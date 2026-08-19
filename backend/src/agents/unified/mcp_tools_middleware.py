@@ -14,17 +14,24 @@ injetadas a cada chamada do modelo, em runtime.
    (REQ-009); antes lia um `backend/mcp_servers.json` único e compartilhado.
    `user_id` não resolvido (sessão sem vínculo, ex.: canal Telegram/WhatsApp
    ainda não linkado) → zero servidores carregados, sem erro.
-2. **Listar as tools** de cada servidor via `list_mcp_tools()`.
-3. **Injetar as tools MCP** no `ModelRequest.tools` via `wrap_model_call`,
+2. **Filtrar o catálogo do dono** pela `mcp_allowlist` do snapshot de
+   `AgentProfile` (`get_current_agent_profile()`). Overlay ausente ou
+   `None` = todos os servers daquele `user_id`; `[]` = nenhum; lista = só
+   names que já existem no catálogo do dono. Names desconhecidos são
+   ignorados — sem 500, sem lookup em outro `user_id`. Credenciais
+   continuam em `user_mcp_servers` / `/mcp-servers`, não no perfil.
+3. **Listar as tools** de cada servidor via `list_mcp_tools()`.
+4. **Injetar as tools MCP** no `ModelRequest.tools` via `wrap_model_call`,
    qualificando o nome por servidor de origem para evitar colisão com tools
    nativas (REQ-002).
-4. **Degradar graciosamente** se um servidor estiver offline/lento (REQ-004) —
+5. **Degradar graciosamente** se um servidor estiver offline/lento (REQ-004) —
    o agente inicia normalmente, sem as tools daquele servidor, e o usuário é
    informado.
-5. **Sujeitar as tools MCP ao envelope** — isso acontece automaticamente porque
+6. **Sujeitar as tools MCP ao envelope** — isso acontece automaticamente porque
    o `EnvelopeMiddleware` roda DEPOIS deste e filtra o set combinado (nativas +
-   MCP) antes de entregá-lo ao modelo. Ver ordem de composição em
-   `agent.py:middleware=[McpToolsMiddleware(), EnvelopeMiddleware()]`.
+   MCP) antes de entregá-lo ao modelo. Ver ordem de composição em `agent.py`
+   (`AgentProfileMiddleware` publica o snapshot; este middleware filtra
+   servers; `EnvelopeMiddleware` filtra o set combinado).
 
 ## REQ-003: classificação por default para tools MCP desconhecidas
 
@@ -71,19 +78,27 @@ As duas coexistem sem colisão. O modelo vê ambas e pode escolher qual usar.
 ```
 create_deep_agent(
     middleware=[
-        McpToolsMiddleware(),      # <- adiciona tools MCP ao set
-        EnvelopeMiddleware(),      # <- filtra nativas + MCP pelo envelope
+        EnvelopeLifecycleMiddleware(),
+        AgentProfileMiddleware(),       # snapshot (mcp_allowlist)
+        McpToolsMiddleware(),           # load ∩ allowlist → tools MCP
+        McpToolAvailabilityMiddleware(),
+        RoleScopedToolsMiddleware(...),
+        EnvelopeMiddleware(),           # filtra nativas + MCP pelo envelope
+        ChatAttachmentPreprocessingMiddleware(),
+        ScopedSkillsMiddleware(...),
     ]
 )
 ```
 
 O deepagents monta a pilha de middleware na ordem **inversa** da lista —
-então `EnvelopeMiddleware` roda PRIMEIRO (mais próximo do modelo), e
-`McpToolsMiddleware` roda ANTES dele na cadeia. Resultado:
+então `EnvelopeMiddleware` fica mais próximo do modelo que
+`McpToolsMiddleware`. Resultado no `wrap_model_call`:
 
-1. `McpToolsMiddleware.wrap_model_call` → adiciona tools MCP ao `request.tools`.
-2. `EnvelopeMiddleware.wrap_model_call` → filtra o set combinado pelo envelope.
-3. O modelo vê só as tools (nativas e MCP) que passaram no filtro.
+1. `AgentProfileMiddleware` já publicou o snapshot em `before_agent`.
+2. `McpToolsMiddleware.wrap_model_call` → carrega servers do dono, filtra
+   por `mcp_allowlist`, adiciona tools MCP ao `request.tools`.
+3. `EnvelopeMiddleware.wrap_model_call` → filtra o set combinado pelo envelope.
+4. O modelo vê só as tools (nativas e MCP) que passaram no filtro.
 """
 from __future__ import annotations
 
@@ -98,6 +113,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelRequest, ToolCallRequest
 from langchain_core.tools import BaseTool
 
+from src.agents.unified.agent_profile_middleware import get_current_agent_profile
 from src.agents.unified.mcp_client import (
     McpServerConnectionError,
     list_mcp_tools,
@@ -121,10 +137,12 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
 
     A instanciação é trivial — sem parâmetros obrigatórios, sem estado
     mutável. A cada `wrap_model_call`, o middleware resolve o `user_id` da
-    sessão corrente (`resolve_user_id()`) e carrega os servidores MCP
-    daquele usuário. Isto permite hot-reload (REQ-005): adicionar um
-    servidor novo para um usuário torna suas tools disponíveis na próxima
-    chamada do modelo daquele usuário, sem restart.
+    sessão corrente (`resolve_user_id()`), carrega os servidores MCP
+    daquele usuário e, se houver overlay de perfil, intersecta com
+    `mcp_allowlist` (None = todos os do dono; `[]` = nenhum). Isto permite
+    hot-reload (REQ-005 do mcp-client): adicionar um servidor novo para um
+    usuário torna suas tools disponíveis na próxima chamada do modelo
+    daquele usuário, sem restart — desde que o perfil permita aquele name.
 
     Parameters
     ----------
@@ -200,8 +218,13 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
         impede os demais de conectar. Falhas são acumuladas em
         `self.connection_errors` para auditoria (REQ-004).
 
+        Com overlay de perfil ativo, o dict devolvido por
+        `load_mcp_server_config` é intersectado com `mcp_allowlist` antes
+        de `list_mcp_tools` — o status publicado em `last_load_status`
+        reflete só os servers permitidos.
+
         Returns:
-            Lista de tools de TODOS os servidores do usuário que
+            Lista de tools dos servidores permitidos do usuário que
             conectaram com sucesso, com nomes qualificados por servidor de
             origem (se `qualify_names=True`).
         """
@@ -213,7 +236,7 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
             self._publish_load_status()
             return []
 
-        connections = await load_mcp_server_config(user_id)
+        connections = _apply_mcp_allowlist(await load_mcp_server_config(user_id))
         if not connections:
             # Usuário sem nenhum servidor configurado. Não é erro.
             self.connection_errors = []
@@ -445,6 +468,21 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
     ) -> Any:
         """Versão async de `wrap_tool_call` — obrigatória em produção."""
         return await handler(self._inject_loaded_tool(request))
+
+
+def _apply_mcp_allowlist(connections: dict[str, Any]) -> dict[str, Any]:
+    """Intersecta servers do dono com `mcp_allowlist` do snapshot.
+
+    Overlay ausente ou `mcp_allowlist is None`: sem corte extra.
+    `[]`: nenhum server. Lista: só names que já existem em `connections`
+    (catálogo do `user_id` corrente); names desconhecidos são ignorados —
+    sem lookup em outro usuário.
+    """
+    profile = get_current_agent_profile()
+    if profile is None or profile.mcp_allowlist is None:
+        return connections
+    allowed = set(profile.mcp_allowlist)
+    return {name: conn for name, conn in connections.items() if name in allowed}
 
 
 def _qualify_tool_names(

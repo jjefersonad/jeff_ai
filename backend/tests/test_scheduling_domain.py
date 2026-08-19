@@ -131,6 +131,23 @@ def test_delivery_user_key_optional_and_effective_destination():
     assert without_delivery.effective_delivery_user_key == "web:1"
 
 
+def test_profile_id_defaults_to_none() -> None:
+    t = _new_task()
+    assert t.profile_id is None
+
+
+def test_profile_id_accepts_uuid_string() -> None:
+    profile_id = "11111111-1111-1111-1111-111111111111"
+    t = ScheduledTask(
+        id="t-p1",
+        prompt="olá",
+        thread_id="th-1",
+        schedule=Schedule(kind="once", expr="2026-01-01T00:00:00"),
+        profile_id=profile_id,
+    )
+    assert t.profile_id == profile_id
+
+
 # ---------------------------------------------------------------------------
 # fix-scheduled-whatsapp-delivery — notify_status / notify_error
 # ---------------------------------------------------------------------------

@@ -212,6 +212,7 @@ def build_create_scheduled_task() -> CreateScheduledTask:
         repository=_scheduled_task_repository(),
         scheduler=task_scheduler,
         delivery_resolver=_delivery_target_resolver(),
+        get_agent_profile=_get_agent_profile_use_case(),
     )
 
 

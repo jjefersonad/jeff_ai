@@ -180,6 +180,8 @@ class ScheduledTask:
 
     `id` é a chave primária no `scheduled_tasks` e também a string registrada
     no scheduler (cada trigger carrega só `task_id` — ver REQ-005).
+    `profile_id` é UUID opcional do `AgentProfile` do dono; `None` = overlay
+    no-op. Sem FK física para `agent_profiles`.
     """
 
     id: str
@@ -197,6 +199,7 @@ class ScheduledTask:
     error: str | None = None
     notify_status: NotifyStatus | None = None
     notify_error: str | None = None
+    profile_id: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property

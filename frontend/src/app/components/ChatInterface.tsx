@@ -45,12 +45,16 @@ import { FilesPopover } from "@/app/components/TasksFilesSidebar";
 interface ChatInterfaceProps {
   assistant: Assistant | null;
   /**
-   * Short assistant id (e.g. `"unified"`) used by the toolbar
+   * LangGraph graph id (e.g. `"unified"`) used by the toolbar
    * `AssistantButton`. Kept separate from the resolved `assistant` object
-   * (a `langgraph-sdk` `Assistant` with versioned UUIDs) because the
-   * toolbar surfaces the user-chosen id, not the SDK's resolved record.
+   * (a `langgraph-sdk` `Assistant` with versioned UUIDs) and from
+   * `profileId` (an `AgentProfile` UUID).
    */
   assistantId: string;
+  /** Selected agent-profile UUID, if any. */
+  profileId?: string;
+  /** Persist a newly chosen profile so the next submit uses it. */
+  onProfileChange?: (profileId: string) => void;
 }
 
 export const CHAT_EMPTY_JTBD = [
@@ -94,7 +98,7 @@ const getStatusIcon = (status: TodoItem["status"], className?: string) => {
   }
 };
 
-export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant, assistantId }) => {
+export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant, assistantId, profileId, onProfileChange }) => {
   const [metaOpen, setMetaOpen] = useState<"tasks" | "files" | null>(null);
   const tasksContainerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -883,7 +887,11 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant, assist
                   onChange={handleFileChange}
                   className="hidden"
                 />
-                <AssistantButton assistantId={assistantId} />
+                <AssistantButton
+                  assistantId={assistantId}
+                  profileId={profileId}
+                  onChange={onProfileChange}
+                />
                 <Button
                   type="button"
                   variant="ghost"

@@ -4,10 +4,10 @@
  * Primary navigation sidebar for the authenticated layout.
  *
  * Renders **Conversas**, **Imagens**, **Servidores MCP**, **Integrações**,
- * **Agendamentos**, **CRM**, **E-mail**, and (for `role=admin` only) **Consumo**
- * and **Usuários** — linking to `/`, `/images`, `/mcp-servers`,
- * `/integrations`, `/scheduling`, `/crm`, `/email`, `/usage`, and
- * `/admin/users`.
+ * **Agendamentos**, **Perfis de agente**, **CRM**, **E-mail**, and (for
+ * `role=admin` only) **Consumo** and **Usuários** — linking to `/`, `/images`,
+ * `/mcp-servers`, `/integrations`, `/scheduling`, `/agent-profiles`, `/crm`,
+ * `/email`, `/usage`, and `/admin/users`.
  * **Conversas** exists because the top-bar "JEFF AI" link back to `/` isn't an
  * obvious return path once a user has navigated into a full sidebar
  * destination. The active entry (matching the current pathname) is

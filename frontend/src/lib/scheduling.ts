@@ -28,6 +28,7 @@ export interface ScheduledTask {
   notify_status: string | null;
   notify_error: string | null;
   created_at: string;
+  profile_id: string | null;
 }
 
 export interface ScheduledTaskCreatePayload {
@@ -38,6 +39,7 @@ export interface ScheduledTaskCreatePayload {
   skills?: string[];
   timeout_seconds?: number;
   delivery_channel?: string | null;
+  profile_id?: string | null;
 }
 
 export interface ScheduledTaskUpdatePayload {
@@ -47,6 +49,7 @@ export interface ScheduledTaskUpdatePayload {
   tool_scope?: string;
   skills?: string[];
   delivery_channel?: string | null;
+  profile_id?: string | null;
 }
 
 export interface DeliveryChannelsResponse {

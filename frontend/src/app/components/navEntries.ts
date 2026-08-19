@@ -4,6 +4,7 @@
 
 import {
   BarChart3,
+  Bot,
   BriefcaseBusiness,
   CalendarClock,
   ImageIcon,
@@ -77,6 +78,13 @@ export const NAV_ENTRIES: readonly NavEntry[] = [
     description: "Gerenciar tarefas agendadas",
     icon: CalendarClock,
     match: (p) => p === "/scheduling" || p.startsWith("/scheduling/"),
+  },
+  {
+    label: "Perfis de agente",
+    href: "/agent-profiles",
+    description: "Gerenciar personas, allowlists e modelo",
+    icon: Bot,
+    match: (p) => p === "/agent-profiles" || p.startsWith("/agent-profiles/"),
   },
   {
     label: "CRM",

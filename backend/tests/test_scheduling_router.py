@@ -21,11 +21,14 @@ from src.application.ports.task_scheduler import TaskSchedulerPort
 from src.application.ports.user_integration_repository import (
     UserIntegrationRepositoryPort,
 )
+from src.application.use_cases.get_agent_profile import GetAgentProfile
 from src.application.use_cases.resolve_delivery_target import ResolveDeliveryTarget
+from src.domain.agents import AgentProfile
 from src.domain.integrations import UserIntegration
 from src.domain.scheduling import Schedule, ScheduledTask, TaskStatus
 from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.users import User
+from tests.agent_profile_repository_fakes import InMemoryAgentProfileRepository
 
 _ADMIN = User(
     id="admin-1",
@@ -140,10 +143,16 @@ def integrations() -> _FakeIntegrationRepository:
 
 
 @pytest.fixture
+def profiles() -> InMemoryAgentProfileRepository:
+    return InMemoryAgentProfileRepository()
+
+
+@pytest.fixture
 def client(
     repo: _FakeRepository,
     scheduler: _FakeScheduler,
     integrations: _FakeIntegrationRepository,
+    profiles: InMemoryAgentProfileRepository,
 ):
     """Cliente do webapp com repo/scheduler/auth sobrescritos pelo teste."""
     resolver = ResolveDeliveryTarget(repository=integrations)
@@ -155,6 +164,9 @@ def client(
     )
     webapp.app.dependency_overrides[scheduling_router._delivery_target_resolver] = (
         lambda: resolver
+    )
+    webapp.app.dependency_overrides[scheduling_router._get_agent_profile] = (
+        lambda: GetAgentProfile(repository=profiles)
     )
     try:
         yield TestClient(webapp.app)
@@ -168,6 +180,9 @@ def client(
         )
         webapp.app.dependency_overrides.pop(
             scheduling_router._delivery_target_resolver, None
+        )
+        webapp.app.dependency_overrides.pop(
+            scheduling_router._get_agent_profile, None
         )
 
 
@@ -188,6 +203,23 @@ def test_get_non_admin_returns_only_own_tasks(
     assert resp.status_code == 200, resp.text
     ids = sorted(t["id"] for t in resp.json())
     assert ids == ["t-a"]
+
+
+def test_get_returns_persisted_profile_id(
+    client: TestClient, repo: _FakeRepository
+) -> None:
+    """sched-2 / REQ-015: listagem REST devolve o `profile_id` persistido."""
+    task = _make_task(id_="t-a", owner="web:user-a")
+    task.profile_id = "p-coder"
+    asyncio.run(repo.save(task))
+    _as(_USER_A)
+
+    resp = client.get("/api/scheduled-tasks")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["profile_id"] == "p-coder"
 
 
 def test_get_admin_returns_all_tasks(client: TestClient, repo: _FakeRepository) -> None:
@@ -440,3 +472,146 @@ def test_to_response_includes_notify_status_and_error() -> None:
     assert body["notify_status"] == "skipped"
     assert body["notify_error"] == "output_missing"
     assert body["status"] == "succeeded"
+    assert body["profile_id"] is None
+
+
+def _agent_profile(
+    *,
+    profile_id: str = "p-coder",
+    user_id: str = "user-a",
+    slug: str | None = None,
+    archived_at: datetime | None = None,
+) -> AgentProfile:
+    now = datetime.now(UTC)
+    return AgentProfile(
+        id=profile_id,
+        user_id=user_id,
+        name="Coder",
+        slug=slug or f"coder-{profile_id}",
+        system_prompt="x",
+        archived_at=archived_at,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def test_post_stores_owned_profile_id(
+    client: TestClient,
+    repo: _FakeRepository,
+    scheduler: _FakeScheduler,
+    profiles: InMemoryAgentProfileRepository,
+) -> None:
+    """REQ-015: POST com profile_id ativo do dono persiste o UUID e devolve no JSON."""
+    seeded = asyncio.run(profiles.create(_agent_profile()))
+    _as(_USER_A)
+
+    resp = client.post(
+        "/api/scheduled-tasks",
+        json={
+            "prompt": "roda o coder",
+            "schedule_kind": "once",
+            "schedule_expr": "2026-12-31T23:59:00",
+            "profile_id": seeded.id,
+        },
+    )
+
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["profile_id"] == seeded.id
+    assert repo._store[body["id"]].profile_id == seeded.id
+    assert scheduler.scheduled == [body["id"]]
+
+
+def test_post_rejects_cross_user_profile_without_trigger(
+    client: TestClient,
+    repo: _FakeRepository,
+    scheduler: _FakeScheduler,
+    profiles: InMemoryAgentProfileRepository,
+) -> None:
+    """REQ-015: POST com profile_id de outro usuário → 422 e nenhum trigger."""
+    other = asyncio.run(
+        profiles.create(_agent_profile(profile_id="p-b", user_id="user-b"))
+    )
+    _as(_USER_A)
+
+    resp = client.post(
+        "/api/scheduled-tasks",
+        json={
+            "prompt": "hijack",
+            "schedule_kind": "once",
+            "schedule_expr": "2026-12-31T23:59:00",
+            "profile_id": other.id,
+        },
+    )
+
+    assert resp.status_code == 422
+    assert "profile_id" in str(resp.json()["detail"])
+    assert repo._store == {}
+    assert scheduler.scheduled == []
+
+
+def test_post_omitted_profile_id_is_null(
+    client: TestClient, repo: _FakeRepository
+) -> None:
+    """REQ-015: REST sem profile_id no corpo grava null (não há sessão LangGraph)."""
+    _as(_USER_A)
+
+    resp = client.post(
+        "/api/scheduled-tasks",
+        json={
+            "prompt": "sem overlay",
+            "schedule_kind": "once",
+            "schedule_expr": "2026-12-31T23:59:00",
+        },
+    )
+
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["profile_id"] is None
+    assert repo._store[body["id"]].profile_id is None
+
+
+def test_patch_swaps_owned_profile_id(
+    client: TestClient,
+    repo: _FakeRepository,
+    profiles: InMemoryAgentProfileRepository,
+) -> None:
+    """REQ-009: PATCH profile_id para outro perfil ativo do dono."""
+    first = asyncio.run(profiles.create(_agent_profile(profile_id="p-coder")))
+    second = asyncio.run(
+        profiles.create(_agent_profile(profile_id="p-marketer", slug="marketer"))
+    )
+    task = _make_task(id_="t-a", owner="web:user-a")
+    task.profile_id = first.id
+    asyncio.run(repo.save(task))
+    _as(_USER_A)
+
+    resp = client.patch(
+        "/api/scheduled-tasks/t-a", json={"profile_id": second.id}
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["profile_id"] == second.id
+    assert repo._store["t-a"].profile_id == second.id
+
+
+def test_patch_clears_profile_id_with_json_null(
+    client: TestClient,
+    repo: _FakeRepository,
+    profiles: InMemoryAgentProfileRepository,
+) -> None:
+    """REQ-009: PATCH profile_id=null limpa o overlay; omitir o campo não altera."""
+    mine = asyncio.run(profiles.create(_agent_profile()))
+    task = _make_task(id_="t-a", owner="web:user-a")
+    task.profile_id = mine.id
+    asyncio.run(repo.save(task))
+    _as(_USER_A)
+
+    keep = client.patch("/api/scheduled-tasks/t-a", json={"prompt": "mesmo overlay"})
+    assert keep.status_code == 200, keep.text
+    assert keep.json()["profile_id"] == mine.id
+
+    cleared = client.patch("/api/scheduled-tasks/t-a", json={"profile_id": None})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["profile_id"] is None
+    assert repo._store["t-a"].profile_id is None

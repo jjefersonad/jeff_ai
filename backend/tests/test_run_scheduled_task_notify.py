@@ -76,6 +76,8 @@ class _RecordingRunner(AgentRunnerPort):
         skills: tuple[str, ...],
         tool_scope: ToolScope,
         user_key: str | None = None,
+        profile_id: str | None = None,
+        use_default_profile: bool = False,
     ) -> AgentRunResult:
         return self._result
 

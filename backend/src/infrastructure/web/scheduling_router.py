@@ -5,7 +5,9 @@ constrói `PostgresScheduledTaskRepository` por requisição a partir de
 `POSTGRES_URI`; o scheduler reusa o singleton do processo
 (`scheduler_instance.task_scheduler`). `is_admin`/`owner_user_key` são
 resolvidos do `User` de `require_auth` — nunca de um campo do corpo da
-requisição (REQ-005 do spec `scheduled-tasks-rest-api`).
+requisição (REQ-005 do spec `scheduled-tasks-rest-api`). `profile_id` no
+create/update é validado contra um `AgentProfile` ativo do dono; omitido
+no POST grava `null` (REST não herda sessão LangGraph).
 """
 from __future__ import annotations
 
@@ -23,9 +25,11 @@ from src.application.use_cases.cancel_scheduled_task import (
     ScheduledTaskAuthorizationError,
 )
 from src.application.use_cases.create_scheduled_task import CreateScheduledTask
+from src.application.use_cases.get_agent_profile import GetAgentProfile
 from src.application.use_cases.list_scheduled_tasks import ListScheduledTasks
 from src.application.use_cases.resolve_delivery_target import ResolveDeliveryTarget
 from src.application.use_cases.update_scheduled_task import (
+    UNSET,
     ScheduledTaskNotEditableError,
     UpdateScheduledTask,
 )
@@ -33,6 +37,9 @@ from src.domain.scheduling import Schedule, ScheduledTask, ToolScope
 from src.domain.shared.errors import DomainError
 from src.infrastructure.auth.dependencies import require_auth
 from src.infrastructure.auth.users import User
+from src.infrastructure.persistence.agent_profile_repository import (
+    PostgresAgentProfileRepository,
+)
 from src.infrastructure.persistence.scheduled_task_repository import (
     PostgresScheduledTaskRepository,
 )
@@ -55,9 +62,16 @@ def _task_scheduler_dependency() -> TaskSchedulerPort:
 
 
 def _delivery_target_resolver() -> ResolveDeliveryTarget:
-    """Resolver de destino de entrega a partir de `user_integrations`."""
+    """Constrói o resolver de destino de entrega a partir de `user_integrations`."""
     return ResolveDeliveryTarget(
         repository=PostgresUserIntegrationRepository(os.environ["POSTGRES_URI"])
+    )
+
+
+def _get_agent_profile() -> GetAgentProfile:
+    """Constrói o lookup de perfil do dono para validar `profile_id`."""
+    return GetAgentProfile(
+        repository=PostgresAgentProfileRepository(os.environ["POSTGRES_URI"])
     )
 
 
@@ -71,6 +85,7 @@ class ScheduledTaskCreateRequest(BaseModel):
     skills: list[str] = []
     timeout_seconds: int | None = None
     delivery_channel: str | None = None
+    profile_id: str | None = None
 
 
 class ScheduledTaskUpdateRequest(BaseModel):
@@ -87,6 +102,7 @@ class ScheduledTaskUpdateRequest(BaseModel):
     tool_scope: str | None = None
     skills: list[str] | None = None
     delivery_channel: str | None = None
+    profile_id: str | None = None
 
 
 class ScheduledTaskResponse(BaseModel):
@@ -109,6 +125,7 @@ class ScheduledTaskResponse(BaseModel):
     notify_status: str | None
     notify_error: str | None
     created_at: datetime
+    profile_id: str | None
 
 
 class DeliveryChannelsResponse(BaseModel):
@@ -136,6 +153,7 @@ def _to_response(task: ScheduledTask) -> ScheduledTaskResponse:
         notify_status=task.notify_status,
         notify_error=task.notify_error,
         created_at=task.created_at,
+        profile_id=task.profile_id,
     )
 
 
@@ -174,8 +192,9 @@ async def create_scheduled_task_endpoint(
     repo: ScheduledTaskRepositoryPort = Depends(_scheduled_task_repository),
     scheduler: TaskSchedulerPort = Depends(_task_scheduler_dependency),
     delivery_resolver: ResolveDeliveryTarget = Depends(_delivery_target_resolver),
+    get_agent_profile: GetAgentProfile = Depends(_get_agent_profile),
 ) -> ScheduledTaskResponse:
-    """REQ-002: `owner_user_key` sempre resolvido da sessão, nunca do corpo."""
+    """REQ-002: `owner_user_key` sempre da sessão. `profile_id` opcional."""
     if user is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -189,6 +208,7 @@ async def create_scheduled_task_endpoint(
         repository=repo,
         scheduler=scheduler,
         delivery_resolver=delivery_resolver,
+        get_agent_profile=get_agent_profile,
     )
     try:
         task = await use_case.execute(
@@ -202,6 +222,7 @@ async def create_scheduled_task_endpoint(
             tool_scope=scope,
             skills=tuple(body.skills),
             timeout_seconds=body.timeout_seconds,
+            profile_id=body.profile_id,
         )
     except DomainError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -216,8 +237,9 @@ async def update_scheduled_task_endpoint(
     repo: ScheduledTaskRepositoryPort = Depends(_scheduled_task_repository),
     scheduler: TaskSchedulerPort = Depends(_task_scheduler_dependency),
     delivery_resolver: ResolveDeliveryTarget = Depends(_delivery_target_resolver),
+    get_agent_profile: GetAgentProfile = Depends(_get_agent_profile),
 ) -> ScheduledTaskResponse:
-    """REQ-003: edição restrita a `SCHEDULED`; REQ-005: autorização da sessão."""
+    """REQ-003/`SCHEDULED`; REQ-009: `profile_id` omitido mantém, `null` limpa."""
     if user is None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -241,6 +263,7 @@ async def update_scheduled_task_endpoint(
         repository=repo,
         scheduler=scheduler,
         delivery_resolver=delivery_resolver,
+        get_agent_profile=get_agent_profile,
     )
     try:
         task = await use_case.execute(
@@ -253,6 +276,9 @@ async def update_scheduled_task_endpoint(
             tool_scope=tool_scope,
             skills=tuple(body.skills) if body.skills is not None else None,
             delivery_channel=body.delivery_channel,
+            profile_id=(
+                body.profile_id if "profile_id" in body.model_fields_set else UNSET
+            ),
         )
     except DomainError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

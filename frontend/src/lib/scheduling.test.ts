@@ -26,6 +26,7 @@ const sampleTask = {
   notify_status: null,
   notify_error: null,
   created_at: "2026-07-28T00:00:00Z",
+  profile_id: null,
 };
 
 describe("scheduling.ts", () => {

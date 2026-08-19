@@ -27,6 +27,7 @@ class CreateAgentProfile:
         system_prompt: str,
         skills_allowlist: list[str] | None = None,
         tools_allowlist: list[str] | None = None,
+        mcp_allowlist: list[str] | None = None,
         tier: int = 1,
         model_override: str | None = None,
     ) -> AgentProfile:
@@ -68,6 +69,7 @@ class CreateAgentProfile:
             system_prompt=system_prompt,
             skills_allowlist=skills_allowlist,
             tools_allowlist=tools_allowlist,
+            mcp_allowlist=mcp_allowlist,
             tier=tier,
             model_override=model_override,
             is_active=True,

@@ -88,6 +88,26 @@ async def test_save_then_get_round_trips_all_fields() -> None:
     assert fetched.status == TaskStatus.SCHEDULED
 
 
+@pytest.mark.parametrize("profile_id", [None, "11111111-1111-1111-1111-111111111111"])
+async def test_save_then_get_round_trips_profile_id(
+    profile_id: str | None,
+) -> None:
+    from src.infrastructure.persistence.scheduled_task_repository import (
+        PostgresScheduledTaskRepository,
+    )
+
+    repo = PostgresScheduledTaskRepository(_uri())
+    task = _new_task(profile_id=profile_id)
+
+    await repo.save(task)
+    fetched = await repo.get(task.id)
+
+    assert fetched is not None
+    assert fetched.profile_id == profile_id
+    if profile_id is None:
+        assert fetched.profile_id is None
+
+
 async def test_save_is_idempotent_upsert_on_id() -> None:
     from src.infrastructure.persistence.scheduled_task_repository import (
         PostgresScheduledTaskRepository,

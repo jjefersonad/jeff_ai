@@ -13,6 +13,10 @@ HITL: `status=interrupted` → `WAITING_HUMAN` + deliver interruption no destino
 (não `FAILED`). Overlap `RUNNING`/`WAITING_HUMAN` → no-op (OQ-3).
 Cron: após `SUCCEEDED`/`FAILED`, `rearm_for_cron()` antes do save final
 (Decision 5 / OQ-1) — `once` permanece terminal.
+
+Passa `owner_user_key` como `user_key` e `profile_id` da tarefa para
+`agent_runner.run`. `use_default_profile=False`: `profile_id` null é
+overlay no-op (nunca `get_default`).
 """
 from __future__ import annotations
 
@@ -89,6 +93,8 @@ class RunScheduledTask:
                     skills=task.skills,
                     tool_scope=task.tool_scope,
                     user_key=task.owner_user_key,
+                    profile_id=task.profile_id,
+                    use_default_profile=False,
                 ),
                 timeout=task.timeout_seconds,
             )

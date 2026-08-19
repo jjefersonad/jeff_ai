@@ -257,7 +257,7 @@ def test_image_design_subagent_has_no_denylist_tools() -> None:
 
 
 def test_build_unified_registers_role_scoped_after_mcp_before_envelope() -> None:
-    """D9: EnvelopeLifecycle → McpTools* → RoleScoped → Envelope → ChatAttachment → ScopedSkills."""
+    """D9 + profile overlay: EnvelopeLifecycle → AgentProfile → McpTools* → RoleScoped → Envelope → ChatAttachment → ScopedSkills."""
     import inspect
 
     from src.agents.unified import agent as agent_mod
@@ -277,6 +277,7 @@ def test_build_unified_registers_role_scoped_after_mcp_before_envelope() -> None
         if ln.startswith(
             (
                 "EnvelopeLifecycleMiddleware(",
+                "AgentProfileMiddleware(",
                 "McpToolsMiddleware(",
                 "McpToolAvailabilityMiddleware(",
                 "RoleScopedToolsMiddleware(",
@@ -288,10 +289,15 @@ def test_build_unified_registers_role_scoped_after_mcp_before_envelope() -> None
     ]
     # Docstring may mention EnvelopeLifecycle + Envelope once; keep the
     # trailing sequence that includes RoleScoped (the real wiring).
-    role_idx = next(i for i, ln in enumerate(mw_lines) if ln.startswith("RoleScopedToolsMiddleware("))
-    seq = mw_lines[role_idx - 3 : role_idx + 4]
+    role_idx = next(
+        i
+        for i, ln in enumerate(mw_lines)
+        if ln.startswith("RoleScopedToolsMiddleware(approved_tool_names=")
+    )
+    seq = mw_lines[role_idx - 4 : role_idx + 4]
     expected_prefixes = [
         "EnvelopeLifecycleMiddleware(",
+        "AgentProfileMiddleware(",
         "McpToolsMiddleware(",
         "McpToolAvailabilityMiddleware(",
         "RoleScopedToolsMiddleware(",
@@ -299,6 +305,6 @@ def test_build_unified_registers_role_scoped_after_mcp_before_envelope() -> None
         "ChatAttachmentPreprocessingMiddleware(",
         "ScopedSkillsMiddleware(",
     ]
-    assert len(seq) == 7, f"unexpected middleware neighbors: {mw_lines}"
+    assert len(seq) == 8, f"unexpected middleware neighbors: {mw_lines}"
     for line, prefix in zip(seq, expected_prefixes, strict=True):
         assert line.startswith(prefix), f"got {seq!r}"

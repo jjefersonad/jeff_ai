@@ -1,14 +1,12 @@
 "use client";
 
 /**
- * Modal that lists every available assistant and lets the user pick one for
- * the current thread.
+ * Modal that lists the authenticated user's agent profiles and lets them
+ * pick one for the current thread.
  *
- * Today the catalog is a single static entry (`unified` — see design decision
- * D6 in `frontend-menu-redesign-design`). When more assistants are wired in
- * the backend, replace the static `ASSISTANTS` array with a fetch against
- * the future `GET /api/assistants` endpoint; the component contract does not
- * change.
+ * The catalog comes from `GET /api/agent-profiles` — not from a static
+ * graph-id list. Selecting a row yields the profile UUID (`profileId`);
+ * the LangGraph graph id (`assistantId` / `unified`) is unchanged.
  *
  * Accessibility:
  *   - `Dialog` from `@radix-ui/react-dialog` provides `role="dialog"`,
@@ -19,6 +17,7 @@
  *     the current selection.
  */
 
+import { useEffect, useState } from "react";
 import { Check } from "lucide-react";
 
 import {
@@ -29,91 +28,127 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-
-export interface Assistant {
-  id: string;
-  name: string;
-  description: string;
-}
-
-export const ASSISTANTS: readonly Assistant[] = [
-  {
-    id: "unified",
-    name: "Unified",
-    description: "Default Jeff AI assistant — code, research, and chat.",
-  },
-];
+import {
+  listAgentProfiles,
+  type AgentProfile,
+} from "@/lib/agent-profiles";
 
 interface AssistantModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  currentAssistantId: string;
-  onSelect: (assistantId: string) => void;
+  currentProfileId?: string;
+  onSelect: (profileId: string) => void;
 }
 
 export function AssistantModal({
   open,
   onOpenChange,
-  currentAssistantId,
+  currentProfileId,
   onSelect,
 }: AssistantModalProps) {
+  const [profiles, setProfiles] = useState<AgentProfile[]>([]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    listAgentProfiles().then((rows) => {
+      if (!cancelled) setProfiles(rows);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[480px]">
         <DialogHeader>
-          <DialogTitle>Choose assistant</DialogTitle>
+          <DialogTitle>Escolher agente</DialogTitle>
           <DialogDescription>
-            Pick the assistant for this thread. Today only <b>Unified</b> is
-            available; more assistants are coming.
+            Escolha o perfil para as próximas mensagens. O grafo continua{" "}
+            <b>unified</b>.
           </DialogDescription>
         </DialogHeader>
-        <ul
-          role="listbox"
-          aria-label="Available assistants"
-          className="flex flex-col gap-1"
-        >
-          {ASSISTANTS.map((assistant) => {
-            const selected = assistant.id === currentAssistantId;
-            return (
-              <li key={assistant.id}>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  aria-checked={selected}
-                  onClick={() => onSelect(assistant.id)}
+        {profiles.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Nenhum perfil cadastrado. O chat usa o agente padrão, sem inventar
+            um id de perfil.
+          </p>
+        ) : (
+          <ul
+            role="listbox"
+            aria-label="Perfis disponíveis"
+            className="flex flex-col gap-1"
+          >
+            <li>
+              <button
+                type="button"
+                role="option"
+                aria-selected={!currentProfileId}
+                aria-checked={!currentProfileId}
+                onClick={() => onSelect("")}
+                className={cn(
+                  "flex w-full items-start gap-3 rounded-md border border-transparent p-3 text-left text-sm transition-colors",
+                  "hover:bg-accent hover:text-accent-foreground",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  !currentProfileId && "border-primary bg-primary/5"
+                )}
+              >
+                <span
+                  aria-hidden="true"
                   className={cn(
-                    "flex w-full items-start gap-3 rounded-md border border-transparent p-3 text-left text-sm transition-colors",
-                    "hover:bg-accent hover:text-accent-foreground",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    selected && "border-primary bg-primary/5"
+                    "mt-0.5 flex h-5 w-5 items-center justify-center rounded-full border",
+                    !currentProfileId
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-muted-foreground/30"
                   )}
                 >
-                  <span
-                    aria-hidden="true"
+                  {!currentProfileId ? <Check className="h-3 w-3" /> : null}
+                </span>
+                <span className="flex min-w-0 flex-col">
+                  <span className="font-medium">Agente padrão</span>
+                  <span className="text-muted-foreground">(padrão unified)</span>
+                </span>
+              </button>
+            </li>
+            {profiles.map((profile) => {
+              const selected = profile.id === currentProfileId;
+              return (
+                <li key={profile.id}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    aria-checked={selected}
+                    onClick={() => onSelect(profile.id)}
                     className={cn(
-                      "mt-0.5 flex h-5 w-5 items-center justify-center rounded-full border",
-                      selected
-                        ? "border-primary bg-primary text-primary-foreground"
-                        : "border-muted-foreground/30"
+                      "flex w-full items-start gap-3 rounded-md border border-transparent p-3 text-left text-sm transition-colors",
+                      "hover:bg-accent hover:text-accent-foreground",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      selected && "border-primary bg-primary/5"
                     )}
                   >
-                    {selected ? <Check className="h-3 w-3" /> : null}
-                  </span>
-                  <span className="flex min-w-0 flex-col">
-                    <span className="font-medium">{assistant.name}</span>
-                    <span className="text-muted-foreground">
-                      {assistant.description}
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "mt-0.5 flex h-5 w-5 items-center justify-center rounded-full border",
+                        selected
+                          ? "border-primary bg-primary text-primary-foreground"
+                          : "border-muted-foreground/30"
+                      )}
+                    >
+                      {selected ? <Check className="h-3 w-3" /> : null}
                     </span>
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+                    <span className="flex min-w-0 flex-col">
+                      <span className="font-medium">{profile.name}</span>
+                      <span className="text-muted-foreground">{profile.slug}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </DialogContent>
     </Dialog>
   );

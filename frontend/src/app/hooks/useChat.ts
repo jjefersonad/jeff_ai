@@ -33,21 +33,39 @@ export function useChat({
   activeAssistant,
   onHistoryRevalidate,
   thread,
+  profileId,
 }: {
   activeAssistant: Assistant | null;
   onHistoryRevalidate?: () => void;
   thread?: UseStreamThread<StateType>;
+  /** Selected AgentProfile UUID; omitted means no overlay (do not invent an id). */
+  profileId?: string | null;
 }) {
   const [threadId, setThreadId] = useQueryState("threadId");
   const client = useClient();
 
   const buildConfig = useCallback(
-    (base?: Record<string, unknown>) => ({
-      ...(base ?? {}),
-      ...(activeAssistant?.config ?? {}),
-      recursion_limit: 100,
-    }),
-    [activeAssistant?.config]
+    (base?: Record<string, unknown>) => {
+      const assistantConfig = {
+        ...(base ?? {}),
+        ...(activeAssistant?.config ?? {}),
+      } as Record<string, unknown>;
+      const existingConfigurable =
+        assistantConfig.configurable &&
+        typeof assistantConfig.configurable === "object"
+          ? (assistantConfig.configurable as Record<string, unknown>)
+          : {};
+      const configurable = {
+        ...existingConfigurable,
+        ...(profileId ? { profile_id: profileId } : {}),
+      };
+      return {
+        ...assistantConfig,
+        recursion_limit: 100,
+        ...(Object.keys(configurable).length > 0 ? { configurable } : {}),
+      };
+    },
+    [activeAssistant?.config, profileId]
   );
 
   const stream = useStream<StateType>({
@@ -151,11 +169,14 @@ export function useChat({
 
   const resumeInterrupt = useCallback(
     (value: any) => {
-      stream.submit(null, { command: { resume: value } });
+      stream.submit(null, {
+        command: { resume: value },
+        config: buildConfig(),
+      });
       // Update thread list when resuming from interrupt
       onHistoryRevalidate?.();
     },
-    [stream, onHistoryRevalidate]
+    [stream, buildConfig, onHistoryRevalidate]
   );
 
   const stopStream = useCallback(() => {

@@ -68,6 +68,7 @@ def test_ensure_schema_creates_scheduled_tasks_table(monkeypatch: pytest.MonkeyP
         "delivery_user_key",
         "notify_status",
         "notify_error",
+        "profile_id",
     ],
 )
 def test_ensure_schema_table_has_required_column(
@@ -120,6 +121,23 @@ def test_ensure_schema_adds_notify_status_and_error_for_existing_tables(
     executed_sql = "\n".join(fake_conn._cursor.executed)
     assert "ADD COLUMN IF NOT EXISTS notify_status" in executed_sql
     assert "ADD COLUMN IF NOT EXISTS notify_error" in executed_sql
+
+
+def test_ensure_schema_adds_profile_id_uuid_without_fk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """multi-agent-profiles-runtime schema-2: profile_id UUID, sem FK física."""
+    fake_conn = _FakeConnection()
+    monkeypatch.setattr(schema.psycopg, "connect", lambda *a, **kw: fake_conn)
+
+    schema.ensure_schema("postgresql://fake")
+
+    executed_sql = "\n".join(fake_conn._cursor.executed)
+    assert "ADD COLUMN IF NOT EXISTS profile_id UUID" in executed_sql
+    profile_lines = [line for line in executed_sql.splitlines() if "profile_id" in line]
+    assert profile_lines, "coluna profile_id não encontrada na DDL"
+    for line in profile_lines:
+        assert "REFERENCES" not in line
 
 
 def test_owner_user_key_column_is_not_null_without_fk(

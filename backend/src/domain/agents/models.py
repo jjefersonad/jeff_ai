@@ -3,7 +3,7 @@
 PURO: zero import de framework. Um `AgentProfile` representa um agente
 customizado por usuário — identifica o dono (`user_id`), tem `slug`
 único-por-usuário, prompt de sistema, allowlists opcionais de
-skills/tools, e `tier` (1..4) que mapeia ao regime de aprovação do
+skills/tools/MCP, e `tier` (1..4) que mapeia ao regime de aprovação do
 `tier_config.py` da camada de composição.
 """
 from __future__ import annotations
@@ -32,6 +32,7 @@ class AgentProfile:
     system_prompt: str
     skills_allowlist: list[str] | None = None
     tools_allowlist: list[str] | None = None
+    mcp_allowlist: list[str] | None = None
     tier: int = 1
     model_override: str | None = None
     is_active: bool = True
@@ -40,13 +41,20 @@ class AgentProfile:
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def __post_init__(self) -> None:
-        """Valida identificadores obrigatórios e o `tier` (1..4)."""
+        """Valida identificadores, `tier` (1..4) e `mcp_allowlist`."""
         for attr_name in ("id", "user_id", "name", "slug"):
             value = getattr(self, attr_name)
             if not isinstance(value, str) or not value.strip():
                 raise DomainError(
                     f"AgentProfile.{attr_name} é obrigatório e não pode ser vazio."
                 )
+        if self.mcp_allowlist is not None and (
+            not isinstance(self.mcp_allowlist, list)
+            or not all(isinstance(item, str) for item in self.mcp_allowlist)
+        ):
+            raise DomainError(
+                "AgentProfile.mcp_allowlist deve ser lista de strings ou None."
+            )
         if not isinstance(self.tier, int) or not 1 <= self.tier <= 4:
             raise DomainError("AgentProfile.tier deve estar entre 1 e 4.")
 

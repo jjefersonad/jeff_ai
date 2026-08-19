@@ -19,8 +19,8 @@ from src.domain.shared.errors import DomainError
 
 _COLUMNS = (
     "id, user_id, name, slug, system_prompt, skills_allowlist, "
-    "tools_allowlist, tier, model_override, is_active, archived_at, "
-    "created_at, updated_at"
+    "tools_allowlist, mcp_allowlist, tier, model_override, is_active, "
+    "archived_at, created_at, updated_at"
 )
 
 
@@ -35,8 +35,17 @@ def _decode_jsonb(value: Any) -> list[str] | None:
     else:
         raise DomainError(f"Tipo inesperado em JSONB: {type(value).__name__}")
     if not isinstance(data, list):
-        raise DomainError("skills_allowlist/tools_allowlist deve ser lista.")
+        raise DomainError(
+            "skills_allowlist/tools_allowlist/mcp_allowlist deve ser lista."
+        )
     return [str(item) for item in data]
+
+
+def _encode_jsonb(value: list[str] | None) -> str | None:
+    """Serializa allowlist para JSONB; `None` permanece SQL NULL."""
+    if value is None:
+        return None
+    return json.dumps(value)
 
 
 def _row_to_profile(row: tuple[Any, ...]) -> AgentProfile:
@@ -49,6 +58,7 @@ def _row_to_profile(row: tuple[Any, ...]) -> AgentProfile:
         system_prompt,
         skills_allowlist,
         tools_allowlist,
+        mcp_allowlist,
         tier,
         model_override,
         is_active,
@@ -64,6 +74,7 @@ def _row_to_profile(row: tuple[Any, ...]) -> AgentProfile:
         system_prompt=system_prompt,
         skills_allowlist=_decode_jsonb(skills_allowlist),
         tools_allowlist=_decode_jsonb(tools_allowlist),
+        mcp_allowlist=_decode_jsonb(mcp_allowlist),
         tier=int(tier),
         model_override=model_override,
         is_active=bool(is_active),
@@ -88,7 +99,7 @@ class PostgresAgentProfileRepository(AgentProfileRepositoryPort):
                     await cur.execute(
                         f"""
                         INSERT INTO agent_profiles ({_COLUMNS})
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING {_COLUMNS}
                         """,
                         (
@@ -97,12 +108,9 @@ class PostgresAgentProfileRepository(AgentProfileRepositoryPort):
                             profile.name,
                             profile.slug,
                             profile.system_prompt,
-                            json.dumps(profile.skills_allowlist)
-                            if profile.skills_allowlist is not None
-                            else None,
-                            json.dumps(profile.tools_allowlist)
-                            if profile.tools_allowlist is not None
-                            else None,
+                            _encode_jsonb(profile.skills_allowlist),
+                            _encode_jsonb(profile.tools_allowlist),
+                            _encode_jsonb(profile.mcp_allowlist),
                             profile.tier,
                             profile.model_override,
                             profile.is_active,
@@ -187,6 +195,7 @@ class PostgresAgentProfileRepository(AgentProfileRepositoryPort):
                     UPDATE agent_profiles SET
                         name = %s, system_prompt = %s,
                         skills_allowlist = %s, tools_allowlist = %s,
+                        mcp_allowlist = %s,
                         tier = %s, model_override = %s,
                         is_active = %s, archived_at = %s,
                         updated_at = %s
@@ -196,12 +205,9 @@ class PostgresAgentProfileRepository(AgentProfileRepositoryPort):
                     (
                         profile.name,
                         profile.system_prompt,
-                        json.dumps(profile.skills_allowlist)
-                        if profile.skills_allowlist is not None
-                        else None,
-                        json.dumps(profile.tools_allowlist)
-                        if profile.tools_allowlist is not None
-                        else None,
+                        _encode_jsonb(profile.skills_allowlist),
+                        _encode_jsonb(profile.tools_allowlist),
+                        _encode_jsonb(profile.mcp_allowlist),
                         profile.tier,
                         profile.model_override,
                         profile.is_active,

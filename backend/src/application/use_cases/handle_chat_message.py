@@ -96,6 +96,7 @@ class HandleChatMessage:
                     skills=(),
                     tool_scope=ToolScope.RESTRICTED,
                     user_key=user_key,
+                    use_default_profile=True,
                 )
             except Exception as exc:  # noqa: BLE001 — REQ-003: nunca propaga para o handler
                 run_failed = True

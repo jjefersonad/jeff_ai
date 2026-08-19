@@ -214,6 +214,7 @@ async def _resume_safely(
             thread_id=thread_id,
             decisions=decisions,
             user_key=user_key,
+            use_default_profile=True,
         )
     except Exception:  # noqa: BLE001 — fronteira do canal
         logger.exception(

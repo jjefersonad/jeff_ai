@@ -215,6 +215,13 @@ describe("NavSidebar — primary nav labels pt-BR (saas-empresario-br-task-ux-2 
     expect(labelByHref("/admin/users")).toBe("Usuários");
   });
 
+  it("WHEN NAV_ENTRIES is inspected THEN Perfis de agente points at /agent-profiles (ui-1 / REQ-001)", () => {
+    expect(labelByHref("/agent-profiles")).toBe("Perfis de agente");
+    expect(
+      getVisibleNavEntries("user").some((entry) => entry.href === "/agent-profiles")
+    ).toBe(true);
+  });
+
   it("WHEN NAV_ENTRIES is inspected THEN descriptions that were English are pt-BR equivalents", () => {
     for (const entry of NAV_ENTRIES) {
       expect(ENGLISH_DESCRIPTIONS).not.toContain(entry.description);
@@ -276,6 +283,14 @@ describe("NavSidebar — sidebar header and MCP for role=user (saas-empresario-b
     expect(
       getVisibleNavEntries("user").some((entry) => entry.href === "/mcp-servers")
     ).toBe(true);
+  });
+
+  it("WHEN role=user THEN Perfis de agente is listed at /agent-profiles (ui-1 / REQ-001)", () => {
+    render(<NavSidebar />);
+
+    const profiles = screen.getByRole("link", { name: /perfis de agente/i });
+    expect(profiles).toBeInTheDocument();
+    expect(profiles).toHaveAttribute("href", "/agent-profiles");
   });
 });
 

@@ -88,6 +88,7 @@ def _task_to_dict(task: ScheduledTask) -> dict[str, Any]:
         "effective_delivery_user_key": task.effective_delivery_user_key,
         "notify_status": task.notify_status,
         "notify_error": task.notify_error,
+        "profile_id": task.profile_id,
     }
 
 
@@ -100,6 +101,7 @@ async def create_scheduled_task(
     skills: list[str] | None = None,
     timeout_seconds: int | None = None,
     delivery_channel: str | None = None,
+    profile_id: str | None = None,
 ) -> dict[str, Any]:
     """Agenda uma tarefa para o agente rodar no futuro, uma vez ou de forma recorrente.
 
@@ -117,8 +119,13 @@ async def create_scheduled_task(
     (`delivery_channel="whatsapp"` etc.). O texto notificado é a
     resposta final do agente ao `prompt` — não instrua o prompt a chamar
     `send_message`. NÃO aceite identificadores crus de terceiros.
-    A tarefa roda na MESMA thread desta conversa e pertence a QUEM está
-    conversando agora — não é possível agendar em nome de outro usuário.
+    `profile_id` (opcional): UUID de um `AgentProfile` ativo do próprio
+    usuário. Omitido herda `configurable.profile_id` da sessão; sem
+    sessão e sem argumento, grava `null` (overlay no-op). Não é possível
+    agendar com o perfil de outro usuário. A tarefa roda na MESMA thread
+    desta conversa e pertence a QUEM está conversando agora — não é
+    possível agendar em nome de outro usuário (`owner_user_key` não é
+    parâmetro desta tool).
     """
     owner_user_key = _current_user_key()
     if not owner_user_key:
@@ -146,6 +153,8 @@ async def create_scheduled_task(
             tool_scope=scope,
             skills=tuple(skills or ()),
             timeout_seconds=timeout_seconds,
+            profile_id=profile_id,
+            session_profile_id=_configurable().get("profile_id"),
         )
     except DomainError as exc:
         return {"error": str(exc)}

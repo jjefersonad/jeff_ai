@@ -13,10 +13,9 @@ category enum, and neither the tool set nor the base prompt changes. The
 only thing that varies is which entries of the *already-loaded* skill list
 get formatted into the prompt, decided by embedding-based cosine similarity
 between each skill's own `name`/`description` text and the recent
-conversation (change `semantic-skill-relevance-filtering` — replaces an
-earlier exact-lowercase-token-overlap filter, which silently failed for any
-skill whose description wasn't written in the same language as the
-conversation). Adding a new skill needs zero code changes here — unlike
+conversation (change `semantic-skill-relevance-filtering`), then — when an
+`AgentProfile` overlay is active — intersected with `skills_allowlist`
+(teto, nunca pin). Adding a new skill needs zero code changes here — unlike
 modes, this is O(1) per skill, not O(n).
 """
 from __future__ import annotations
@@ -37,6 +36,7 @@ from deepagents.middleware.skills import (
 from langchain.agents.middleware.types import PrivateStateAttr
 from typing_extensions import Annotated
 
+from src.agents.unified.agent_profile_middleware import get_current_agent_profile
 from src.models.ollama_embeddings import aembed_texts, embed_texts
 
 if TYPE_CHECKING:
@@ -223,6 +223,20 @@ def _recent_human_text(messages: list[AnyMessage]) -> str:
     return " ".join(human_texts[-_MAX_RECENT_HUMAN_MESSAGES:])
 
 
+def _apply_skills_allowlist(skills: list[SkillMetadata]) -> list[SkillMetadata]:
+    """Intersecta skills já filtradas com `skills_allowlist` do snapshot.
+
+    Overlay ausente ou `skills_allowlist is None`: sem corte extra.
+    `[]`: nenhuma skill. Lista: teto (não pin) — só permanece o que já
+    passou o filtro semântico E está na allowlist.
+    """
+    profile = get_current_agent_profile()
+    if profile is None or profile.skills_allowlist is None:
+        return skills
+    allowed = set(profile.skills_allowlist)
+    return [skill for skill in skills if skill["name"] in allowed]
+
+
 class ScopedSkillsMiddleware(SkillsMiddleware):
     """`SkillsMiddleware` that injects only the conversation-relevant skills.
 
@@ -278,7 +292,10 @@ class ScopedSkillsMiddleware(SkillsMiddleware):
         Reads `relevant_skill_names` from state — computed once per turn by
         `before_agent`/`abefore_agent` — instead of recomputing relevance
         here, since this method may run multiple times per turn (once per
-        internal model-call step).
+        internal model-call step). When a profile overlay is active, the
+        relevant set is intersected with `skills_allowlist` (`None` = no
+        extra cut, `[]` = none; allowlist never pins a skill that failed
+        the semantic threshold).
         """
         skills_metadata = cast("list[SkillMetadata]", request.state.get("skills_metadata", []))
         skills_load_errors = cast("list[str]", request.state.get("skills_load_errors", []))
@@ -288,6 +305,7 @@ class ScopedSkillsMiddleware(SkillsMiddleware):
             if relevant_names
             else skills_metadata
         )
+        relevant = _apply_skills_allowlist(relevant)
 
         skills_section = self.system_prompt_template.format(
             skills_locations=self._format_skills_locations(),

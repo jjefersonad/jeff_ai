@@ -12,16 +12,26 @@ Cobre REQ-009 do delta `task-scheduling` (change `agendamento-jeff-cli-frontend`
 
 `delivery_channel` (scheduled-channel-routines): resolvido via
 `ResolveDeliveryTarget` antes de `save` — sem vínculo não persiste mudança.
+
+`profile_id` (multi-agent-profiles-runtime / REQ-009): omitido (`UNSET`)
+mantém o valor; `None` limpa o overlay; string valida dono+ativo antes
+de persistir — inválido não re-registra trigger.
 """
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from src.application.ports.scheduled_task_repository import ScheduledTaskRepositoryPort
 from src.application.ports.task_scheduler import TaskSchedulerPort
-from src.application.use_cases.cancel_scheduled_task import ScheduledTaskAuthorizationError
+from src.application.use_cases.cancel_scheduled_task import (
+    ScheduledTaskAuthorizationError,
+)
+from src.application.use_cases.create_scheduled_task import resolve_scheduled_profile_id
+from src.application.use_cases.get_agent_profile import GetAgentProfile
 from src.domain.scheduling import Schedule, ScheduledTask, TaskStatus, ToolScope
 from src.domain.shared.errors import DomainError
+
+UNSET: Any = object()
 
 
 class DeliveryTargetResolver(Protocol):
@@ -29,7 +39,9 @@ class DeliveryTargetResolver(Protocol):
 
     async def resolve(
         self, *, user_id: str, delivery_channel: str | None
-    ) -> str | None: ...
+    ) -> str | None:
+        """Resolve o destino de entrega do caller autenticado."""
+        ...
 
 
 class ScheduledTaskNotEditableError(Exception):
@@ -65,11 +77,13 @@ class UpdateScheduledTask:
         repository: ScheduledTaskRepositoryPort,
         scheduler: TaskSchedulerPort,
         delivery_resolver: DeliveryTargetResolver,
+        get_agent_profile: GetAgentProfile | None = None,
     ) -> None:
         """Recebe as implementações das portas por injeção de dependência."""
         self._repository = repository
         self._scheduler = scheduler
         self._delivery_resolver = delivery_resolver
+        self._get_agent_profile = get_agent_profile
 
     async def execute(
         self,
@@ -83,6 +97,7 @@ class UpdateScheduledTask:
         skills: tuple[str, ...] | None = None,
         delivery_channel: str | None = None,
         caller_user_id: str | None = None,
+        profile_id: str | None | object = UNSET,
     ) -> ScheduledTask | None:
         """Aplica os campos fornecidos e re-agenda se o `schedule` mudou.
 
@@ -97,6 +112,9 @@ class UpdateScheduledTask:
                 `delivery_user_key` (requer `caller_user_id`).
             caller_user_id: UUID do chamador — necessário com
                 `delivery_channel`.
+            profile_id: Overlay; omitido (`UNSET`) mantém o atual; `None`
+                limpa para overlay no-op; string valida as mesmas regras 422
+                do create (perfil do dono, ativo).
 
         Returns:
             A tarefa persistida, ou `None` se `task_id` não existir (no-op
@@ -105,7 +123,8 @@ class UpdateScheduledTask:
         Raises:
             ScheduledTaskAuthorizationError: chamador não é dono nem admin.
             ScheduledTaskNotEditableError: tarefa não está em `SCHEDULED`.
-            DomainError: destino de entrega inválido / sem vínculo.
+            DomainError: destino de entrega inválido / sem vínculo, ou
+                `profile_id` inválido.
         """
         task = await self._repository.get(task_id)
         if task is None:
@@ -140,6 +159,15 @@ class UpdateScheduledTask:
             task.tool_scope = tool_scope
         if skills is not None:
             task.skills = tuple(skills)
+        if profile_id is not UNSET:
+            if profile_id is None:
+                task.profile_id = None
+            else:
+                task.profile_id = await resolve_scheduled_profile_id(
+                    self._get_agent_profile,
+                    owner_user_id=_profile_owner_user_id(task, caller_user_id),
+                    profile_id=str(profile_id),
+                )
 
         await self._repository.save(task)
 
@@ -148,3 +176,13 @@ class UpdateScheduledTask:
             await self._scheduler.schedule(task)
 
         return task
+
+
+def _profile_owner_user_id(
+    task: ScheduledTask, caller_user_id: str | None
+) -> str | None:
+    """UUID do dono da tarefa para validar `profile_id` (não o do admin)."""
+    key = task.owner_user_key or ""
+    if key.startswith("web:"):
+        return key.removeprefix("web:")
+    return caller_user_id

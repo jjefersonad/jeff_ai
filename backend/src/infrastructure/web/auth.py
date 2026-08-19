@@ -40,17 +40,24 @@ ver Open Questions do design.
 `@auth.on.threads.create_run` carimba `configurable.user_key = web:<identity>`
 e `configurable.role` (`user`/`admin`) a partir da sessão (nunca do body do
 frontend) — metering (`track-user-token-usage`) + sandbox por role
-(`session-file-sandbox`).
+(`session-file-sandbox`). Também valida `profile_id` sugerido pelo cliente
+via `GetAgentProfile`: miss/cross-user/arquivado recusam com
+`Auth.exceptions.HTTPException(400, "profile_id inválido")` (mesmo canal
+nativo do 401; FastAPI `HTTPException` não cobre este hook). Id válido
+é carimbado em `configurable.profile_id` e `metadata.profile_id`. Ausência
+é no-op — web não chama `get_default` (isso é canal interativo).
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from typing import Any
 
 from langgraph_sdk import Auth
 from starlette.requests import Request
 
+from src.domain.agents import AgentProfile
 from src.infrastructure.auth.session_resolver import (
     SessionAuthError,
     resolve_session_user,
@@ -58,6 +65,8 @@ from src.infrastructure.auth.session_resolver import (
 from src.infrastructure.usage.user_key import web_user_key
 
 auth = Auth()
+
+_INVALID_PROFILE_ID = "profile_id inválido"
 
 
 def role_from_permissions(permissions: Sequence[str] | None) -> str:
@@ -127,6 +136,57 @@ def _stamp_web_run_identity(
     return key
 
 
+async def _lookup_owned_profile(user_id: str, profile_id: str) -> AgentProfile | None:
+    """Resolve um perfil próprio via `GetAgentProfile` (miss/cross-user → None)."""
+    from src.application.use_cases.get_agent_profile import GetAgentProfile
+    from src.infrastructure.persistence.agent_profile_repository import (
+        PostgresAgentProfileRepository,
+    )
+
+    get = GetAgentProfile(
+        repository=PostgresAgentProfileRepository(os.environ.get("POSTGRES_URI", ""))
+    )
+    return await get.execute(user_id=user_id, profile_id=profile_id)
+
+
+def _suggested_profile_id(configurable: dict[str, Any]) -> str | None:
+    raw = configurable.get("profile_id")
+    if raw is None:
+        return None
+    profile_id = str(raw).strip()
+    return profile_id or None
+
+
+async def _stamp_web_profile_id(
+    *,
+    configurable: dict[str, Any],
+    metadata: Any,
+    identity: str,
+) -> None:
+    """Valida o `profile_id` do cliente e carimba o UUID canônico.
+
+    O cliente nunca é fonte de verdade: o valor sugerido é removido e só
+    volta a `configurable`/`metadata` depois de `GetAgentProfile` confirmar
+    ownership + ativo. Recusa não distingue miss de cross-user.
+    """
+    suggested = _suggested_profile_id(configurable)
+    configurable.pop("profile_id", None)
+    if isinstance(metadata, dict):
+        metadata.pop("profile_id", None)
+    if suggested is None:
+        return
+
+    profile = await _lookup_owned_profile(identity, suggested)
+    if profile is None or profile.archived_at is not None:
+        raise Auth.exceptions.HTTPException(
+            status_code=400,
+            detail=_INVALID_PROFILE_ID,
+        )
+    configurable["profile_id"] = profile.id
+    if isinstance(metadata, dict):
+        metadata["profile_id"] = profile.id
+
+
 # Alias preservado para imports/testes legados que ainda citam o nome antigo.
 _stamp_web_user_key = _stamp_web_run_identity
 
@@ -136,15 +196,25 @@ async def stamp_user_key_on_run_create(
     ctx: Auth.types.AuthContext,
     value: dict,
 ) -> Auth.types.FilterType:
-    """Carimba `user_key` + `role` server-side ao criar um run web.
+    """Carimba `user_key` + `role` + `profile_id` server-side ao criar um run web.
 
     Mais específico que `@auth.on` — toma precedência em `create_run`.
     Replica o filtro por `owner` (e bypass de admin) do handler global, e
-    adicionalmente injeta `configurable.user_key` / `configurable.role`,
+    adicionalmente injeta `configurable.user_key` / `configurable.role` /
+    `configurable.profile_id` (quando o cliente sugere um id válido),
     sobrescrevendo qualquer valor do cliente.
     """
     identity = ctx.user.identity
     _stamp_web_run_identity(value, identity, permissions=ctx.user.permissions)
+    kwargs = value.get("kwargs")
+    config = kwargs.get("config") if isinstance(kwargs, dict) else None
+    configurable = config.get("configurable") if isinstance(config, dict) else None
+    if isinstance(configurable, dict):
+        await _stamp_web_profile_id(
+            configurable=configurable,
+            metadata=value.get("metadata"),
+            identity=identity,
+        )
 
     if "admin" in ctx.user.permissions:
         return {}

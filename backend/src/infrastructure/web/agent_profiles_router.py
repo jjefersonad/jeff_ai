@@ -24,7 +24,10 @@ from src.application.use_cases.archive_agent_profile import ArchiveAgentProfile
 from src.application.use_cases.create_agent_profile import CreateAgentProfile
 from src.application.use_cases.get_agent_profile import GetAgentProfile
 from src.application.use_cases.list_agent_profiles import ListAgentProfiles
-from src.application.use_cases.update_agent_profile import UpdateAgentProfile
+from src.application.use_cases.update_agent_profile import (
+    UNSET,
+    UpdateAgentProfile,
+)
 from src.composition.dependencies import (
     _archive_agent_profile_use_case,
     _create_agent_profile_use_case,
@@ -60,6 +63,7 @@ class AgentProfileOut(BaseModel):
     system_prompt: str
     skills_allowlist: list[str] | None
     tools_allowlist: list[str] | None
+    mcp_allowlist: list[str] | None
     tier: int
     model_override: str | None
     is_active: bool
@@ -81,6 +85,7 @@ class AgentProfileCreateIn(BaseModel):
     system_prompt: str = Field(..., min_length=1)
     skills_allowlist: list[str] | None = None
     tools_allowlist: list[str] | None = None
+    mcp_allowlist: list[str] | None = None
     tier: int = Field(1, ge=1, le=4)
     model_override: str | None = None
 
@@ -89,16 +94,17 @@ class AgentProfileUpdateIn(BaseModel):
     """Payload de atualização parcial (REQ-004).
 
     Todos os campos opcionais. `None` em `skills_allowlist`/
-    `tools_allowlist`/`model_override` significa "limpar" (sentinelizado
-    no use case); ausência da chave no JSON também é tolerada — o use
-    case `UpdateAgentProfile` diferencia via `_SENTINEL`. `name`,
-    `system_prompt` e `tier` mantêm o valor atual quando ausentes.
+    `tools_allowlist`/`mcp_allowlist`/`model_override` significa "limpar"
+    (sentinelizado no use case); ausência da chave no JSON também é
+    tolerada — o use case `UpdateAgentProfile` diferencia via `UNSET`.
+    `name`, `system_prompt` e `tier` mantêm o valor atual quando ausentes.
     """
 
     name: str | None = Field(None, min_length=1, max_length=200)
     system_prompt: str | None = Field(None, min_length=1)
     skills_allowlist: list[str] | None | Any = None
     tools_allowlist: list[str] | None | Any = None
+    mcp_allowlist: list[str] | None | Any = None
     tier: int | None = Field(None, ge=1, le=4)
     model_override: str | None | Any = None
 
@@ -119,6 +125,7 @@ def _profile_to_out(p: AgentProfile) -> AgentProfileOut:
         system_prompt=p.system_prompt,
         skills_allowlist=p.skills_allowlist,
         tools_allowlist=p.tools_allowlist,
+        mcp_allowlist=p.mcp_allowlist,
         tier=p.tier,
         model_override=p.model_override,
         is_active=p.is_active,
@@ -177,6 +184,7 @@ async def create_agent_profile(
             system_prompt=payload.system_prompt,
             skills_allowlist=payload.skills_allowlist,
             tools_allowlist=payload.tools_allowlist,
+            mcp_allowlist=payload.mcp_allowlist,
             tier=payload.tier,
             model_override=payload.model_override,
         )
@@ -248,10 +256,10 @@ async def update_agent_profile(
 
     Cross-user e id inexistente → 404. Erro de domínio (`name`/
     `system_prompt` vazio, `tier` fora de `1..4`) → 422. Os campos
-    com sentinel (`skills_allowlist`/`tools_allowlist`/`model_override`)
-    aceitam `None` para "limpar"; ausência da chave no JSON também é
-    tolerada (o use case trata `None` enviado vs `_SENTINEL` default
-    separadamente).
+    com sentinel (`skills_allowlist`/`tools_allowlist`/`mcp_allowlist`/
+    `model_override`) aceitam `None` para "limpar"; ausência da chave no
+    JSON também é tolerada (o use case trata `None` enviado vs `UNSET`
+    default separadamente).
     """
     actor = _require_user(user)
     try:
@@ -262,6 +270,11 @@ async def update_agent_profile(
             system_prompt=payload.system_prompt,
             skills_allowlist=payload.skills_allowlist,
             tools_allowlist=payload.tools_allowlist,
+            mcp_allowlist=(
+                payload.mcp_allowlist
+                if "mcp_allowlist" in payload.model_fields_set
+                else UNSET
+            ),
             tier=payload.tier,
             model_override=payload.model_override,
         )

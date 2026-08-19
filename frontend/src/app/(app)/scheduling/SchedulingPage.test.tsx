@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import SchedulingPage from "./page";
@@ -24,6 +24,22 @@ vi.mock("@/lib/scheduling", async () => {
   };
 });
 
+const mockListAgentProfiles = vi.fn();
+vi.mock("@/lib/agent-profiles", () => ({
+  listAgentProfiles: (...args: unknown[]) => mockListAgentProfiles(...args),
+}));
+
+const mockGetConfig = vi.fn();
+vi.mock("@/lib/config", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/config")>(
+    "@/lib/config"
+  );
+  return {
+    ...actual,
+    getConfig: (...args: unknown[]) => mockGetConfig(...args),
+  };
+});
+
 const taskFor = (id: string, owner: string, extras: Record<string, unknown> = {}) => ({
   id,
   prompt: `Prompt ${id}`,
@@ -42,7 +58,15 @@ const taskFor = (id: string, owner: string, extras: Record<string, unknown> = {}
   notify_status: null,
   notify_error: null,
   created_at: "2026-07-28T00:00:00Z",
+  profile_id: null,
   ...extras,
+});
+
+beforeEach(() => {
+  mockListAgentProfiles.mockReset();
+  mockListAgentProfiles.mockResolvedValue([]);
+  mockGetConfig.mockReset();
+  mockGetConfig.mockReturnValue({ assistantId: "unified" });
 });
 
 describe("SchedulingPage (frontend-page-1 unit-1/unit-2 / REQ-001)", () => {
@@ -288,3 +312,186 @@ describe("SchedulingPage — delete action (frontend-page-4 unit-1 / REQ-004)", 
     expect(screen.getByText(task.prompt)).toBeInTheDocument();
   });
 });
+
+const marketingProfile = {
+  id: "profile-marketing",
+  user_id: "alice",
+  name: "Assistente de marketing",
+  slug: "marketing",
+  system_prompt: "Você é o agente de marketing.",
+  skills_allowlist: null,
+  tools_allowlist: null,
+  mcp_allowlist: null,
+  tier: 2,
+  model_override: null,
+  is_active: true,
+  archived_at: null,
+  created_at: "2026-08-19T00:00:00Z",
+  updated_at: "2026-08-19T00:00:00Z",
+};
+
+describe("SchedulingPage — profile picker (ui-3 unit-1 / REQ-003)", () => {
+  beforeEach(() => {
+    mockListScheduledTasks.mockReset();
+    mockListDeliveryChannels.mockReset();
+    mockCreateScheduledTask.mockReset();
+    mockUpdateScheduledTask.mockReset();
+    mockListScheduledTasks.mockResolvedValue([]);
+    mockListDeliveryChannels.mockResolvedValue(["web"]);
+    mockListAgentProfiles.mockResolvedValue([marketingProfile]);
+  });
+
+  it("WHEN the user creates a task with a profile selected THEN the API payload includes that profile_id", async () => {
+    const created = taskFor("task-profile", "web:alice", {
+      prompt: "rode o marketing",
+      profile_id: marketingProfile.id,
+    });
+    mockCreateScheduledTask.mockResolvedValue(created);
+    const user = userEvent.setup();
+
+    render(<SchedulingPage />);
+
+    await screen.findByLabelText(/^perfil/i);
+    await user.click(screen.getByLabelText(/^perfil/i));
+    await user.click(
+      await screen.findByRole("option", { name: /assistente de marketing/i })
+    );
+
+    await user.type(screen.getByLabelText(/^prompt$/i), created.prompt);
+    await user.type(screen.getByLabelText(/expressão/i), "0 9 * * *");
+    await user.click(screen.getByRole("button", { name: /criar/i }));
+
+    expect(mockCreateScheduledTask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: created.prompt,
+        profile_id: marketingProfile.id,
+      })
+    );
+  });
+
+  it("WHEN the user edits a task and picks a profile THEN update sends that profile_id", async () => {
+    const task = taskFor("task-edit-profile", "web:alice");
+    mockListScheduledTasks.mockResolvedValue([task]);
+    mockUpdateScheduledTask.mockResolvedValue({
+      ...task,
+      profile_id: marketingProfile.id,
+    });
+    const user = userEvent.setup();
+
+    render(<SchedulingPage />);
+
+    await screen.findByText(task.prompt);
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByLabelText(/^perfil/i));
+    await user.click(
+      await screen.findByRole("option", { name: /assistente de marketing/i })
+    );
+    await user.click(within(dialog).getByRole("button", { name: /salvar/i }));
+
+    expect(mockUpdateScheduledTask).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({ profile_id: marketingProfile.id })
+    );
+  });
+});
+
+const pesquisaProfile = {
+  ...marketingProfile,
+  id: "profile-pesquisa",
+  name: "Pesquisa",
+  slug: "pesquisa",
+};
+
+describe("SchedulingPage — picker defaults from chat profileId (ui-3 unit-2 / REQ-003)", () => {
+  beforeEach(() => {
+    mockListScheduledTasks.mockReset();
+    mockListDeliveryChannels.mockReset();
+    mockCreateScheduledTask.mockReset();
+    mockListScheduledTasks.mockResolvedValue([]);
+    mockListDeliveryChannels.mockResolvedValue(["web"]);
+    mockListAgentProfiles.mockResolvedValue([marketingProfile, pesquisaProfile]);
+    mockGetConfig.mockReturnValue({
+      assistantId: "unified",
+      profileId: marketingProfile.id,
+    });
+  });
+
+  it("WHEN create-task opens with config.profileId THEN the select defaults to that profile", async () => {
+    mockCreateScheduledTask.mockResolvedValue(
+      taskFor("task-default", "web:alice", {
+        prompt: "usa o do chat",
+        profile_id: marketingProfile.id,
+      })
+    );
+    const user = userEvent.setup();
+
+    render(<SchedulingPage />);
+
+    await user.click(await screen.findByLabelText(/^perfil/i));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("option", { name: /assistente de marketing/i })
+      ).toHaveAttribute("data-state", "checked");
+    });
+    await user.keyboard("{Escape}");
+
+    await user.type(screen.getByLabelText(/^prompt$/i), "usa o do chat");
+    await user.type(screen.getByLabelText(/expressão/i), "0 9 * * *");
+    await user.click(screen.getByRole("button", { name: /criar/i }));
+
+    expect(mockCreateScheduledTask).toHaveBeenCalledWith(
+      expect.objectContaining({ profile_id: marketingProfile.id })
+    );
+  });
+
+  it("WHEN the defaulted profile is cleared THEN create sends profile_id null", async () => {
+    mockCreateScheduledTask.mockResolvedValue(
+      taskFor("task-none", "web:alice", { prompt: "sem perfil" })
+    );
+    const user = userEvent.setup();
+
+    render(<SchedulingPage />);
+
+    await screen.findByLabelText(/^perfil/i);
+    await user.click(screen.getByLabelText(/^perfil/i));
+    await user.click(
+      await screen.findByRole("option", { name: /\(padrão unified\)/i })
+    );
+
+    await user.type(screen.getByLabelText(/^prompt$/i), "sem perfil");
+    await user.type(screen.getByLabelText(/expressão/i), "0 9 * * *");
+    await user.click(screen.getByRole("button", { name: /criar/i }));
+
+    expect(mockCreateScheduledTask).toHaveBeenCalledWith(
+      expect.objectContaining({ profile_id: null })
+    );
+  });
+
+  it("WHEN the defaulted profile is changed THEN create sends the new profile_id", async () => {
+    mockCreateScheduledTask.mockResolvedValue(
+      taskFor("task-pesquisa", "web:alice", {
+        prompt: "troca perfil",
+        profile_id: pesquisaProfile.id,
+      })
+    );
+    const user = userEvent.setup();
+
+    render(<SchedulingPage />);
+
+    await screen.findByLabelText(/^perfil/i);
+    await user.click(screen.getByLabelText(/^perfil/i));
+    await user.click(await screen.findByRole("option", { name: /^pesquisa$/i }));
+
+    await user.type(screen.getByLabelText(/^prompt$/i), "troca perfil");
+    await user.type(screen.getByLabelText(/expressão/i), "0 9 * * *");
+    await user.click(screen.getByRole("button", { name: /criar/i }));
+
+    expect(mockCreateScheduledTask).toHaveBeenCalledWith(
+      expect.objectContaining({ profile_id: pesquisaProfile.id })
+    );
+  });
+});
+
+

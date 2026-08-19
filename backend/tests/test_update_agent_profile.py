@@ -65,6 +65,31 @@ async def test_update_skills_allowlist(
     assert updated.skills_allowlist == ["pdf", "pptx"]
 
 
+async def test_update_mcp_allowlist(
+    use_case: UpdateAgentProfile, repo: InMemoryAgentProfileRepository
+) -> None:
+    seeded = await _seed(repo)
+    updated = await use_case.execute(
+        user_id="u1", profile_id=seeded.id, mcp_allowlist=["github"]
+    )
+    assert updated is not None
+    assert updated.mcp_allowlist == ["github"]
+
+
+async def test_update_mcp_allowlist_with_none_clears_it(
+    use_case: UpdateAgentProfile, repo: InMemoryAgentProfileRepository
+) -> None:
+    seeded = await _seed(repo)
+    await use_case.execute(
+        user_id="u1", profile_id=seeded.id, mcp_allowlist=["github"]
+    )
+    updated = await use_case.execute(
+        user_id="u1", profile_id=seeded.id, mcp_allowlist=None
+    )
+    assert updated is not None
+    assert updated.mcp_allowlist is None
+
+
 async def test_update_skills_with_none_clears_it(
     use_case: UpdateAgentProfile, repo: InMemoryAgentProfileRepository
 ) -> None:

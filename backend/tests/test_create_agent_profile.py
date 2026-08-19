@@ -115,6 +115,35 @@ async def test_rejects_duplicate_slug(
         )
 
 
+@pytest.mark.parametrize(
+    ("mcp_allowlist", "slug"),
+    [
+        (None, "coder-none"),
+        ([], "coder-empty"),
+        (["github"], "coder-github"),
+    ],
+)
+async def test_creates_profile_with_mcp_allowlist(
+    use_case: CreateAgentProfile,
+    repo: InMemoryAgentProfileRepository,
+    mcp_allowlist: list[str] | None,
+    slug: str,
+) -> None:
+    profile = await use_case.execute(
+        user_id="u1",
+        name="Coder",
+        slug=slug,
+        system_prompt="x",
+        mcp_allowlist=mcp_allowlist,
+    )
+    assert profile.mcp_allowlist == mcp_allowlist
+    if mcp_allowlist is None:
+        assert profile.mcp_allowlist is None
+    stored = await repo.get("u1", profile.id)
+    assert stored is not None
+    assert stored.mcp_allowlist == mcp_allowlist
+
+
 async def test_same_slug_allowed_for_different_users(
     use_case: CreateAgentProfile,
 ) -> None:

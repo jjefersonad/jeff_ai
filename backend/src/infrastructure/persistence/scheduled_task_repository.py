@@ -19,12 +19,13 @@ from src.domain.scheduling import Schedule, ScheduledTask, TaskStatus, ToolScope
 _COLUMNS = (
     "id, prompt, thread_id, owner_user_key, delivery_user_key, skills, "
     "tool_scope, schedule_kind, schedule_expr, status, timeout_seconds, "
-    "started_at, finished_at, last_error, notify_status, notify_error, created_at"
+    "started_at, finished_at, last_error, notify_status, notify_error, "
+    "profile_id, created_at"
 )
 
 _UPSERT = f"""
 INSERT INTO scheduled_tasks ({_COLUMNS})
-VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (id) DO UPDATE SET
     prompt = EXCLUDED.prompt,
     thread_id = EXCLUDED.thread_id,
@@ -40,7 +41,8 @@ ON CONFLICT (id) DO UPDATE SET
     finished_at = EXCLUDED.finished_at,
     last_error = EXCLUDED.last_error,
     notify_status = EXCLUDED.notify_status,
-    notify_error = EXCLUDED.notify_error
+    notify_error = EXCLUDED.notify_error,
+    profile_id = EXCLUDED.profile_id
 """
 
 _SELECT_BY_ID = f"SELECT {_COLUMNS} FROM scheduled_tasks WHERE id = %s"
@@ -79,6 +81,7 @@ class PostgresScheduledTaskRepository(ScheduledTaskRepositoryPort):
                         task.error,
                         task.notify_status,
                         task.notify_error,
+                        task.profile_id,
                         task.created_at,
                     ),
                 )
@@ -134,6 +137,7 @@ def _row_to_task(row: tuple[Any, ...]) -> ScheduledTask:
         last_error,
         notify_status,
         notify_error,
+        profile_id,
         created_at,
     ) = row
     return ScheduledTask(
@@ -152,5 +156,6 @@ def _row_to_task(row: tuple[Any, ...]) -> ScheduledTask:
         error=last_error,
         notify_status=notify_status,
         notify_error=notify_error,
+        profile_id=str(profile_id) if profile_id is not None else None,
         created_at=created_at,
     )

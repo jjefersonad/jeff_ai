@@ -4,13 +4,16 @@ Usam o Store do LangGraph (Postgres/pgvector). A busca é semântica quando o
 `store.index` está configurado com embeddings (ver `langgraph.json` e
 `src/models/ollama_embeddings.py`).
 
-O namespace é `("memories", <user_id>)` (task `user-integration-credentials-
-task-resolve-3`, REQ-006 do delta `telegram-channel`) — uma memória salva
-numa thread pode ser recuperada em qualquer outra thread do MESMO usuário,
-nunca de outro. `<user_id>` vem de `ownership.store.resolve_user_id()`, o
-resolvedor canônico `user_key → user_id` (mesmo usado por `record_ownership`
-e pelo middleware de MCP) — funciona tanto para sessões `web:` quanto para
-uma sessão `telegram:<chat_id>` já vinculada via `user_integrations`. Sem
+O namespace é `("memories", <user_id>)` quando o overlay de perfil é
+no-op, e `("memories", <user_id>, <profile_id>)` quando
+`AgentProfileMiddleware` publicou um snapshot validado (task
+`multi-agent-profiles-runtime-task-memory-1`). Chat e scheduled run do
+mesmo par compartilham o namespace de 3 segmentos. Sem cópia, merge ou
+search no namespace legado. `<user_id>` vem de
+`ownership.store.resolve_user_id()`, o resolvedor canônico
+`user_key → user_id` (mesmo usado por `record_ownership` e pelo
+middleware de MCP) — funciona tanto para sessões `web:` quanto para uma
+sessão `telegram:<chat_id>` já vinculada via `user_integrations`. Sem
 `user_id` resolvível (sessão não-autenticada ou chat Telegram ainda não
 vinculado), as tools falham fechado: recusam a operação em vez de cair de
 volta a um namespace compartilhado.
@@ -46,11 +49,13 @@ import uuid
 from langchain_core.tools import tool
 from langgraph.config import get_config, get_store
 
+from src.agents.unified.agent_profile_middleware import get_current_agent_profile
 from src.infrastructure.ownership.store import resolve_user_id
 
 # Prefixo do namespace cross-thread: memórias salvas aqui não são presas a um
-# thread_id, mas SÃO presas a um usuário — o namespace efetivo de cada
-# operação é `MEMORY_NAMESPACE + (user_id,)` (ver `_resolve_namespace`).
+# thread_id, mas SÃO presas a um usuário (e, com overlay, ao perfil) — o
+# namespace efetivo é `MEMORY_NAMESPACE + (user_id,)` ou
+# `MEMORY_NAMESPACE + (user_id, profile_id)` (ver `_resolve_namespace`).
 MEMORY_NAMESPACE = ("memories",)
 
 _NO_IDENTITY_MESSAGE = (
@@ -79,16 +84,54 @@ def _message_for_unresolved_user() -> str:
     return _NO_IDENTITY_MESSAGE
 
 
+def _overlay_profile_id() -> str | None:
+    """UUID do snapshot de perfil, ou `None` se o overlay é no-op."""
+    profile = get_current_agent_profile()
+    if profile is None:
+        return None
+    return profile.id
+
+
+def _exact_namespace_items(results: list, namespace: tuple[str, ...]) -> list:
+    """O `store.search`/`asearch` é prefix-match.
+
+    Sem este corte, `("memories", user_id)` devolveria também
+    `("memories", user_id, profile_id)` — misturaria overlay e legado.
+    """
+    return [item for item in results if tuple(item.namespace) == namespace]
+
+
+async def _asearch_exact(
+    store,
+    namespace: tuple[str, ...],
+    *,
+    query: str | None = None,
+    limit: int,
+) -> list:
+    """Busca e descarta itens de namespaces filhos (prefix leak)."""
+    fetched = await store.asearch(
+        namespace, query=query, limit=max(limit * 20, 50)
+    )
+    return _exact_namespace_items(fetched, namespace)[:limit]
+
+
 async def _resolve_namespace() -> tuple[str, ...] | None:
     """Namespace efetivo desta chamada, ou `None` se não há usuário resolvível.
 
     Fail-closed (REQ-006 cenário 2): nenhuma tool deste módulo cai de volta a
     `MEMORY_NAMESPACE` sozinho quando `resolve_user_id()` devolve `None`.
+
+    Overlay ativo (snapshot publicado pelo `AgentProfileMiddleware`):
+    `("memories", user_id, profile_id)`. Sem overlay: `("memories", user_id)`.
+    Não consulta o namespace legado como fallback.
     """
     user_id = await resolve_user_id()
     if user_id is None:
         return None
-    return (*MEMORY_NAMESPACE, user_id)
+    profile_id = _overlay_profile_id()
+    if profile_id is None:
+        return (*MEMORY_NAMESPACE, user_id)
+    return (*MEMORY_NAMESPACE, user_id, profile_id)
 
 
 # `store.aput` roda `content` pelo modelo de embedding (`mxbai-embed-large`,
@@ -114,7 +157,9 @@ async def save_memory(content: str) -> str:
 
     Use quando o usuário informar algo que valha a pena lembrar em conversas
     futuras (nomes, preferências, decisões de projeto, contexto recorrente).
-    A memória fica disponível em QUALQUER thread futura SUA via `search_memory`.
+    A memória fica disponível nas threads futuras do mesmo usuário via
+    `search_memory`; com overlay de perfil, só nesse perfil (não no
+    namespace legado nem em outro `user_id`).
 
     `content` deve ser um resumo conciso (até ~1000 caracteres) — não o
     despejo bruto de uma página, documento ou resposta longa. Para indexar
@@ -138,19 +183,20 @@ async def save_memory(content: str) -> str:
 
 @tool
 async def search_memory(query: str, limit: int = 5) -> str:
-    """Busca na memória de longo prazo (todas as threads) por similaridade semântica.
+    """Busca na memória de longo prazo (threads do mesmo usuário/perfil) por similaridade semântica.
 
     Use ANTES de responder quando o usuário se referir a algo do passado, a uma
     decisão anterior ("por que fizemos X assim?"), ou quando precisar de contexto
     que não está na conversa atual. Busca em fatos salvos (`save_memory`) E em
     episódios registrados (`log_episode`) — não é preciso escolher qual tool
-    usou para escrever a memória que você está procurando.
+    usou para escrever a memória que você está procurando. Com overlay de
+    perfil, não mistura o namespace legado nem memórias de outro usuário.
     """
     namespace = await _resolve_namespace()
     if namespace is None:
         return _message_for_unresolved_user()
     store = get_store()
-    results = await store.asearch(namespace, query=query, limit=limit)
+    results = await _asearch_exact(store, namespace, query=query, limit=limit)
     if not results:
         return "Nenhuma memória relevante encontrada."
     return "\n".join(f"- {item.value.get('content', '')}" for item in results)
@@ -196,7 +242,7 @@ async def list_memories(limit: int = 20) -> str:
     if namespace is None:
         return _message_for_unresolved_user()
     store = get_store()
-    results = await store.asearch(namespace, limit=limit)
+    results = await _asearch_exact(store, namespace, limit=limit)
     if not results:
         return "Nenhuma memória armazenada."
     items = sorted(results, key=lambda item: item.created_at, reverse=True)

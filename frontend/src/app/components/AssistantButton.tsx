@@ -1,52 +1,75 @@
 "use client";
 
 /**
- * Chat-toolbar affordance for picking the assistant for the current thread.
+ * Chat-toolbar affordance for picking the agent profile for the current thread.
  *
- * Renders a `Button` with the label "Assistant: <id>" that opens the
- * `<AssistantModal />`. The selection is **advisory** today: per
- * `frontend-menu-redesign` / `chat-assistant-selector` REQ-003, the choice is
- * persisted to `localStorage["deep-agent-config"]` via `saveConfig`, but the
- * backend graph wiring still goes through `unified` regardless (the mode
- * system is a known facade — see CLAUDE.md Known Debt #1).
+ * Opens `<AssistantModal />`, which lists `GET /api/agent-profiles`. The
+ * selection persists `profileId` in `localStorage["deep-agent-config"]`
+ * alongside the unchanged graph id `assistantId` (typically `"unified"`).
  *
  * Keyboard: the underlying `Button` is a real `<button>`, so `Enter` /
  * `Space` open the modal without extra wiring.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Bot } from "lucide-react";
 
 import { saveConfig } from "@/lib/config";
 import { Button } from "@/components/ui/button";
 import { AssistantModal } from "@/app/components/AssistantModal";
+import {
+  listAgentProfiles,
+  type AgentProfile,
+} from "@/lib/agent-profiles";
 
 interface AssistantButtonProps {
   /**
-   * Currently selected assistant id. Defaults to `"unified"` if no config is
-   * saved. The button label is derived from this value.
+   * LangGraph graph id (typically `"unified"`). Never overwritten with a
+   * profile UUID.
    */
   assistantId: string;
+  /** Currently selected agent-profile UUID, if any. */
+  profileId?: string;
   /**
-   * Optional callback fired after a new assistant is chosen. The default
-   * behaviour is to persist via `saveConfig`. Pass a custom callback to take
-   * ownership of persistence (e.g. when the parent already maintains a copy
-   * of the config in React state).
+   * Optional callback fired after a profile is chosen. The default
+   * behaviour is to persist via `saveConfig` keeping `assistantId` intact.
+   * Pass a custom callback to also update React state (so the next submit
+   * picks up the new id without a reload).
    */
-  onChange?: (assistantId: string) => void;
+  onChange?: (profileId: string) => void;
 }
 
-export function AssistantButton({ assistantId, onChange }: AssistantButtonProps) {
+export function AssistantButton({
+  assistantId,
+  profileId,
+  onChange,
+}: AssistantButtonProps) {
   const [open, setOpen] = useState(false);
+  const [selectedProfileId, setSelectedProfileId] = useState(profileId);
+  const [profiles, setProfiles] = useState<AgentProfile[]>([]);
 
-  const handleSelect = (nextId: string) => {
+  useEffect(() => {
+    setSelectedProfileId(profileId);
+  }, [profileId]);
+
+  useEffect(() => {
+    listAgentProfiles().then(setProfiles);
+  }, []);
+
+  const handleSelect = (nextProfileId: string) => {
+    const cleared = nextProfileId === "";
+    setSelectedProfileId(cleared ? undefined : nextProfileId);
     if (onChange) {
-      onChange(nextId);
+      onChange(nextProfileId);
+    } else if (cleared) {
+      saveConfig({ assistantId });
     } else {
-      saveConfig({ assistantId: nextId });
+      saveConfig({ assistantId, profileId: nextProfileId });
     }
     setOpen(false);
   };
+
+  const selectedName = profiles.find((row) => row.id === selectedProfileId)?.name;
 
   return (
     <>
@@ -55,18 +78,18 @@ export function AssistantButton({ assistantId, onChange }: AssistantButtonProps)
         variant="ghost"
         size="sm"
         onClick={() => setOpen(true)}
-        aria-label="Choose assistant"
+        aria-label="Escolher agente"
         aria-haspopup="dialog"
         aria-expanded={open}
-        title={`Assistant: ${assistantId} — click to change`}
+        title={`Agente: ${selectedName ?? "padrão"} — clique para trocar`}
       >
         <Bot aria-hidden="true" />
-        <span>Assistant: {assistantId}</span>
+        <span>Agente: {selectedName ?? "padrão"}</span>
       </Button>
       <AssistantModal
         open={open}
         onOpenChange={setOpen}
-        currentAssistantId={assistantId}
+        currentProfileId={selectedProfileId}
         onSelect={handleSelect}
       />
     </>

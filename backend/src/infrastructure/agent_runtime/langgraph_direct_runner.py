@@ -77,6 +77,7 @@ from src.application.ports.agent_runner import (
     AgentRunResult,
     InterruptInfo,
 )
+from src.domain.agents import AgentProfile, InvalidAgentProfileError
 from src.domain.channels import OutputAttachment
 from src.domain.scheduling import ToolScope
 from src.infrastructure.agent_runtime._langgraph_postgres_uuid_patch import (
@@ -101,25 +102,103 @@ def _build_run_config(
     thread_id: str,
     user_key: str | None,
     role: str | None = None,
+    profile_id: str | None = None,
+    tool_scope: ToolScope | None = None,
 ) -> dict[str, Any]:
     """Monta a config LangGraph com identidade do run.
 
     `configurable` carrega `thread_id`, `user_key` (resolvido via
-    `resolve_user_key` — sentinel `unknown` se ausente) e `role`
+    `resolve_user_key` — sentinel `unknown` se ausente), `role`
     (`admin`/`user`; default fail-closed `user` quando omitido — session-file-sandbox
-    REQ-001). O `UsageRecordingCallback` vive no grafo (`build_unified` /
+    REQ-001) e, quando o overlay está ativo, `profile_id`. `tool_scope` da
+    tarefa agendada (RESTRICTED/FULL) entra para intersectar o overlay de
+    tools. O `UsageRecordingCallback` vive no grafo (`build_unified` /
     `_unified_run_config`) — não aqui — para cobrir web + DirectRunner
     sem double-record (track-user-token-usage recording-5).
     """
     resolved = resolve_user_key(user_key=user_key)
     effective_role = role if role in ("admin", "user") else "user"
-    return {
-        "configurable": {
-            "thread_id": thread_id,
-            "user_key": resolved,
-            "role": effective_role,
-        },
+    configurable: dict[str, Any] = {
+        "thread_id": thread_id,
+        "user_key": resolved,
+        "role": effective_role,
     }
+    if profile_id:
+        configurable["profile_id"] = profile_id
+    if tool_scope is not None:
+        configurable["tool_scope"] = tool_scope.value
+    return {"configurable": configurable}
+
+
+async def _user_id_from_user_key(user_key: str | None) -> str | None:
+    """Resolve `users.id` a partir do `user_key` do DirectRunner."""
+    from src.infrastructure.ownership.store import (
+        resolve_telegram_user_id,
+        resolve_whatsapp_user_id,
+    )
+
+    if not user_key or user_key == "unknown":
+        return None
+    if user_key.startswith("web:"):
+        return user_key.removeprefix("web:") or None
+    if user_key.startswith("telegram:"):
+        return await resolve_telegram_user_id(user_key.removeprefix("telegram:"))
+    if user_key.startswith("whatsapp:"):
+        return await resolve_whatsapp_user_id(user_key.removeprefix("whatsapp:"))
+    return None
+
+
+async def _get_default_profile(user_id: str) -> AgentProfile | None:
+    """Perfil ativo mais antigo do user — `None` se não houver perfis."""
+    from src.infrastructure.persistence.agent_profile_repository import (
+        PostgresAgentProfileRepository,
+    )
+
+    repo = PostgresAgentProfileRepository(os.environ.get("POSTGRES_URI", ""))
+    return await repo.get_default(user_id)
+
+
+async def _lookup_agent_profile(user_id: str, profile_id: str) -> AgentProfile | None:
+    """Perfil do `user_id` pelo UUID, ou `None` (miss / cross-user)."""
+    from src.application.use_cases.get_agent_profile import GetAgentProfile
+    from src.infrastructure.persistence.agent_profile_repository import (
+        PostgresAgentProfileRepository,
+    )
+
+    repo = PostgresAgentProfileRepository(os.environ.get("POSTGRES_URI", ""))
+    return await GetAgentProfile(repository=repo).execute(
+        user_id=user_id, profile_id=profile_id
+    )
+
+
+async def _resolve_run_profile_id(
+    *,
+    profile_id: str | None,
+    user_key: str | None,
+    use_default_profile: bool,
+) -> str | None:
+    """Id a carimbar: explícito validado (nunca `get_default`); senão default só se pedido.
+
+    Id explícito miss/arquivado/cross-user/`user_id` irresolvível →
+    `InvalidAgentProfileError` (o `run` vira `status=error` / task FAILED).
+    """
+    if profile_id is not None:
+        stripped = str(profile_id).strip()
+        if stripped:
+            user_id = await _user_id_from_user_key(user_key)
+            if not user_id:
+                raise InvalidAgentProfileError("profile_id inválido")
+            profile = await _lookup_agent_profile(user_id, stripped)
+            if profile is None or profile.archived_at is not None:
+                raise InvalidAgentProfileError("profile_id inválido")
+            return profile.id
+    if not use_default_profile:
+        return None
+    user_id = await _user_id_from_user_key(user_key)
+    if not user_id:
+        return None
+    default = await _get_default_profile(user_id)
+    return None if default is None else default.id
 
 
 def _extract_interrupt(state: Any) -> InterruptInfo | None:  # noqa: ANN401
@@ -316,17 +395,19 @@ class LangGraphDirectAgentRunner(AgentRunnerPort):
         skills: tuple[str, ...],
         tool_scope: ToolScope,
         user_key: str | None = None,
+        profile_id: str | None = None,
+        use_default_profile: bool = False,
     ) -> AgentRunResult:
         """Roda um único turno do agente e devolve um DTO sem exceção.
 
-        `skills` e `tool_scope` são aceitos na assinatura porque o port os
-        promete; a integração deles com o `EnvelopeMiddleware` (injeção
-        de capabilities, scope de tools) é trabalho de tasks posteriores
-        do agendamento-jeff-cli (`task-runtime-2`, `task-tools-1`,
-        `task-tests-1`). Aqui só registramos o valor para não perder
-        informação quando elas ligarem o port à execução.
+        `skills` e `tool_scope` entram no `configurable` (`tool_scope`
+        intersecta o overlay de tools do perfil: RESTRICTED omite tier 3+).
 
         `user_key` entra no `configurable` junto com `thread_id`.
+        `profile_id` explícito (scheduler) é validado contra o dono e
+        carimbado; arquivado/miss recusa o run sem `get_default`. Canais
+        interativos passam `use_default_profile=True` para herdar
+        `get_default` quando o id é omitido.
         Metering de chat vem do callback global em `build_unified`
         (track-user-token-usage recording-5).
         """
@@ -344,10 +425,17 @@ class LangGraphDirectAgentRunner(AgentRunnerPort):
             ):
                 graph = build_unified(checkpointer=saver, store=store)
                 role = await resolve_role_for_user_key(user_key)
+                resolved_profile_id = await _resolve_run_profile_id(
+                    profile_id=profile_id,
+                    user_key=user_key,
+                    use_default_profile=use_default_profile,
+                )
                 config = _build_run_config(
                     thread_id=thread_id,
                     user_key=user_key,
                     role=role,
+                    profile_id=resolved_profile_id,
+                    tool_scope=tool_scope,
                 )
                 state = await graph.ainvoke(
                     {"messages": [("user", prompt)]},
@@ -391,6 +479,8 @@ class LangGraphDirectAgentRunner(AgentRunnerPort):
         thread_id: str,
         decisions: tuple[dict, ...],
         user_key: str | None = None,
+        profile_id: str | None = None,
+        use_default_profile: bool = False,
     ) -> AgentRunResult:
         """Resumir um grafo pausado num gate `interrupt_on`.
 
@@ -426,10 +516,16 @@ class LangGraphDirectAgentRunner(AgentRunnerPort):
             ):
                 graph = build_unified(checkpointer=saver, store=store)
                 role = await resolve_role_for_user_key(user_key)
+                resolved_profile_id = await _resolve_run_profile_id(
+                    profile_id=profile_id,
+                    user_key=user_key,
+                    use_default_profile=use_default_profile,
+                )
                 config = _build_run_config(
                     thread_id=thread_id,
                     user_key=user_key,
                     role=role,
+                    profile_id=resolved_profile_id,
                 )
                 state = await graph.ainvoke(
                     Command(resume={"decisions": list(decisions)}),

@@ -31,12 +31,24 @@ import {
   updateScheduledTask,
   type ScheduledTask,
 } from "@/lib/scheduling";
+import { listAgentProfiles, type AgentProfile } from "@/lib/agent-profiles";
+import { getConfig } from "@/lib/config";
+
+const NONE_PROFILE = "__none__";
 
 function parseSkills(value: string): string[] {
   return value
     .split(",")
     .map((skill) => skill.trim())
     .filter(Boolean);
+}
+
+function selectValueFromProfileId(profileId: string | null | undefined): string {
+  return profileId ? profileId : NONE_PROFILE;
+}
+
+function profileIdFromSelectValue(value: string): string | null {
+  return value === NONE_PROFILE ? null : value;
 }
 
 function effectiveDestinationLabel(task: ScheduledTask): string {
@@ -54,6 +66,8 @@ export default function SchedulingPage() {
   const [toolScope, setToolScope] = useState("restricted");
   const [deliveryChannel, setDeliveryChannel] = useState("web");
   const [skills, setSkills] = useState("");
+  const [profiles, setProfiles] = useState<AgentProfile[]>([]);
+  const [profileId, setProfileId] = useState(NONE_PROFILE);
 
   const [deletingTask, setDeletingTask] = useState<ScheduledTask | null>(null);
 
@@ -64,6 +78,7 @@ export default function SchedulingPage() {
   const [editToolScope, setEditToolScope] = useState("restricted");
   const [editDeliveryChannel, setEditDeliveryChannel] = useState("web");
   const [editSkills, setEditSkills] = useState("");
+  const [editProfileId, setEditProfileId] = useState(NONE_PROFILE);
 
   useEffect(() => {
     listScheduledTasks().then(setTasks);
@@ -73,7 +88,15 @@ export default function SchedulingPage() {
         channels.includes(current) ? current : channels[0] ?? "web"
       );
     });
+    listAgentProfiles().then(setProfiles);
   }, []);
+
+  useEffect(() => {
+    const fromChat = getConfig()?.profileId;
+    if (fromChat && profiles.some((profile) => profile.id === fromChat)) {
+      setProfileId((current) => (current === NONE_PROFILE ? fromChat : current));
+    }
+  }, [profiles]);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -84,6 +107,7 @@ export default function SchedulingPage() {
       tool_scope: toolScope,
       delivery_channel: deliveryChannel,
       skills: parseSkills(skills),
+      profile_id: profileIdFromSelectValue(profileId),
     });
     setTasks((current) => [...current, created]);
     setPrompt("");
@@ -106,6 +130,7 @@ export default function SchedulingPage() {
     setEditToolScope(task.tool_scope);
     setEditDeliveryChannel(channelFromDeliveryUserKey(task.delivery_user_key));
     setEditSkills(task.skills.join(", "));
+    setEditProfileId(selectValueFromProfileId(task.profile_id));
   };
 
   const onEditSubmit = async (event: FormEvent) => {
@@ -118,6 +143,7 @@ export default function SchedulingPage() {
       tool_scope: editToolScope,
       delivery_channel: editDeliveryChannel,
       skills: parseSkills(editSkills),
+      profile_id: profileIdFromSelectValue(editProfileId),
     });
     setTasks((current) =>
       current.map((task) => (task.id === updated.id ? updated : task))
@@ -205,6 +231,23 @@ export default function SchedulingPage() {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="scheduling-profile">Perfil</Label>
+            <Select value={profileId} onValueChange={setProfileId}>
+              <SelectTrigger id="scheduling-profile">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE_PROFILE}>(padrão unified)</SelectItem>
+                {profiles.map((profile) => (
+                  <SelectItem key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="flex flex-col gap-2">
@@ -329,9 +372,26 @@ export default function SchedulingPage() {
                         {deliveryChannelLabel(channel)}
                       </SelectItem>
                     ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="edit-scheduling-profile">Perfil</Label>
+              <Select value={editProfileId} onValueChange={setEditProfileId}>
+                <SelectTrigger id="edit-scheduling-profile">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NONE_PROFILE}>(padrão unified)</SelectItem>
+                  {profiles.map((profile) => (
+                    <SelectItem key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="flex flex-col gap-2">

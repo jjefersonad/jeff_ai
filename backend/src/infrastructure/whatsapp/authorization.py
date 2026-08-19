@@ -46,6 +46,7 @@ async def route_authorized_message(
         skills=(),
         tool_scope=ToolScope.RESTRICTED,
         user_key=user_key,
+        use_default_profile=True,
     )
 
 

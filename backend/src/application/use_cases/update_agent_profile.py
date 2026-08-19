@@ -10,7 +10,7 @@ from src.application.ports.agent_profile_repository import (
 from src.domain.agents import AgentProfile
 from src.domain.shared.errors import DomainError
 
-_SENTINEL: Any = object()
+UNSET: Any = object()
 
 
 class UpdateAgentProfile:
@@ -27,17 +27,18 @@ class UpdateAgentProfile:
         profile_id: str,
         name: str | None = None,
         system_prompt: str | None = None,
-        skills_allowlist: list[str] | None | object = _SENTINEL,
-        tools_allowlist: list[str] | None | object = _SENTINEL,
+        skills_allowlist: list[str] | None | object = UNSET,
+        tools_allowlist: list[str] | None | object = UNSET,
+        mcp_allowlist: list[str] | None | object = UNSET,
         tier: int | None = None,
-        model_override: str | None | object = _SENTINEL,
+        model_override: str | None | object = UNSET,
     ) -> AgentProfile | None:
         """Atualiza o perfil; ``None`` se miss / cross-user.
 
         Campos não enviados mantêm o valor atual; para limpar
-        ``skills_allowlist``/``tools_allowlist``/``model_override`` enviar
-        explicitamente ``None``. ``name``/``system_prompt``/``tier`` são
-        obrigatórios e validados.
+        ``skills_allowlist``, ``tools_allowlist``, ``mcp_allowlist`` ou
+        ``model_override`` enviar explicitamente ``None``.
+        ``name``/``system_prompt``/``tier`` são obrigatórios e validados.
 
         Raises:
             DomainError: se ``name``/``system_prompt`` ficar vazio ou
@@ -65,17 +66,22 @@ class UpdateAgentProfile:
 
         new_skills = (
             skills_allowlist
-            if skills_allowlist is not _SENTINEL
+            if skills_allowlist is not UNSET
             else existing.skills_allowlist
         )
         new_tools = (
             tools_allowlist
-            if tools_allowlist is not _SENTINEL
+            if tools_allowlist is not UNSET
             else existing.tools_allowlist
+        )
+        new_mcp = (
+            mcp_allowlist
+            if mcp_allowlist is not UNSET
+            else existing.mcp_allowlist
         )
         new_model_override = (
             model_override
-            if model_override is not _SENTINEL
+            if model_override is not UNSET
             else existing.model_override
         )
         new_tier = tier if tier is not None else existing.tier
@@ -90,6 +96,7 @@ class UpdateAgentProfile:
             system_prompt=new_system_prompt,
             skills_allowlist=new_skills,
             tools_allowlist=new_tools,
+            mcp_allowlist=new_mcp,
             tier=new_tier,
             model_override=new_model_override,
             is_active=existing.is_active,

@@ -1,7 +1,9 @@
 /**
  * Per-thread frontend configuration persisted in `localStorage` under
- * `CONFIG_KEY`. Holds the assistant id used by the toolbar `AssistantButton`
- * and the chat composer.
+ * `CONFIG_KEY`. Holds the LangGraph graph id (`assistantId`, typically
+ * `"unified"`) and an optional `profileId` (UUID of an `AgentProfile`).
+ * The two MUST stay distinct: `assistantId` is never overwritten with the
+ * profile UUID.
  *
  * Historically this also held the LangSmith API key (`langsmithApiKey`).
  * Per `frontend-menu-redesign` / `langsmith-api-key-config` REQ-001, the key
@@ -13,6 +15,8 @@
  */
 export interface StandaloneConfig {
   assistantId: string;
+  /** UUID of the selected `AgentProfile`. Distinct from `assistantId` (graph id). */
+  profileId?: string;
 }
 
 // Graph entrypoint used when no config has been saved yet. `unified` is the
@@ -38,7 +42,14 @@ export function getConfig(): StandaloneConfig | null {
     if (typeof parsed.assistantId !== "string" || parsed.assistantId === "") {
       return null;
     }
-    return { assistantId: parsed.assistantId };
+    const profileId =
+      typeof parsed.profileId === "string" && parsed.profileId !== ""
+        ? parsed.profileId
+        : undefined;
+    return {
+      assistantId: parsed.assistantId,
+      ...(profileId ? { profileId } : {}),
+    };
   } catch {
     return null;
   }
@@ -46,5 +57,9 @@ export function getConfig(): StandaloneConfig | null {
 
 export function saveConfig(config: StandaloneConfig): void {
   if (typeof window === "undefined") return;
-  localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+  const stored: StandaloneConfig = {
+    assistantId: config.assistantId,
+    ...(config.profileId ? { profileId: config.profileId } : {}),
+  };
+  localStorage.setItem(CONFIG_KEY, JSON.stringify(stored));
 }

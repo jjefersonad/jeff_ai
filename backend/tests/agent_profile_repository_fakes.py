@@ -88,6 +88,7 @@ class InMemoryAgentProfileRepository(AgentProfileRepositoryPort):
             system_prompt=existing.system_prompt,
             skills_allowlist=existing.skills_allowlist,
             tools_allowlist=existing.tools_allowlist,
+            mcp_allowlist=existing.mcp_allowlist,
             tier=existing.tier,
             model_override=existing.model_override,
             is_active=False,

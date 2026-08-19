@@ -18,6 +18,11 @@ cobre pausa HITL em runs agendados (Decision 4).
 `notify_status` / `notify_error` (fix-scheduled-whatsapp-delivery): desfecho
 do notify pós-execução (`delivered`/`skipped`/`failed`); `NULL` = ainda não
 houve fase de notify. Independente de `last_error` (falha do agente).
+
+`profile_id` (multi-agent-profiles-runtime): UUID opcional do overlay
+`AgentProfile`; `NULL` = no-op. Sem FK física para `agent_profiles` (mesmo
+padrão de `owner_user_key` — o id pode apontar para um perfil já arquivado
+e a validação no fire marca FAILED).
 """
 from __future__ import annotations
 
@@ -46,6 +51,7 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     last_error TEXT,
     notify_status TEXT,
     notify_error TEXT,
+    profile_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 )
 """
@@ -68,6 +74,11 @@ ALTER TABLE scheduled_tasks
 _ADD_NOTIFY_ERROR_COLUMN = """
 ALTER TABLE scheduled_tasks
     ADD COLUMN IF NOT EXISTS notify_error TEXT
+"""
+
+_ADD_PROFILE_ID_COLUMN = """
+ALTER TABLE scheduled_tasks
+    ADD COLUMN IF NOT EXISTS profile_id UUID
 """
 
 # Bancos criados antes de scheduled-channel-routines têm CHECK de status sem
@@ -112,5 +123,6 @@ def ensure_schema(conninfo: str) -> None:
             cur.execute(_ADD_DELIVERY_USER_KEY_COLUMN)
             cur.execute(_ADD_NOTIFY_STATUS_COLUMN)
             cur.execute(_ADD_NOTIFY_ERROR_COLUMN)
+            cur.execute(_ADD_PROFILE_ID_COLUMN)
             cur.execute(_MIGRATE_STATUS_CHECK_WAITING_HUMAN)
             cur.execute(_CREATE_OWNER_USER_KEY_INDEX)

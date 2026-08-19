@@ -100,6 +100,8 @@ class AgentRunnerPort(ABC):
         skills: tuple[str, ...],
         tool_scope: ToolScope,
         user_key: str | None = None,
+        profile_id: str | None = None,
+        use_default_profile: bool = False,
     ) -> AgentRunResult:
         """Executa um único turno do agente e devolve o resultado.
 
@@ -111,6 +113,11 @@ class AgentRunnerPort(ABC):
             user_key: Identidade estável do canal (`telegram:<id>`,
                 `web:<id>`). Opcional — ausente → gravador usa sentinel
                 `unknown` (track-user-token-usage REQ-003).
+            profile_id: Overlay explícito (scheduler). `None` = omitir, a
+                menos que `use_default_profile` esteja ligado.
+            use_default_profile: Canais interativos (Telegram/WhatsApp/CLI)
+                pedem `get_default(user_id)` quando `profile_id` é omitido.
+                Default `False` preserva o scheduler (task `null` = no-op).
 
         Returns:
             Resultado com thread_id/status/error.

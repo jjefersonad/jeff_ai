@@ -30,6 +30,7 @@ from src.agents.unified.agent import (
     _interrupt_on,
     build_unified,
 )
+from src.agents.unified.agent_profile_middleware import AgentProfileMiddleware
 from src.agents.unified.chat_attachment_preprocessing_middleware import (
     ChatAttachmentPreprocessingMiddleware,
 )
@@ -89,14 +90,15 @@ def test_build_unified_without_args_keeps_same_interrupt_on() -> None:
 
 
 def test_build_unified_without_args_keeps_same_middleware_types_and_order() -> None:
-    """`middleware=[...]` ordem canônica (D9 session-file-sandbox):
-    EnvelopeLifecycle → McpTools* → RoleScoped → Envelope →
+    """`middleware=[...]` ordem canônica (multi-agent-profiles-runtime):
+    EnvelopeLifecycle → AgentProfile → McpTools* → RoleScoped → Envelope →
     ChatAttachmentPreprocessing → ScopedSkills.
     """
     kwargs = _call_build_unified_and_capture_kwargs()
     middleware_types = [type(m) for m in kwargs["middleware"]]
     assert middleware_types == [
         EnvelopeLifecycleMiddleware,
+        AgentProfileMiddleware,
         McpToolsMiddleware,
         McpToolAvailabilityMiddleware,
         RoleScopedToolsMiddleware,
@@ -104,6 +106,16 @@ def test_build_unified_without_args_keeps_same_middleware_types_and_order() -> N
         ChatAttachmentPreprocessingMiddleware,
         ScopedSkillsMiddleware,
     ]
+    assert kwargs["interrupt_on"] is _interrupt_on
+
+
+def test_graph_aliases_are_the_same_compiled_object() -> None:
+    """REQ-017: agent / sdd_agent / assistant continuam o mesmo objeto `unified`."""
+    from src.composition.graphs import agent, assistant, sdd_agent, unified
+
+    assert agent is unified
+    assert sdd_agent is unified
+    assert assistant is unified
 
 
 def test_build_unified_without_args_passes_a_backend_factory() -> None:

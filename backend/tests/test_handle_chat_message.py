@@ -103,6 +103,8 @@ class _RecordingRunner(AgentRunnerPort):
         skills: tuple[str, ...],
         tool_scope: ToolScope,
         user_key: str | None = None,
+        profile_id: str | None = None,
+        use_default_profile: bool = False,
     ) -> AgentRunResult:
         if self._events is not None:
             self._events.append("run")
