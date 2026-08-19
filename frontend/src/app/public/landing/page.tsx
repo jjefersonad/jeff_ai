@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
@@ -10,13 +11,13 @@ export const metadata: Metadata = {
   // instead. See app-branding-consistency REQ-003.
   title: "Jeff AI",
   description:
-    "Jeff AI é um assistente de inteligência artificial auto-hospedado: roda no seu próprio modelo, faz o que o Claude Code faz, e serve qualquer tarefa — código, pesquisa, marketing, documentos.",
+    "Jeff AI é um assistente de inteligência artificial auto-hospedado para o trabalho do dia a dia: escrever e revisar código, pesquisar, criar documentos e planilhas, e organizar e-mails.",
 };
 
 const CAPABILITIES = [
   {
     title: "Escreve e cuida de código",
-    body: "Edita arquivos, roda testes, usa git — as mesmas funções do Claude Code, no seu próprio modelo.",
+    body: "Edita arquivos do seu projeto, roda os testes e usa git, sempre pedindo sua aprovação antes de alterar qualquer coisa.",
   },
   {
     title: "Serve qualquer tarefa",
@@ -83,11 +84,26 @@ export default function LandingPage() {
     <main className="min-h-screen bg-background px-6 py-16 text-foreground">
       <div className="mx-auto flex max-w-3xl flex-col gap-16">
         <header className="space-y-4 text-center">
+          {/* Mesmo arquivo de logotipo enviado à tela de consentimento OAuth
+              do Google. A correspondência visual entre as duas superfícies é
+              parte do que a verificação de marca do Google confere. */}
+          <Image
+            src="/logo-conexao-elite.png"
+            alt="Conexão Elite"
+            width={80}
+            height={80}
+            priority
+            className="mx-auto h-20 w-20"
+          />
           <h1 className="text-4xl font-semibold tracking-tight">Jeff AI</h1>
+          <p className="text-sm font-medium text-muted-foreground">
+            Um produto da Conexão Elite
+          </p>
           <p className="text-lg text-muted-foreground">
-            Um assistente de inteligência artificial auto-hospedado — que
-            roda no seu próprio modelo, sob seu próprio controle, e que você
-            usa para qualquer tarefa.
+            O Jeff AI é um assistente de inteligência artificial
+            auto-hospedado, que ajuda você a escrever código, pesquisar,
+            produzir documentos e cuidar dos seus e-mails — tudo em uma só
+            conversa.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
             <Button asChild>
@@ -101,16 +117,18 @@ export default function LandingPage() {
             O que é o Jeff AI
           </h2>
           <p className="text-muted-foreground">
-            O Jeff AI é um Claude que você hospeda na sua própria
-            infraestrutura, rodando no seu próprio modelo (Ollama). Ele faz o
-            mesmo que o Claude Code faz — escreve e revisa código, roda
-            testes, usa git — e também cuida de qualquer outra tarefa que
-            você precisar, sem depender de um serviço externo para
-            funcionar.
+            O Jeff AI é um assistente de inteligência artificial que você usa
+            pelo navegador para resolver o trabalho do dia a dia: escrever e
+            revisar textos e código, pesquisar informações, montar documentos
+            e planilhas, gerar imagens e organizar a sua caixa de e-mail.
+            Você conversa com ele em português, descrevendo a tarefa, e ele
+            executa.
           </p>
           <p className="text-muted-foreground">
-            Como ele roda no seu próprio modelo, os seus dados e as suas
-            conversas permanecem na sua instância.
+            Ele é auto-hospedado: roda em servidor próprio, com modelo de
+            linguagem próprio. Por isso as suas conversas, os seus documentos
+            e os seus e-mails ficam na infraestrutura de quem opera a
+            instância, e não em um serviço de terceiros.
           </p>
         </section>
 
@@ -166,9 +184,9 @@ export default function LandingPage() {
           <h2 className="text-2xl font-semibold tracking-tight">
             Como usar
           </h2>
-          <ol className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-2">
             {HOW_TO_USE.map((item) => (
-              <li
+              <div
                 key={item.step}
                 className="space-y-1 rounded-lg border border-border p-4"
               >
@@ -177,9 +195,9 @@ export default function LandingPage() {
                 </span>
                 <h3 className="font-medium">{item.title}</h3>
                 <p className="text-sm text-muted-foreground">{item.body}</p>
-              </li>
+              </div>
             ))}
-          </ol>
+          </div>
         </section>
 
         <nav
@@ -191,7 +209,16 @@ export default function LandingPage() {
           </Button>
         </nav>
 
-        <footer className="border-t border-border pt-6 text-center text-sm text-muted-foreground">
+        <footer className="space-y-3 border-t border-border pt-6 text-center text-sm text-muted-foreground">
+          <p>
+            O Jeff AI é desenvolvido e operado pela Conexão Elite. Suporte:{" "}
+            <a
+              href="mailto:suporte@conexaoelite.com"
+              className="underline underline-offset-4"
+            >
+              suporte@conexaoelite.com
+            </a>
+          </p>
           <nav
             aria-label="Documentos legais"
             className="flex flex-wrap justify-center gap-x-4 gap-y-2"

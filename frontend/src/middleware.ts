@@ -51,5 +51,20 @@ export const config = {
   // Skip Next auth redirect for `/api/*` — those are proxied to the backend
   // (see `next.config.ts` rewrites). A missing cookie must become a JSON 401
   // from FastAPI, not an HTML redirect to `/public/login`.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api/).*)"],
+  //
+  // Static assets are excluded BY EXTENSION rather than by listing single
+  // filenames. The previous form hardcoded `favicon.ico`, which silently
+  // gated every other file in `public/` and every App Router icon
+  // convention: an unauthenticated request for `/icon.png` or
+  // `/logo-conexao-elite.png` answered 307 → `/public/login`, so the logo
+  // on the public landing page never rendered for logged-out visitors —
+  // precisely the audience that page exists for (Google's OAuth brand
+  // verification crawler included).
+  //
+  // Everything Next serves under one of these extensions comes from
+  // `public/` or the App Router icon conventions, i.e. it is public static
+  // content by construction; no protected route ends in one.
+  matcher: [
+    "/((?!_next/static|_next/image|api/|.*\\.(?:png|jpg|jpeg|gif|svg|webp|avif|ico|txt|xml|webmanifest|woff|woff2|ttf|otf)$).*)",
+  ],
 }
