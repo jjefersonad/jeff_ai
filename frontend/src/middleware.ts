@@ -65,6 +65,6 @@ export const config = {
   // `public/` or the App Router icon conventions, i.e. it is public static
   // content by construction; no protected route ends in one.
   matcher: [
-    "/((?!_next/static|_next/image|api/|.*\\.(?:png|jpg|jpeg|gif|svg|webp|avif|ico|txt|xml|webmanifest|woff|woff2|ttf|otf)$).*)",
+    "/((?!_next/static|_next/image|api/|.*\\.(?:png|jpg|jpeg|gif|svg|webp|avif|ico|txt|xml|html|webmanifest|woff|woff2|ttf|otf)$).*)",
   ],
 }
