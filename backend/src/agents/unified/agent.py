@@ -33,11 +33,14 @@ A função `_resolve_tz()` é reusada pela tool `internet_search` (ver
 
 ## Subagentes
 
-`_UNIFIED_SUBAGENTS` contém exatamente um subagente: `image_design_subagent`
-(contexto isolado, geração sem gate de aprovação, memória de estilo por thread —
-a única razão legítima para um subagente neste produto). SDD e requisitos são
-entregues como skills (`backend/skills/{sdd,requirements}/SKILL.md`), não
-subagentes — ver task `skills-4` e a spec `skill-based-capabilities`.
+`_UNIFIED_SUBAGENTS` está VAZIO — não há subagente Python neste produto.
+SDD e requisitos viraram skills na task `skills-4`
+(`backend/skills/{sdd,requirements}/SKILL.md`); o último remanescente,
+`image_design_subagent`, foi deletado por `image-design-approval-gate`
+(cutover-1) em favor de `backend/skills/image-generation/SKILL.md` + as tools
+de imagem no flat tool set. Quando isolamento de contexto for desejável, usa-se
+o `task` + `general-purpose` nativo do `create_deep_agent`, que herda o mesmo
+`interrupt_on` — nenhum caminho de chamada escapa do gate.
 
 ## Approval tiers
 
@@ -58,7 +61,6 @@ from deepagents import create_deep_agent
 from langgraph.store.base import BaseStore
 from langgraph.types import Checkpointer
 
-from src.agents.subagents.image_design import image_design_subagent
 from src.agents.unified.agent_profile_middleware import AgentProfileMiddleware
 from src.agents.unified.chat_attachment_preprocessing_middleware import (
     ChatAttachmentPreprocessingMiddleware,
@@ -130,13 +132,7 @@ from src.tools.fetch_reference_image_tool import (
     check_reference_image,
     fetch_reference_image,
 )
-from src.tools.git_tools import (
-    git_apply_commit,
-    git_branch,
-    git_commit,
-    git_diff,
-    git_status,
-)
+from src.tools.generate_image_tool import create_image_from_prompt
 from src.tools.list_mcp_servers_status import (
     list_mcp_servers_status,
 )
@@ -173,6 +169,11 @@ from src.tools.self_extension import (
     read_project_file,
     run_shell_command,
     save_generated_tool,
+)
+from src.tools.style_memory_tools import (
+    list_design_styles,
+    load_design_style,
+    save_design_style,
 )
 from src.tools.tavily_tool import internet_search
 from src.tools.technical_spec_tools import merge_generated_files
@@ -257,8 +258,13 @@ use os estágios canônicos (`lead` → `qualified` → `proposal` →
    `get_date_time_current()` **apenas** se precisar de precisão de
    minutos/segundos (ex.: timestamp exato, logs, agendamento). Para data em
    formato dia, use a data no topo do prompt — não custa tool call.
-5. **Imagens**: SEMPRE delegue para `image_design_subagent` (planeja e
-   gera sem gate de aprovação). Nunca gere imagens diretamente.
+5. **Imagens**: leia a skill `image-generation` ANTES de planejar. Se o
+   pedido for vago (sem propósito/público, formato ou restrições de
+   marca), faça UMA rodada de perguntas objetivas antes de montar o
+   plano. Apresente o design plan e então chame
+   `create_image_from_prompt` — Tier 3, pausa para aprovação com preview
+   do plano. UMA imagem por aprovação. Se o usuário reprovar, pergunte
+   qual ajuste ele quer; NÃO chame a tool de novo por conta própria.
 6. **Documentos**: para propostas/documentos estilizados, prefira
    `preview_html_document` (HTML em `/api/files/html/…`) e itere antes do
    arquivo final. Tools finais: `create_docx_document`,
@@ -279,11 +285,11 @@ use os estágios canônicos (`lead` → `qualified` → `proposal` →
    admin → projeto, ou owned com `for_user_id`). Tools Python via
    `save_generated_tool` (precisa aprovação humana + restart).
 8. **Edição de código** (quando ativa): tools de Tier 3 (edit_file,
-   patch_file, multi_file_edit, git_commit) pausam o framework para
+   patch_file, multi_file_edit) pausam o framework para
    aprovação humana com diff preview. Aprove SOMENTE se o diff
    estiver correto.
 9. **Envelope de permissões**: ANTES de chamar qualquer tool de Tier 3+
-   (edit_file, patch_file, multi_file_edit, git_commit, git_apply_commit,
+   (edit_file, patch_file, multi_file_edit,
    install_external_skill) ou Tier 4 (run_shell_command), chame
    `propose_envelope` pedindo as capabilities necessárias
    (`write_existing`, `vcs`, `shell`, `network`, ...) com uma
@@ -387,9 +393,17 @@ use os estágios canônicos (`lead` → `qualified` → `proposal` →
     devolve o preview — para enviar de fato, chame `send_email` com esse
     texto (Tier 3, exige aprovação) e depois `crm_add_note` para registrar.
   - Leituras Tier 1; escritas Tier 2. Skill: `crm`.
-- **Imagens**: delegue para `image_design_subagent` (sempre).
+- **Imagens**: skill `image-generation` + `create_image_from_prompt`
+  (Tier 3 — aprovação com preview do plano). Estilo por thread:
+  `load_design_style` / `list_design_styles` / `save_design_style`.
+  Referências: `fetch_reference_image` / `check_reference_image`. Para
+  isolar o contexto do planejamento, `task` com `general-purpose` é
+  opcional — o gate vale igual por lá.
 - **Leitura do projeto**: `read_project_file`, `list_project_files`
   (somente leitura).
+- **GitHub / PRs / issues**: use as tools MCP do servidor GitHub
+  (`mcp__…`). Não há tools nativas `git_*` — o runtime Docker não monta
+  o `.git` do repositório.
 - **Shell**: `run_shell_command` (Tier 4 — interrupt + denylist).
 
 ## Entrega de mensagens
@@ -409,7 +423,8 @@ use os estágios canônicos (`lead` → `qualified` → `proposal` →
 # Tool registration
 # --------------------------------------------------------------------------- #
 # Lista unificada de todas as tools usadas pelos grafos legados + as novas
-# (code/test/git). O deepagents aceita uma lista flat; subagentes fazem
+# (code/test). Git nativo saiu do catálogo — GitHub via MCP. O deepagents
+# aceita uma lista flat; subagentes fazem
 # delegação via `task()` e não precisam de suas tools registradas no
 # orquestrador (apenas os nomes importam).
 
@@ -434,9 +449,18 @@ _UNIFIED_TOOLS: list = [
     internet_search,
     search_arxiv,
     web_fetch,
-    # --- Imagens (referência) --------------------------------------------- #
+    # --- Imagens (`image-design-approval-gate` cutover-1) ------------------ #
+    # As 6 tools saíram do toolset exclusivo do `image_design_subagent`
+    # (deletado) para o flat tool set. `create_image_from_prompt` é Tier 3:
+    # pausa no `interrupt_on` com preview do design plan antes de gerar.
+    # O planejamento (perguntas, catálogo de tipos, anti-slop, template de
+    # prompt) vive em `backend/skills/image-generation/SKILL.md`.
+    create_image_from_prompt,
     fetch_reference_image,
     check_reference_image,
+    load_design_style,
+    list_design_styles,
+    save_design_style,
     # --- Documentos Office/PDF (Tier 2) ----------------------------------- #
     create_docx_document,
     create_xlsx_spreadsheet,
@@ -511,12 +535,9 @@ _UNIFIED_TOOLS: list = [
     grep_project,
     # --- Tests (Tier 1) --------------------------------------------------- #
     run_tests,
-    # --- Git (Tier 1 read, Tier 3 commit) --------------------------------- #
-    git_status,
-    git_diff,
-    git_commit,
-    git_apply_commit,
-    git_branch,
+    # Git nativo (git_status/diff/commit/branch) não entra no catálogo:
+    # no Docker REPO_ROOT=/deps não é work tree, e o modelo preferia
+    # git_status ao MCP do GitHub. Operações GitHub ficam no MCP.
     # --- Envelope de permissões (task envelope-7) -------------------------- #
     propose_envelope_tool,
     # --- Self-debug dos MCPs (change `fix-mcp-tool-not-exposed-error`) ----- #
@@ -526,16 +547,19 @@ _UNIFIED_TOOLS: list = [
 ] 
 
 
-# Subagentes registrados no grafo unificado. Reduzido de 9 -> 1 na task
-# `skills-4`: `fullstack_subagent` e os 7 subagentes de fase SDD foram
-# deletados — SDD e requisitos são entregues como skills
-# (`backend/skills/{sdd,requirements}/SKILL.md`), com paridade de output
-# confirmada em `skills-3-rerun` (design, Addendum 3). `image_design_subagent`
-# é a única exceção legítima: contexto isolado, geração imediata (sem interrupt)
-# e memória de estilo por thread.
-_UNIFIED_SUBAGENTS: list = [
-    image_design_subagent,
-]
+# Subagentes registrados no grafo unificado: NENHUM. Reduzido de 9 -> 1 na
+# task `skills-4` (`fullstack_subagent` + os 7 subagentes de fase SDD viraram
+# skills) e de 1 -> 0 por `image-design-approval-gate` (cutover-1): o
+# `image_design_subagent` foi deletado e sua especialização vive agora em
+# `backend/skills/image-generation/SKILL.md`, com as tools de imagem no flat
+# tool set abaixo.
+#
+# Isolamento de contexto, quando desejado, sai do `task` + `general-purpose`
+# que o `create_deep_agent` já embute — que enxerga TODAS as tools do agente
+# principal e herda o mesmo `interrupt_on` (`spec.get("interrupt_on",
+# interrupt_on)`), então o gate de Tier 3 de `create_image_from_prompt` vale
+# igual por qualquer caminho de chamada (approval-ux REQ-004).
+_UNIFIED_SUBAGENTS: list = []
 
 
 # --------------------------------------------------------------------------- #

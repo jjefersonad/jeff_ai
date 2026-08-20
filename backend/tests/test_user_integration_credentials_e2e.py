@@ -90,7 +90,11 @@ class _FakeUserIntegrationRepository(UserIntegrationRepositoryPort):
         self._store.pop(integration_id, None)
 
 
-def _mock_mcp_tool(name: str) -> BaseTool:
+def _mock_mcp_tool(name: str, *, origin: str) -> BaseTool:
+    """Cria uma tool MCP mockada com `metadata["mcp_server_origin"]`
+    estampado — convenção real de `list_mcp_tools` desde a change
+    `fix-mcp-multi-server-tool-attribution` (REQ-002 revisado)."""
+
     @tool
     def mock_tool() -> str:
         """Mock MCP tool."""
@@ -98,6 +102,7 @@ def _mock_mcp_tool(name: str) -> BaseTool:
 
     mock_tool.name = name
     mock_tool.description = f"Mock MCP tool: {name}"
+    mock_tool.metadata = {"mcp_server_origin": origin}
     return mock_tool
 
 
@@ -235,7 +240,7 @@ async def test_linked_telegram_session_gets_user_scoped_tools_memory_and_ownersh
     #    that file-partitioned shape was the very bug this test closes.
     await mcp_config_store.add_server(_USER_ID, "zernio", command="node", args=["server.js"])
 
-    mock_tools = [_mock_mcp_tool("zernio/posts_create")]
+    mock_tools = [_mock_mcp_tool("posts_create", origin="zernio")]
     with patch(
         "src.agents.unified.mcp_tools_middleware.list_mcp_tools",
         new=AsyncMock(return_value=(mock_tools, [])),

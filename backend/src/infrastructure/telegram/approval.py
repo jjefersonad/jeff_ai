@@ -165,7 +165,7 @@ def build_keyboard(interrupt: InterruptInfo) -> InlineKeyboardMarkup:
 
     - 1 `action_request` + `allowed_decisions` que inclui approve/edit/reject
       → 3 botões (Aprovar/Editar/Rejeitar). Caso real hoje
-      (`image_design_subagent` impõe 1 imagem por vez).
+      (a skill `image-generation` impõe 1 imagem por aprovação).
     - 2+ `action_requests` → 2 botões (Aprovar/Rejeitar). "Editar"
       some porque edição item-a-item de lote não está no escopo
       (REQ-002 cenário "Múltiplos action_requests no mesmo interrupt"
@@ -558,7 +558,7 @@ async def consume_edit_text_reply(
     1. Constrói `decisions=({"type": "reject", "message": user_text},)`
        (design Decision #4 — REJECT+message, não EditDecision real,
        reusando o comportamento já existente e testado do
-       `image_design_subagent`).
+       gate de imagem).
     2. Chama `agent_runner.resume(...)`. Em falha, notifica o chat
        com `_CHANNEL_ERROR_MESSAGE` (REQ-005).
     3. Remove a pendência em qualquer caso (sucesso OU falha).

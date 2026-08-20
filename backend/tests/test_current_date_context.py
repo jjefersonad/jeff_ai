@@ -51,7 +51,7 @@ def test_system_prompt_keeps_current_principles():
     assert "## Princípios" in prompt
     assert "Memória persistente" in prompt
     assert "interrupt_on" in prompt
-    assert "image_design_subagent" in prompt
+    assert "create_image_from_prompt" in prompt
     assert "preview_html_document" in prompt
     assert "propose_envelope" in prompt
 

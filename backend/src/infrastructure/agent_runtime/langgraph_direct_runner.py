@@ -210,7 +210,7 @@ def _extract_interrupt(state: Any) -> InterruptInfo | None:  # noqa: ANN401
     `review_configs` do PRIMEIRO `Interrupt.value` para `tuple[dict, ...]`
     — o design (`telegram-tool-approval-design` Decision #1) fixa
     "1 `HITLRequest` por interrupt" para o caso real
-    (`image_design_subagent`); o `telegram_gateway` consome
+    (aprovação de `create_image_from_prompt`); o `telegram_gateway` consome
     `InterruptInfo` e renderiza a UI.
 
     Duck-typed: `value` pode ser um dict (caso simples) ou um

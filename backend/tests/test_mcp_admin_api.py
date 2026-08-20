@@ -753,3 +753,152 @@ class TestUserScoping:
             assert res.status_code in (204, 404)
         finally:
             client.app.dependency_overrides.pop(require_auth, None)
+
+
+# =========================================================================== #
+# task-config-1 / unit-2 (REQ-011): route surfaces normalized-name collision
+# =========================================================================== #
+# Fixture que monta o router com as funções REAIS de `mcp_config_store` (não
+# os stubs do `client` fixture acima), trocando só o repositório Postgres
+# por um fake em memória via monkeypatch de `_default_repository`. Permite
+# testar a cadeia completa route → `add_server` → validação sem depender de
+# Postgres.
+class _FakeMcpServerRepo:
+    def __init__(self) -> None:
+        self._rows: dict[tuple[str, str], dict] = {}
+
+    async def save(self, server: object) -> None:
+        # `server` é um `McpServerConfig`; re-extraímos só o necessário.
+        self._rows[(server.user_id, server.name)] = {
+            "name": server.name,
+            "transport": server.transport,
+            "command": server.command,
+            "args": list(server.args),
+            "url": server.url,
+            "env": dict(server.env),
+            "headers": dict(server.headers),
+        }
+
+    async def get(self, user_id: str, name: str) -> object | None:
+        row = self._rows.get((user_id, name))
+        if row is None:
+            return None
+        # Devolve um objeto compatível com o contrato (tem `.name`).
+        from src.domain.mcp import McpServerConfig as _Cfg
+
+        return _Cfg(
+            id="ignored",
+            user_id=user_id,
+            name=row["name"],
+            transport=row["transport"],
+            command=row["command"],
+            args=row["args"],
+            url=row["url"],
+            env=row["env"],
+            headers=row["headers"],
+        )
+
+    async def list_by_user(self, user_id: str) -> list[object]:
+        from src.domain.mcp import McpServerConfig as _Cfg
+
+        return [
+            _Cfg(
+                id="ignored",
+                user_id=user_id,
+                name=row["name"],
+                transport=row["transport"],
+                command=row["command"],
+                args=row["args"],
+                url=row["url"],
+                env=row["env"],
+                headers=row["headers"],
+            )
+            for (uid, _name), row in self._rows.items()
+            if uid == user_id
+        ]
+
+    async def list_all(self) -> list[object]:
+        from src.domain.mcp import McpServerConfig as _Cfg
+
+        return [
+            _Cfg(
+                id="ignored",
+                user_id=uid,
+                name=row["name"],
+                transport=row["transport"],
+                command=row["command"],
+                args=row["args"],
+                url=row["url"],
+                env=row["env"],
+                headers=row["headers"],
+            )
+            for (uid, _name), row in self._rows.items()
+        ]
+
+    async def delete(self, user_id: str, name: str) -> None:
+        self._rows.pop((user_id, name), None)
+
+
+@pytest.fixture
+def client_real_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> TestClient:
+    """Router isolado, funções REAIS de `mcp_config_store` + repositório fake."""
+    fake_repo = _FakeMcpServerRepo()
+    monkeypatch.setattr(
+        mcp_config_store, "_default_repository", lambda: fake_repo
+    )
+
+    overrides_path = tmp_path / "mcp_tool_overrides.json"
+    monkeypatch.setattr(
+        mcp_admin_api,
+        "load_overrides",
+        functools.partial(mcp_admin_api.load_overrides, path=overrides_path),
+    )
+    monkeypatch.setattr(
+        mcp_admin_api,
+        "set_override",
+        functools.partial(mcp_admin_api.set_override, path=overrides_path),
+    )
+    monkeypatch.setattr(
+        mcp_admin_api,
+        "remove_override",
+        functools.partial(mcp_admin_api.remove_override, path=overrides_path),
+    )
+
+    app = FastAPI()
+    app.include_router(mcp_admin_api.router)
+    return TestClient(app)
+
+
+def test_post_server_normalized_name_collision_returns_4xx(
+    client_real_store: TestClient,
+) -> None:
+    """unit-2 (fix-mcp-multi-server-tool-attribution, task-config-1, REQ-011):
+    `POST /api/mcp/servers` com nome cuja versão normalizada (hífen →
+    underscore, mesma regra de `_qualify_tool_names`) colide com um servidor
+    já cadastrado para o usuário autenticado MUST retornar 4xx (não 500,
+    não 200 silencioso) com mensagem clara — usando o mesmo
+    except-and-4xx path já usado para outras falhas de validação do
+    `add_server` (`mcp_admin_api.py:299-300`)."""
+    client_real_store.app.dependency_overrides[require_auth] = lambda: _AUTH_USER
+    try:
+        # Cadastra `search_server` (com underscore).
+        first = client_real_store.post(
+            "/api/mcp/servers",
+            json={"name": "search_server", "command": "npx", "args": [], "env": {}},
+        )
+        assert first.status_code == 201, first.text
+
+        # Tenta cadastrar `search-server` (com hífen) — colide pós-normalização.
+        second = client_real_store.post(
+            "/api/mcp/servers",
+            json={"name": "search-server", "command": "npx", "args": [], "env": {}},
+        )
+        assert 400 <= second.status_code < 500, second.text
+        detail = second.json().get("detail", "")
+        assert isinstance(detail, str) and detail
+        assert "search-server" in detail
+        assert "search_server" in detail
+    finally:
+        client_real_store.app.dependency_overrides.pop(require_auth, None)

@@ -25,7 +25,16 @@ def edit_file(path: str, content: str) -> str:
     return f"edited {path}"
 
 
-def _mock_mcp_tool(name: str) -> BaseTool:
+def _mock_mcp_tool(name: str, *, origin: str | None = None) -> BaseTool:
+    """Cria uma tool MCP mockada.
+
+    Se `origin` for dado, estampa `metadata["mcp_server_origin"]` — a
+    convenção real de `list_mcp_tools` desde a change
+    `fix-mcp-multi-server-tool-attribution` (REQ-002 revisado). Sem
+    `origin`, a tool não carrega origem — `_qualify_tool_names` a
+    descarta (Decision 2 do design), então só serve para os testes que
+    nunca a levam até lá (allowlist vazia / cross-user)."""
+
     @tool
     def mock_tool() -> str:
         """Mock MCP tool."""
@@ -33,6 +42,8 @@ def _mock_mcp_tool(name: str) -> BaseTool:
 
     mock_tool.name = name
     mock_tool.description = f"Mock MCP tool: {name}"
+    if origin is not None:
+        mock_tool.metadata = {"mcp_server_origin": origin}
     return mock_tool
 
 
@@ -79,9 +90,9 @@ async def test_none_allowlist_loads_all_owner_servers(
 ) -> None:
     """WHEN mcp_allowlist is None THEN todos os servers do dono carregam."""
     listed: list[dict] = []
-    tool_github = _mock_mcp_tool("github/search")
-    tool_browser = _mock_mcp_tool("browser/nav")
-    tool_slack = _mock_mcp_tool("slack/post")
+    tool_github = _mock_mcp_tool("search", origin="github")
+    tool_browser = _mock_mcp_tool("nav", origin="browser")
+    tool_slack = _mock_mcp_tool("post", origin="slack")
 
     async def fake_load(user_id: str, **_kwargs: object) -> dict:
         assert user_id == "user-a"
@@ -165,11 +176,11 @@ async def test_named_allowlist_loads_only_owner_subset(
         listed.append(dict(connections))
         tools = []
         if "github" in connections:
-            tools.append(_mock_mcp_tool("github/search"))
+            tools.append(_mock_mcp_tool("search", origin="github"))
         if "browser" in connections:
-            tools.append(_mock_mcp_tool("browser/nav"))
+            tools.append(_mock_mcp_tool("nav", origin="browser"))
         if "slack" in connections:
-            tools.append(_mock_mcp_tool("slack/post"))
+            tools.append(_mock_mcp_tool("post", origin="slack"))
         return tools, []
 
     monkeypatch.setattr(

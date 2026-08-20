@@ -139,24 +139,29 @@ def _unified_tool_names() -> set[str]:
     }
 
 
-def test_unified_tools_keep_shell_git_and_edit_file() -> None:
-    """REQ-007: `run_shell_command`, git e `edit_file` permanecem no set
-    registrado (`_UNIFIED_TOOLS` / `_TOOL_NAMES`). Esta change não filtra
-    o registro por role nem esconde essas tools via RoleScopedToolsMiddleware.
+def test_unified_tools_keep_shell_and_edit_file() -> None:
+    """REQ-007: `run_shell_command` e `edit_file` permanecem no set
+    registrado (`_UNIFIED_TOOLS` / `_TOOL_NAMES`). Git nativo saiu do
+    catálogo (GitHub via MCP). Esta change não filtra o registro por
+    role nem esconde essas tools via RoleScopedToolsMiddleware.
     """
     names = _unified_tool_names()
     required = (
         "run_shell_command",
         "edit_file",
+    )
+    for tool_name in required:
+        assert tool_name in names, f"{tool_name} missing from _UNIFIED_TOOLS"
+        assert tool_name in _TOOL_NAMES, f"{tool_name} missing from _TOOL_NAMES"
+    for git_name in (
         "git_status",
         "git_diff",
         "git_commit",
         "git_apply_commit",
         "git_branch",
-    )
-    for tool_name in required:
-        assert tool_name in names, f"{tool_name} missing from _UNIFIED_TOOLS"
-        assert tool_name in _TOOL_NAMES, f"{tool_name} missing from _TOOL_NAMES"
+    ):
+        assert git_name not in names, f"{git_name} should not be in _UNIFIED_TOOLS"
+        assert git_name not in _TOOL_NAMES, f"{git_name} should not be in _TOOL_NAMES"
 
     kwargs = _call_build_unified_and_capture_kwargs()
     assert kwargs["tools"] is _UNIFIED_TOOLS
@@ -175,3 +180,47 @@ def test_unified_tools_keep_shell_git_and_edit_file() -> None:
     assert "run_shell_command" in USER_DEV_TOOL_DENYLIST
     assert "edit_file" in USER_DEV_TOOL_DENYLIST
     assert names & USER_DEV_TOOL_DENYLIST
+
+
+# --------------------------------------------------------------------------- #
+# image-design-approval-gate — cutover-1: subagente deletado, tools no flat set
+# --------------------------------------------------------------------------- #
+def test_no_dedicated_image_design_subagent_is_registered() -> None:
+    """`image_design_subagent` foi deletado (skill + flat tool set no lugar).
+
+    `_UNIFIED_SUBAGENTS` não precisa estar vazio para sempre — mas não pode
+    conter um subagente chamado `image_design_subagent`.
+    """
+    names = {s.get("name") for s in _UNIFIED_SUBAGENTS if isinstance(s, dict)}
+    assert "image_design_subagent" not in names
+
+
+def test_image_tools_are_in_the_unified_flat_tool_set() -> None:
+    """approval-ux REQ-004: as tools de imagem vivem no tool set principal —
+    pré-requisito para o `interrupt_on` cobrir tanto o agente principal
+    quanto um `general-purpose` spawnado via `task` (herança automática)."""
+    names = _unified_tool_names()
+    required = (
+        "create_image_from_prompt",
+        "fetch_reference_image",
+        "check_reference_image",
+        "load_design_style",
+        "list_design_styles",
+        "save_design_style",
+    )
+    for tool_name in required:
+        assert tool_name in names, f"{tool_name} missing from _UNIFIED_TOOLS"
+        assert tool_name in _TOOL_NAMES, f"{tool_name} missing from _TOOL_NAMES"
+
+
+def test_agent_module_imports_without_the_deleted_subagent_module() -> None:
+    """Nenhum import remanescente de `src.agents.subagents.image_design`.
+
+    Reimportar o módulo do zero prova que ele não depende mais do subagente
+    deletado — se ainda houvesse `from src.agents.subagents.image_design
+    import image_design_subagent` em algum lugar da cadeia, isto levantaria
+    `ModuleNotFoundError`.
+    """
+    import importlib
+
+    importlib.reload(agent_module)  # não deve levantar ModuleNotFoundError

@@ -41,6 +41,66 @@ class McpServerConfigError(ValueError):
     """Operação de CRUD inválida (nome já usado pelo mesmo usuário, servidor inexistente)."""
 
 
+def _normalize_server_name(name: str) -> str:
+    """Normaliza o nome do servidor da mesma forma que `_qualify_tool_names`
+    faz na hora de qualificar tools (`mcp__<server>__<tool>`) — hifens
+    viram underscores. Usada pela checagem de unicidade pós-normalização
+    (REQ-011, change `fix-mcp-multi-server-tool-attribution`): dois nomes
+    que viram a mesma string aqui são indistinguíveis na qualificação
+    final, então o sistema recusa o cadastro na escrita em vez de permitir
+    uma colisão silenciosa em runtime.
+
+    Esta função é a fonte canônica da normalização para o lado do
+    config — espelha a regra já existente em `mcp_tools_middleware.py`.
+    Centralizada aqui para que `add_server`/`update_server` não tenham que
+    conhecer detalhes do middleware.
+    """
+    return name.replace("-", "_")
+
+
+async def _assert_server_name_available(
+    repo: McpServerRepositoryPort,
+    user_id: str,
+    candidate_name: str,
+    *,
+    skip_names: tuple[str, ...] = (),
+) -> None:
+    """Valida que `candidate_name` pode ser cadastrado para `user_id` sem
+    colidir com nenhum servidor existente — REQ-011 da change
+    `fix-mcp-multi-server-tool-attribution`.
+
+    Levanta `McpServerConfigError` em DOIS casos distintos:
+    - **Colisão exata**: já existe outro servidor com o MESMO nome.
+      Mensagem `"<name> já existe..."` (mesma do REQ-001, usada pelo
+      `add_server` em `repo.get`).
+    - **Colisão pós-normalização**: existe outro servidor cujo nome
+      normalizado bate com o do candidato. Mensagem cita os DOIS nomes
+      (`<candidate>` e `<existing>`) e a forma normalizada que colidem.
+
+    `skip_names` é a lista de nomes que devem ser IGNORADOS na checagem
+    — usada por `update_server` em modo rename para não comparar o
+    candidato contra o próprio servidor que está sendo renomeado (cuja
+    chave antiga `(user_id, name)` será deletada como parte do rename).
+    """
+    normalized_new = _normalize_server_name(candidate_name)
+    skip_set = set(skip_names)
+    existing_servers = await repo.list_by_user(user_id)
+    for existing in existing_servers:
+        if existing.name in skip_set:
+            continue
+        if existing.name == candidate_name:
+            raise McpServerConfigError(
+                f"servidor '{candidate_name}' já existe para este usuário. "
+                f"Use update_server para editar."
+            )
+        if _normalize_server_name(existing.name) == normalized_new:
+            raise McpServerConfigError(
+                f"servidor '{candidate_name}' colide com '{existing.name}' após "
+                f"normalização (ambos viram '{normalized_new}'). "
+                f"Use outro nome ou remova o servidor existente antes."
+            )
+
+
 def _default_repository() -> McpServerRepositoryPort:
     """Constrói o repositório a partir de `POSTGRES_URI`.
 
@@ -106,14 +166,17 @@ async def add_server(
     """Adiciona um servidor novo para `user_id`.
 
     Raises:
-        McpServerConfigError: `name` já cadastrado para ESSE `user_id` — outro
-            usuário pode usar o mesmo nome sem colidir (REQ-001).
+        McpServerConfigError: `name` já cadastrado para ESSE `user_id` —
+            outro usuário pode usar o mesmo nome sem colidir (REQ-001).
+        McpServerConfigError: `name`, após normalização (hífen → underscore,
+            mesma regra que `_qualify_tool_names` aplica para qualificar
+            tools), colide com o nome normalizado de outro servidor do
+            MESMO `user_id` — REQ-011 da change
+            `fix-mcp-multi-server-tool-attribution`. Rejeitado na escrita
+            para nunca virar uma colisão silenciosa em runtime.
     """
     repo = repository or _default_repository()
-    if await repo.get(user_id, name) is not None:
-        raise McpServerConfigError(
-            f"servidor '{name}' já existe para este usuário. Use update_server para editar."
-        )
+    await _assert_server_name_available(repo, user_id, name)
 
     server = McpServerConfig(
         id=str(uuid.uuid4()),
@@ -134,6 +197,7 @@ async def update_server(
     user_id: str,
     name: str,
     *,
+    new_name: str | None = None,
     transport: str = "stdio",
     command: str | None = None,
     args: list[str] | None = None,
@@ -144,9 +208,26 @@ async def update_server(
 ) -> dict[str, Any]:
     """Substitui a entrada de um servidor existente de `user_id`.
 
+    Suporta dois modos:
+    - **In-place** (`new_name` ausente ou igual a `name`): substitui os
+      campos não-identificantes (`transport`/`command`/`args`/`url`/`env`/
+      `headers`) mantendo a chave `(user_id, name)` no repositório. É o
+      caminho usado pela rota admin PUT atual (`ServerWriteRequest` não
+      envia nome novo) — comportamento preservado para não quebrar callers
+      existentes.
+    - **Rename** (`new_name` diferente de `name`): valida que `new_name`,
+      após normalização, não colide com nenhum outro servidor do MESMO
+      `user_id` (REQ-011 — mesma regra do `add_server`); depois deleta a
+      linha antiga e salva sob o nome novo. Se a validação falhar, o
+      estado é inalterado (sem partial write).
+
     Raises:
-        McpServerConfigError: `name` não existe para ESSE `user_id` (inclusive
-            se pertencer a outro usuário — REQ-001, não é um cross-user edit).
+        McpServerConfigError: `name` não existe para ESSE `user_id`
+            (inclusive se pertencer a outro usuário — REQ-001, não é um
+            cross-user edit).
+        McpServerConfigError: `new_name` (em modo rename), após
+            normalização, colide com o nome normalizado de outro servidor
+            do MESMO `user_id` — REQ-011.
     """
     repo = repository or _default_repository()
     existing = await repo.get(user_id, name)
@@ -155,10 +236,22 @@ async def update_server(
             f"servidor '{name}' não existe para este usuário. Use add_server para criar."
         )
 
+    effective_name = new_name if new_name is not None else name
+    is_rename = effective_name != name
+
+    if is_rename:
+        # REQ-011: mesma regra do `add_server` — pula o servidor de
+        # origem (cuja chave `(user_id, name)` será deletada como parte
+        # do rename, então comparar contra ele geraria uma colisão
+        # trivial consigo mesmo).
+        await _assert_server_name_available(
+            repo, user_id, effective_name, skip_names=(name,)
+        )
+
     server = McpServerConfig(
         id=existing.id,
         user_id=user_id,
-        name=name,
+        name=effective_name,
         transport=transport,
         command=command,
         args=list(args or []),
@@ -168,6 +261,15 @@ async def update_server(
         created_at=existing.created_at,
         updated_at=datetime.now(UTC),
     )
+
+    if is_rename:
+        # Rename = delete + save: a chave do repositório é
+        # `(user_id, name)`, então só `save` com o nome novo não moveria
+        # a linha antiga. Deletamos primeiro para garantir que o estado
+        # final reflita o rename (e nenhum estado intermediário deixa
+        # duas linhas com o mesmo `id` em chaves diferentes).
+        await repo.delete(user_id, name)
+
     await repo.save(server)
     return _to_entry(server)
 

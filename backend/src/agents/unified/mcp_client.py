@@ -221,6 +221,14 @@ async def list_mcp_tools(
     processo do servidor eventualmente escreve em stderr; é responsabilidade
     de quem escreve o servidor MCP não vazar segredos ali.
 
+    Cada tool devolvida carrega `metadata["mcp_server_origin"]` igual ao nome
+    do servidor que a expôs de fato (change `fix-mcp-multi-server-tool-attribution`,
+    REQ-002 revisado do `mcp-client`) — `client.get_tools(server_name=name)`
+    nunca prefixa o nome cru da tool com o servidor (verificado no
+    `langchain_mcp_adapters` instalado), então essa é a ÚNICA origem
+    confiável; nada a jusante (`_qualify_tool_names`) deve inferir a origem
+    por parsing do nome.
+
     Returns:
         `(tools, errors)` — tools de TODOS os servidores que conectaram com
         sucesso, e a lista de falhas (uma por servidor problemático).
@@ -253,9 +261,27 @@ async def list_mcp_tools(
             name,
             len(server_tools),
         )
-        tools.extend(server_tools)
+        tools.extend(_stamp_origin(server_tools, name))
 
     return tools, errors
+
+
+def _stamp_origin(tools: list[BaseTool], server_name: str) -> list[BaseTool]:
+    """Clona cada tool com `metadata["mcp_server_origin"] = server_name`.
+
+    Fonte única de verdade da origem de uma tool MCP (REQ-002 revisado,
+    change `fix-mcp-multi-server-tool-attribution`) — chamada aqui, dentro
+    do loop por servidor de `list_mcp_tools`, é o único ponto do sistema
+    que sabe com certeza qual servidor produziu qual tool.
+    """
+    stamped: list[BaseTool] = []
+    for tool in tools:
+        metadata = {**(tool.metadata or {}), "mcp_server_origin": server_name}
+        try:
+            stamped.append(tool.model_copy(update={"metadata": metadata}))
+        except AttributeError:  # pragma: no cover — fallback Pydantic v1
+            stamped.append(tool.copy(update={"metadata": metadata}))
+    return stamped
 
 
 __all__ = [

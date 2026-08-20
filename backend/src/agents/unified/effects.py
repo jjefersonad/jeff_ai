@@ -274,6 +274,22 @@ def _network_write_new_shell() -> tuple[Capability, ...]:
     return (Capability.NETWORK, Capability.WRITE_NEW, Capability.SHELL)
 
 
+def _network_write_new() -> tuple[Capability, ...]:
+    """`create_image_from_prompt`: chama a API do Gemini + salva PNG novo.
+
+    Ambas estão no `FLOOR_CAPABILITIES`, então a tool passa sem concessão
+    de envelope. Isso é deliberado e NÃO significa "sem aprovação humana":
+    desde `image-design-approval-gate` a tool é Tier 3, e o gate é o
+    `interrupt_on` (pausa com preview do design plan). Manter as
+    capabilities no piso evita cobrar DUAS aprovações — um
+    `propose_envelope` + o interrupt — por uma única decisão.
+
+    Sem esta entrada a tool caía em `UNKNOWN` (fora do piso) e o envelope
+    a BLOQUEAVA antes mesmo do gate: "exige a capacidade 'unknown'".
+    """
+    return (Capability.NETWORK, Capability.WRITE_NEW)
+
+
 def _dynamic_write_file() -> tuple[Capability | DynamicClassifier, ...]:
     """Entry para `write_file`: classificador dinâmico com fallback estático.
 
@@ -320,6 +336,11 @@ TOOL_EFFECTS: Final[Mapping[str, tuple[Any, ...]]] = {
     "git_branch": _read_only(),
     "fetch_reference_image": _read_only(),
     "check_reference_image": _read_only(),
+    # Memória de estilo da skill `image-generation` — leituras puras do
+    # store (namespace por thread). Ver bloco abaixo para o porquê de
+    # terem ficado de fora até agora.
+    "load_design_style": _read_only(),
+    "list_design_styles": _read_only(),
     # `propose_envelope` é plano de controle (`CONTROL_PLANE_TOOLS`) — o
     # `is_control_plane` check em `_tool_allowed_in_envelope` intercepta
     # ANTES de `classify()` ser consultado, então este valor nunca decide
@@ -338,6 +359,19 @@ TOOL_EFFECTS: Final[Mapping[str, tuple[Any, ...]]] = {
     "create_pdf_document": _write_new(),
     "preview_html_document": _write_new(),
     "save_memory": _write_new(),
+    # --- Tools de imagem --------------------------------------------------
+    # Faltavam aqui porque viviam só no `image_design_subagent` (deletado por
+    # `image-design-approval-gate`) e escapavam do audit
+    # `test_every_agent_tool_has_an_effect_entry`, que varre apenas as tools
+    # do agente principal. Sem entrada caíam em `UNKNOWN` (fora do piso) e o
+    # `EnvelopeMiddleware` as BLOQUEAVA — a geração falhava com "exige a
+    # capacidade 'unknown'" e a memória de estilo nunca era gravada.
+    # Ficam no piso de propósito: a aprovação humana de imagem é o
+    # `interrupt_on` de Tier 3, não um segundo gate de envelope.
+    # `create_image_from_prompt` chama a API do Gemini e salva um PNG novo;
+    # `save_design_style` grava uma versão NOVA de estilo no store.
+    "create_image_from_prompt": _network_write_new(),
+    "save_design_style": _write_new(),
     "log_episode": _write_new(),
     "merge_generated_files": _write_new(),
     "create_feature_directory": _write_new(),

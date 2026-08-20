@@ -41,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useNavSidebar } from "@/app/components/NavSidebarProvider";
 import { useIsMobile } from "@/app/hooks/useIsMobile";
+import { useEscToClose } from "@/app/hooks/useEscToClose";
 import {
   getVisibleNavEntries,
   NAV_ENTRIES,
@@ -49,28 +50,6 @@ import {
 import { useAuth } from "@/providers/AuthProvider";
 
 const SIDEBAR_HEADER = "Menu";
-
-/**
- * Close the sidebar on `Esc`. Only attached when the sidebar is open and the
- * viewport is below the mobile breakpoint (where the sidebar is an overlay
- * and the user expects keyboard dismissal). On desktop the sidebar is a
- * persistent push panel, so `Esc` should not close it.
- */
-function useEscToClose(enabled: boolean, onClose: () => void) {
-  useEffect(() => {
-    if (!enabled) return;
-    if (typeof window === "undefined") return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [enabled, onClose]);
-}
 
 export function NavSidebar() {
   const pathname = usePathname();
@@ -89,7 +68,8 @@ export function NavSidebar() {
   const isMobile = useIsMobile();
   const close = () => setOpen(false);
 
-  // Only honour `Esc` on the mobile overlay (see docstring above).
+  // Only honour `Esc` on the mobile overlay — on desktop the sidebar is a
+  // persistent push panel, so `Esc` should not close it.
   useEscToClose(open && isMobile, close);
 
   // On mobile, an open overlay should not be reachable by `Tab` outside the

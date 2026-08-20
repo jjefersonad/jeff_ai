@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 
 import { NavSidebar } from "./NavSidebar";
 import { getVisibleNavEntries, NAV_ENTRIES } from "./navEntries";
 
 const mockUseAuth = vi.fn();
+const mockSetOpen = vi.fn();
 
 vi.mock("@/providers/AuthProvider", () => ({
   useAuth: () => mockUseAuth(),
@@ -15,7 +16,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/app/components/NavSidebarProvider", () => ({
-  useNavSidebar: () => ({ open: true, setOpen: vi.fn(), hydrated: true }),
+  useNavSidebar: () => ({ open: true, setOpen: mockSetOpen, hydrated: true }),
 }));
 
 describe("NavSidebar — usage entry gated by admin role (reporting-2 unit-1 / REQ-006)", () => {
@@ -166,6 +167,38 @@ describe("NavSidebar — responsive rendering unaffected by hook extraction (mob
     expect(
       screen.queryByRole("button", { name: /close navigation/i })
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("NavSidebar — Esc-to-close parity after shared-hook extraction (crm-lateral-menu-task-hook-1 unit-3 / REQ-004)", () => {
+  beforeEach(() => {
+    mockUseAuth.mockReset();
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      isRehydrating: false,
+      user: { username: "alice", role: "user" },
+    });
+    mockSetOpen.mockClear();
+    Object.defineProperty(window, "matchMedia", {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: true,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+  });
+
+  it("WHEN the mobile overlay is open and Escape is pressed THEN setOpen(false) is called", async () => {
+    render(<NavSidebar />);
+    await screen.findByTestId("nav-sidebar");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(mockSetOpen).toHaveBeenCalledWith(false);
   });
 });
 

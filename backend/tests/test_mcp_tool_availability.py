@@ -413,8 +413,11 @@ async def test_availability_reads_status_published_by_tools_middleware(
     tools_mw = McpToolsMiddleware()
 
     echo = MagicMock()
-    echo.name = "zernio/accounts_list"
+    echo.name = "accounts_list"
     echo.description = "list accounts"
+    # Convenção real de `list_mcp_tools` desde `fix-mcp-multi-server-tool-attribution`
+    # (REQ-002 revisado) — `_qualify_tool_names` lê a origem daqui, nunca do nome.
+    echo.metadata = {"mcp_server_origin": "zernio"}
 
     def _copy(*, update: dict[str, Any]) -> MagicMock:
         cloned = MagicMock()

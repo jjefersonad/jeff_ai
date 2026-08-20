@@ -5,14 +5,31 @@
  * (extend-crm-fields-location-value-custom).
  */
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { BriefcaseBusiness } from "lucide-react";
+import {
+  FormEvent,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useQueryState } from "nuqs";
+import { BriefcaseBusiness, Menu as MenuIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { CompaniesPanel } from "./CompaniesPanel";
 import { ContactsPanel } from "./ContactsPanel";
+import { CrmSidebarMenu } from "./CrmSidebarMenu";
 import { FunilPanel, type CreateDealPayload } from "./FunilPanel";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import { useIsMobile } from "@/app/hooks/useIsMobile";
+import { useEscToClose } from "@/app/hooks/useEscToClose";
 import { ApiError } from "@/lib/api";
 import {
   archiveDeal,
@@ -42,9 +59,22 @@ function errMessage(err: unknown): string {
   return err instanceof ApiError ? err.message : "Falha inesperada";
 }
 
-export default function CrmPage() {
+function CrmPageContent() {
   const [tab, setTab] = useState<TabId>("contacts");
   const [error, setError] = useState<string | null>(null);
+  // Opens/closes the CRM lateral menu — see crm-lateral-menu-design D5.
+  const [crmMenu, setCrmMenu] = useQueryState("crmMenu");
+  const isMobile = useIsMobile();
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+
+  // Esc closes the mobile overlay and returns focus to the trigger — this
+  // focus-return is new behavior scoped to the CRM menu's own onClose, not
+  // part of the shared hook (NavSidebar's Esc-to-close has no focus
+  // management; see crm-lateral-menu-task-hook-1's note).
+  useEscToClose(Boolean(crmMenu) && isMobile, () => {
+    setCrmMenu(null);
+    menuTriggerRef.current?.focus();
+  });
 
   const [contacts, setContacts] = useState<CrmContact[]>([]);
   const [companies, setCompanies] = useState<CrmCompany[]>([]);
@@ -301,6 +331,19 @@ export default function CrmPage() {
             aria-hidden="true"
           />
           <h1 className="text-xl font-semibold">CRM</h1>
+          <Button
+            ref={menuTriggerRef}
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="ml-auto"
+            aria-label="Abrir menu do CRM"
+            aria-expanded={Boolean(crmMenu)}
+            onClick={() => setCrmMenu(crmMenu ? null : "1")}
+          >
+            <MenuIcon className="mr-2 h-4 w-4" aria-hidden="true" />
+            Menu
+          </Button>
         </div>
       </header>
 
@@ -311,97 +354,147 @@ export default function CrmPage() {
           </p>
         )}
 
-        <Tabs value={tab} onValueChange={(value) => setTab(value as TabId)}>
-          <TabsList>
-            <TabsTrigger value="contacts">Contatos</TabsTrigger>
-            <TabsTrigger value="companies">Empresas</TabsTrigger>
-            <TabsTrigger value="pipeline">Funil</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="contacts" className="mt-4">
-            <ContactsPanel
-              companies={companies}
-              selectedContactId={selectedContactId}
-              onSelectContact={(id) => {
-                setSelectedContactId(id);
-                setSelectedCompanyId(null);
-                setSelectedDealId(null);
-              }}
-              notes={notes}
-              noteBody={noteBody}
-              setNoteBody={setNoteBody}
-              onAddNote={onAddNote}
-              onContactsChanged={() => {
-                refreshShared().catch((err) => setError(errMessage(err)));
-              }}
+        {/* Mobile overlay drawer for the CRM lateral menu — mirrors the
+            Conversas panel / NavSidebar convention (design D1/D2 of
+            crm-lateral-menu-design): fixed backdrop + w-72 drawer, rendered
+            as a sibling of ResizablePanelGroup so ResizablePanel is never
+            mounted on mobile. */}
+        {crmMenu && isMobile && (
+          <>
+            <div
+              aria-hidden="true"
+              data-testid="crm-menu-backdrop"
+              onClick={() => setCrmMenu(null)}
+              className="fixed inset-0 z-40 bg-black/50"
             />
-          </TabsContent>
+            <div
+              data-testid="crm-menu-drawer"
+              className="fixed inset-y-0 left-0 z-50 w-72 border-r border-border bg-background p-4 shadow-lg"
+            >
+              <CrmSidebarMenu
+                active={tab}
+                onSelect={(next) => {
+                  setTab(next);
+                  setCrmMenu(null);
+                }}
+              />
+            </div>
+          </>
+        )}
 
-          <TabsContent value="companies" className="mt-4">
-            <CompaniesPanel
-              selectedCompanyId={selectedCompanyId}
-              onSelectCompany={(id) => {
-                setSelectedCompanyId(id);
-                setSelectedContactId(null);
-                setSelectedDealId(null);
-              }}
-              notes={notes}
-              noteBody={noteBody}
-              setNoteBody={setNoteBody}
-              onAddNote={onAddNote}
-              onCompaniesChanged={() => {
-                refreshShared().catch((err) => setError(errMessage(err)));
-              }}
-            />
-          </TabsContent>
+        <ResizablePanelGroup direction="horizontal" autoSaveId="crm-page">
+          {crmMenu && !isMobile && (
+            <>
+              <ResizablePanel
+                id="crm-menu"
+                order={1}
+                defaultSize={20}
+                minSize={15}
+                className="relative"
+              >
+                <CrmSidebarMenu active={tab} onSelect={setTab} />
+              </ResizablePanel>
+              <ResizableHandle />
+            </>
+          )}
 
-          <TabsContent value="pipeline" className="mt-4">
-            <FunilPanel
-              deals={deals}
-              stages={stages}
-              contacts={contacts}
-              companies={companies}
-              selectedDealId={selectedDealId}
-              onSelectDeal={(id) => {
-                setSelectedDealId(id);
-                setSelectedContactId(null);
-                setSelectedCompanyId(null);
-              }}
-              notes={notes}
-              noteBody={noteBody}
-              setNoteBody={setNoteBody}
-              onAddNote={onAddNote}
-              onCreateDeal={onCreateDeal}
-              onUpdateDeal={onUpdateDeal}
-              onMoveDeal={onMoveDeal}
-              onArchiveDeal={onArchiveDeal}
-              lastNoteAtByDealId={lastNoteAtByDealId}
-              followupSuggestion={followupSuggestion}
-              onConfirmFollowup={async (draft) => {
-                if (!selectedDealId) return;
-                try {
-                  const created = await createNote({
-                    body: draft,
-                    source: "user",
-                    deal_id: selectedDealId,
-                  });
-                  setNotes((prev) => [created, ...prev]);
-                  setLastNoteAtByDealId((prev) => ({
-                    ...prev,
-                    [selectedDealId]: created.created_at,
-                  }));
-                  toast.success("Follow-up registrado");
-                } catch (err) {
-                  setError(errMessage(err));
-                }
-              }}
-              onDealsChanged={() => {
-                refreshShared().catch((err) => setError(errMessage(err)));
-              }}
-            />
-          </TabsContent>
-        </Tabs>
+          <ResizablePanel id="crm-content" order={2} className="relative">
+            {tab === "contacts" && (
+              <ContactsPanel
+                companies={companies}
+                selectedContactId={selectedContactId}
+                onSelectContact={(id) => {
+                  setSelectedContactId(id);
+                  setSelectedCompanyId(null);
+                  setSelectedDealId(null);
+                }}
+                notes={notes}
+                noteBody={noteBody}
+                setNoteBody={setNoteBody}
+                onAddNote={onAddNote}
+                onContactsChanged={() => {
+                  refreshShared().catch((err) => setError(errMessage(err)));
+                }}
+              />
+            )}
+
+            {tab === "companies" && (
+              <CompaniesPanel
+                selectedCompanyId={selectedCompanyId}
+                onSelectCompany={(id) => {
+                  setSelectedCompanyId(id);
+                  setSelectedContactId(null);
+                  setSelectedDealId(null);
+                }}
+                notes={notes}
+                noteBody={noteBody}
+                setNoteBody={setNoteBody}
+                onAddNote={onAddNote}
+                onCompaniesChanged={() => {
+                  refreshShared().catch((err) => setError(errMessage(err)));
+                }}
+              />
+            )}
+
+            {tab === "pipeline" && (
+              <FunilPanel
+                deals={deals}
+                stages={stages}
+                contacts={contacts}
+                companies={companies}
+                selectedDealId={selectedDealId}
+                onSelectDeal={(id) => {
+                  setSelectedDealId(id);
+                  setSelectedContactId(null);
+                  setSelectedCompanyId(null);
+                }}
+                notes={notes}
+                noteBody={noteBody}
+                setNoteBody={setNoteBody}
+                onAddNote={onAddNote}
+                onCreateDeal={onCreateDeal}
+                onUpdateDeal={onUpdateDeal}
+                onMoveDeal={onMoveDeal}
+                onArchiveDeal={onArchiveDeal}
+                lastNoteAtByDealId={lastNoteAtByDealId}
+                followupSuggestion={followupSuggestion}
+                onConfirmFollowup={async (draft) => {
+                  if (!selectedDealId) return;
+                  try {
+                    const created = await createNote({
+                      body: draft,
+                      source: "user",
+                      deal_id: selectedDealId,
+                    });
+                    setNotes((prev) => [created, ...prev]);
+                    setLastNoteAtByDealId((prev) => ({
+                      ...prev,
+                      [selectedDealId]: created.created_at,
+                    }));
+                    toast.success("Follow-up registrado");
+                  } catch (err) {
+                    setError(errMessage(err));
+                  }
+                }}
+                onDealsChanged={() => {
+                  refreshShared().catch((err) => setError(errMessage(err)));
+                }}
+              />
+            )}
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </main>
     </div>
+  );
+}
+
+// useQueryState (nuqs) reads useSearchParams, which Next.js requires to be
+// wrapped in Suspense during static prerendering — same pattern as
+// ChatPage in (app)/page.tsx.
+export default function CrmPage() {
+  return (
+    <Suspense fallback={null}>
+      <CrmPageContent />
+    </Suspense>
   );
 }

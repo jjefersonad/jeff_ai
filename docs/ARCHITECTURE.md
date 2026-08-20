@@ -42,6 +42,21 @@ mais em `src/agents/unified/agent.py` nem em `src/composition/graphs.py`. Os qua
 sempre rodam o mesmo prompt e o mesmo conjunto de tools; um `configurable["mode"]` enviado por um
 frontend antigo é silenciosamente ignorado (nada no grafo lê essa chave).
 
+**Overlay de perfil (`AgentProfile`).** Introduzido pela change `multi-agent-profiles-runtime`:
+o grafo continua **um só objeto compilado**, mas cada run pode carregar um
+`configurable.profile_id` (UUID de um `AgentProfile` do usuário autenticado). O
+`AgentProfileMiddleware` (`src/agents/unified/agent_profile_middleware.py`, registrado em
+`build_unified()` logo após `EnvelopeLifecycleMiddleware`) resolve o perfil uma vez por run e
+publica um snapshot num contextvar; a partir dele trocam-se system prompt, `model_override` e o
+teto de tools, enquanto `McpToolsMiddleware`, `ScopedSkillsMiddleware` e `memory_tools`
+intersectam respectivamente `mcp_allowlist`, `skills_allowlist` e o namespace de memória
+(`("memories", user_id, profile_id)`). O `profile_id` **nunca** vem do cliente sem validação: é
+carimbado no servidor em `@auth.on.threads.create_run` e em
+`LangGraphDirectAgentRunner._build_run_config`, do mesmo modo que `user_key`/`role`. O overlay é
+sempre **restritivo** — nunca concede tool que `role` ou envelope bloqueiem — e **não** recompila
+`interrupt_on`: um perfil `tier=4` continua pausando em Tier 3+. Sem `profile_id` o comportamento
+é idêntico ao anterior. Não há grafo, subagente nem modo por perfil.
+
 **Subagentes.** `_UNIFIED_SUBAGENTS` contém exatamente `image_design_subagent` (contexto
 isolado, geração de imagem sem gate de aprovação, memória de estilo por thread — a única exceção
 legítima a subagente neste produto, ver harness rule `skill-or-mcp-never-subagent`). O antigo
@@ -220,6 +235,7 @@ por todos, sem use case próprio) e fica fora da tabela, listado à parte.
 | **Integrations** (link codes / contas conectadas) | `integrations/` — `telegram_link_code`, `whatsapp_link_code`, `user_integration` | `use_cases/{create_telegram_link_code,redeem_telegram_link_code,create_whatsapp_link_code,redeem_whatsapp_link_code,get_user_integration,list_user_integrations,save_user_integration,delete_user_integration}.py` + `ports/{telegram_link_code_repository,whatsapp_link_code_repository,user_integration_repository}.py`, `application/integrations/config_schemas.py` | `persistence/{telegram_link_codes_repository,telegram_link_codes_schema,whatsapp_link_codes_repository,whatsapp_link_codes_schema,user_integrations_repository,user_integrations_schema}.py`, `web/integrations_router.py` | `GET /api/integrations/channel-config` |
 | **Scheduling** | `scheduling/` — `scheduled_task` | `use_cases/{create,cancel,list,update,run}_scheduled_task.py`, `complete_scheduled_task_after_resume.py` + `ports/{scheduled_task_repository,task_scheduler}.py` | `scheduling/*` (`apscheduler_task_scheduler`, `complete_after_resume`, `scheduler_instance`), `persistence/{scheduled_task_repository,scheduled_tasks_schema}.py`, `web/scheduling_router.py` | agendamento de tarefas |
 | **MCP** (servidores configurados pelo usuário) | `mcp/` — `mcp_server_config` | `application/mcp/mcp_server_schema.py` + `ports/mcp_server_repository.py` | `persistence/mcp_server_repository.py` | configuração de MCP servers |
+| **Agents** (perfis de agente) | `agents/` — `AgentProfile`, `errors` (`DuplicateAgentProfileError`, `InvalidAgentProfileError`, `InvalidModelOverrideError`) | `use_cases/{create,get,list,update,archive}_agent_profile.py` + `ports/agent_profile_repository.py` | `persistence/{agent_profile_repository,agent_profiles_schema}.py`, `web/agent_profiles_router.py` | overlay per-run via `agents/unified/agent_profile_middleware.py` (`configurable.profile_id`); CRUD em `/api/agent-profiles` |
 
 **Transversal:** `domain/shared/errors.py` — tipos de erro comuns, usados por todos os verticais
 acima; sem use case ou adapter próprio.
@@ -230,8 +246,8 @@ acima; sem use case ou adapter próprio.
 `whatsapp`, `scheduling`) — note que `web/` está contado aqui porque hospeda os routers
 específicos de vertical citados nas linhas da tabela (`documents_router.py`, `email_router.py`,
 `crm_router.py`, `whatsapp_webhook_router.py`, `integrations_router.py`, `scheduling_router.py`,
-`images_router.py`), embora também contenha arquivos de plataforma sem dono único
-(`webapp.py`, `url_safety.py`, `delivery_tokens.py`, `media_delivery_router.py`,
+`images_router.py`, `agent_profiles_router.py`), embora também contenha arquivos de plataforma sem
+dono único (`webapp.py`, `url_safety.py`, `delivery_tokens.py`, `media_delivery_router.py`,
 `admin_users_router.py`). Os **6 restantes**, sem nenhuma linha na tabela, são puramente
 transversais:
 `agent_runtime/` (plumbing do runtime do grafo: checkpoint schema, `langgraph_direct_runner`),

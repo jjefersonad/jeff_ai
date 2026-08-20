@@ -1,6 +1,7 @@
 """Testes de `AgentProfileMiddleware` (runtime-1/2 — REQ-001, REQ-002, REQ-003, REQ-006)."""
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -250,7 +251,13 @@ async def test_cross_user_profile_is_refused_without_get_default() -> None:
     assert repo.get_default_calls == 0
 
 
-async def test_snapshot_is_cleared_after_agent() -> None:
+async def test_snapshot_persists_in_cache_after_agent() -> None:
+    """`after_agent` foi removido (`fix-agent-profile-middleware-contextvar-leak`):
+    o snapshot persiste em `self._profile_snapshot` por `(user_id, profile_id)`
+    com TTL de 60s, não é mais zerado no fim da run. Este teste verifica o
+    novo comportamento: o snapshot está no cache após `abefore_agent`
+    e é lido por `wrap_model_call` mesmo em outra `asyncio.Task`.
+    """
     repo = _SpyRepo()
     seeded = await repo.create(_profile())
     mw = _mw(repo)
@@ -260,10 +267,58 @@ async def test_snapshot_is_cleared_after_agent() -> None:
         return_value=_config(profile_id=seeded.id),
     ):
         await mw.abefore_agent({}, MagicMock())
-        assert get_current_agent_profile() is not None
-        assert get_current_agent_profile().id == seeded.id
-        mw.after_agent({}, MagicMock())
-        assert get_current_agent_profile() is None
+        # Snapshot está no cache (não mais no ContextVar).
+        assert seeded.id in [pid for (_uid, pid) in mw._profile_snapshot]
+        # E o middleware pode ler via `_resolve_profile_from_configurable`.
+        cached = mw._resolve_profile_from_configurable()
+        assert cached is not None
+        assert cached.id == seeded.id
+
+
+async def test_snapshot_survives_across_asyncio_tasks() -> None:
+    """Reproduz o cenário real do LangGraph: cada hook é um nó separado
+    executado em `asyncio.Task` isolada. Antes do fix, o `ContextVar`
+    zerava entre tasks e o modelo recebia o `_SYSTEM_PROMPT` estático.
+
+    Cobertura de regressão para `fix-agent-profile-middleware-contextvar-leak`:
+    o cache em `self._profile_snapshot` deve atravessar fronteiras de
+    tasks sem perder o snapshot.
+    """
+    repo = _SpyRepo()
+    seeded = await repo.create(_profile())
+    mw = _mw(repo)
+
+    captured: list[str] = []
+
+    def handler(request: ModelRequest) -> str:
+        captured.append(request.system_message.text)
+        return "ok"
+
+    request = ModelRequest(
+        model=None,
+        system_message=SystemMessage(content="STATIC_UNIFIED_PROMPT"),
+        messages=[],
+        tools=[],
+    )
+
+    with patch(
+        "src.agents.unified.agent_profile_middleware.get_config",
+        return_value=_config(profile_id=seeded.id),
+    ):
+        # Simula o caminho real do LangGraph: cada hook roda em uma
+        # `asyncio.create_task` separada.
+        t_before = asyncio.create_task(mw.abefore_agent({}, MagicMock()))
+
+        async def call_wrap() -> str:
+            return mw.wrap_model_call(request, handler)
+
+        t_wrap = asyncio.create_task(call_wrap())
+
+        await asyncio.gather(t_before, t_wrap)
+
+    assert captured, "handler must be called"
+    assert captured[0] == seeded.system_prompt
+    assert captured[0] != "STATIC_UNIFIED_PROMPT"
 
 
 class _NamedTool:

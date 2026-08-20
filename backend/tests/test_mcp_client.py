@@ -226,6 +226,42 @@ async def test_list_mcp_tools_connects_to_real_local_server_and_lists_tools() ->
     assert names == {"echo", "add"}
 
 
+async def test_list_mcp_tools_stamps_true_origin_regardless_of_dict_order() -> None:
+    """unit-1 (fix-mcp-multi-server-tool-attribution, task-client-1): cada
+    tool devolvida por `list_mcp_tools` carrega `metadata["mcp_server_origin"]`
+    igual ao nome do servidor que REALMENTE a expôs — nunca inferido depois,
+    por parsing de nome. Dois servidores reais (mesmo fixture, subprocessos
+    distintos) sob nomes de conexão diferentes; testado nas duas ordens do
+    dict para provar que o resultado não depende de qual chave vem primeiro
+    (a condição exata que causava o bug original)."""
+    connections_forward = {
+        "server_a": {
+            "transport": "stdio",
+            "command": sys.executable,
+            "args": [str(_FIXTURE_SERVER)],
+        },
+        "server_b": {
+            "transport": "stdio",
+            "command": sys.executable,
+            "args": [str(_FIXTURE_SERVER)],
+        },
+    }
+    connections_reversed = dict(reversed(list(connections_forward.items())))
+
+    for connections in (connections_forward, connections_reversed):
+        tools, errors = await list_mcp_tools(connections)  # type: ignore[arg-type]
+        assert errors == []
+
+        by_origin: dict[str, set[str]] = {"server_a": set(), "server_b": set()}
+        for tool in tools:
+            origin = tool.metadata["mcp_server_origin"]  # type: ignore[index]
+            assert origin in by_origin, f"origem inesperada: {origin!r}"
+            by_origin[origin].add(tool.name)
+
+        assert by_origin["server_a"] == {"echo", "add"}
+        assert by_origin["server_b"] == {"echo", "add"}
+
+
 async def test_list_mcp_tools_isolates_per_server_failure() -> None:
     """REQ-004: um servidor com comando inexistente NÃO impede os demais
     de conectar — a falha vira uma entrada em `errors`, não uma exceção

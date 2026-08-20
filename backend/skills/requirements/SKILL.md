@@ -1,6 +1,6 @@
 ---
 name: requirements
-description: "Use this skill whenever the user asks for a requirements document — vision, use cases, user stories, business rules, stakeholders, constraints — or any multi-section written deliverable that should be planned, generated section by section, and consolidated into one file. Triggers include: 'requisitos', 'caso de uso', 'história de usuário', 'documento de requisitos', 'levantamento de requisitos'. This replaces the fullstack_subagent — no subagent is invoked for this work. For image/banner/illustration requests, do NOT write a document for that part; route it to image_design_subagent instead (it presents a design plan and requires user approval before generating)."
+description: "Use this skill whenever the user asks for a requirements document — vision, use cases, user stories, business rules, stakeholders, constraints — or any multi-section written deliverable that should be planned, generated section by section, and consolidated into one file. Triggers include: 'requisitos', 'caso de uso', 'história de usuário', 'documento de requisitos', 'levantamento de requisitos'. This replaces the fullstack_subagent — no subagent is invoked for this work. For image/banner/illustration requests, do NOT write a document for that part; follow the image-generation skill instead (it presents a design plan and requires human approval via the interrupt_on gate before generating)."
 ---
 
 # Requisitos — documento de requisitos como skill
@@ -42,12 +42,14 @@ embalagem.
 
 Esta skill NÃO gera imagens e não tem ferramenta para isso. Se o pedido
 envolver imagem, banner, ilustração ou design visual:
-- **Pedido puramente de imagem:** não escreva documento nenhum; a tarefa deve
-  ir para `image_design_subagent` (que apresenta um plano de design e exige
-  aprovação do usuário antes de gerar).
+- **Pedido puramente de imagem:** não escreva documento nenhum; siga a skill
+  `image-generation` (que apresenta um plano de design e exige aprovação
+  humana via o gate `interrupt_on` de `create_image_from_prompt` antes de
+  gerar).
 - **Pedido híbrido (documento + imagem):** escreva normalmente a parte de
-  documento e, ao final, sinalize claramente qual parte é de imagem para ser
-  delegada a `image_design_subagent`. Nunca tente gerar a imagem você mesmo.
+  documento e, ao final, sinalize claramente qual parte é de imagem, a ser
+  tratada seguindo a skill `image-generation`. Não pule o gate de aprovação
+  ao gerar essa parte.
 
 Esta skill também NÃO implementa código de aplicação — o foco é requisitos,
 não implementação.

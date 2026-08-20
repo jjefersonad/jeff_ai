@@ -192,3 +192,31 @@ def test_shell_denylist_allows_legitimate_commands(comando: str) -> None:
 def test_run_shell_command_is_tier_4_and_gated() -> None:
     assert get_tier("run_shell_command") == 4
     assert "run_shell_command" in build_interrupt_on()
+
+
+# --------------------------------------------------------------------------- #
+# image-design-approval-gate — foundation-1: tools de imagem no registry
+# --------------------------------------------------------------------------- #
+def test_create_image_from_prompt_is_tier_3() -> None:
+    """approval-ux REQ-001: nenhuma imagem sem aprovação humana explícita."""
+    assert get_tier("create_image_from_prompt") == 3
+
+
+def test_create_image_from_prompt_is_in_the_gate() -> None:
+    """approval-ux REQ-004: a tool entra no gate só por estar classificada no
+    registry — nenhum `tool_names` extra é necessário para cobri-la, o que
+    garante a mesma cobertura independente de quem a chama (agente principal
+    ou um `general-purpose` spawnado via `task`)."""
+    assert "create_image_from_prompt" in build_interrupt_on()
+
+
+def test_image_style_tools_are_classified() -> None:
+    assert get_tier("load_design_style") == 1
+    assert get_tier("list_design_styles") == 1
+    assert get_tier("save_design_style") == 2
+
+
+def test_reference_image_tools_remain_tier_1() -> None:
+    """Já estavam tier 1 antes desta change — não regredir."""
+    assert get_tier("fetch_reference_image") == 1
+    assert get_tier("check_reference_image") == 1

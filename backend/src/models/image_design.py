@@ -1,7 +1,7 @@
 """
 ImageDesignInput Pydantic model for structured image generation requests.
 
-Used by the image_design_subagent to plan design parameters
+Used when planning image design parameters
 and by create_image_from_prompt tool to receive structured input.
 """
 from typing import List, Optional
@@ -13,7 +13,7 @@ class ImageDesignInput(BaseModel):
     """
     Schema estruturado para entrada de design de imagem.
 
-    Usado pelo image_design_subagent para planejar parâmetros de design
+    Usado no planejamento de parâmetros de design
     e pela tool create_image_from_prompt para receber entrada estruturada.
     """
 

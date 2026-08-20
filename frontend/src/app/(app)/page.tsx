@@ -21,6 +21,7 @@ import { ThreadList } from "@/app/components/ThreadList";
 import { ChatProvider } from "@/providers/ChatProvider";
 import { ChatInterface } from "@/app/components/ChatInterface";
 import { useIsMobile } from "@/app/hooks/useIsMobile";
+import { useEscToClose } from "@/app/hooks/useEscToClose";
 
 interface HomePageInnerProps {
   config: StandaloneConfig;
@@ -110,21 +111,8 @@ function ChatPageInner({ config, onConfigChange }: HomePageInnerProps) {
 
   // Close the mobile thread-history drawer on `Esc`. Only attached while the
   // drawer is open on mobile — on desktop the panel is a persistent push
-  // panel, so `Esc` should not close it. Kept local rather than extracted
-  // into the shared `useIsMobile` hook module (design D3): it is a small,
-  // non-SSR-sensitive effect, unlike `useIsMobile` itself.
-  useEffect(() => {
-    if (!sidebar || !isMobile) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSidebar(null);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [sidebar, isMobile, setSidebar]);
+  // panel, so `Esc` should not close it.
+  useEscToClose(Boolean(sidebar) && isMobile, () => setSidebar(null));
 
   const threadListElement = (
     <ThreadList

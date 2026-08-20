@@ -1,42 +1,83 @@
 ---
 name: image-generation
-description: Documenta o fluxo de geração de imagens do Jeff AI — o image_design_subagent (planejamento + geração imediata via create_image_from_prompt), a tool create_image_from_prompt (Union[str, ImageDesignInput] -> dict) e a memória de estilos por thread.
+description: Como planejar e gerar imagens no Jeff AI — perguntas de esclarecimento quando o pedido é vago, catálogo de tipos de asset, checklist anti-"AI slop", template de prompt, o gate de aprovação de create_image_from_prompt (Tier 3) e a memória de estilos por thread.
 ---
 
 # Image Generation Skill
 
-Geração de imagens no Jeff AI é feita por um **subagente de design** (`image_design_subagent`)
-que planeja a imagem, apresenta o design plan e **gera imediatamente** via
-`create_image_from_prompt` (Google Gemini). Não há gate HITL (`interrupt_on`) nem
-botões aprovar/editar/rejeitar antes da geração.
+Geração de imagens é feita **pelo próprio agente**, com as tools no tool set principal.
+Não existe subagente dedicado: você lê esta skill, planeja, apresenta o design plan e
+chama `create_image_from_prompt` — que **pausa para aprovação humana** antes de gerar.
 
-## Arquitetura do fluxo
+## Fluxo
 
 ```
-usuário → orquestrador (unified) ──► task(name="image_design_subagent")
-                                        │  1. analisa contexto
-                                        │  2. monta design plan (concept, paleta, estilo…)
-                                        │  3. apresenta o plano (markdown)
-                                        │  4. create_image_from_prompt (sem interrupt_on)
-                                        ▼
-                                 create_image_from_prompt → Gemini → PNG + sidecar JSON
-                                        │
-                                        ▼
-                                 save_design_style (após sucesso)
+pedido do usuário
+      │
+      ├─ vago?  ──► UMA rodada de perguntas objetivas (ver "Esclarecimento")
+      │
+      ▼
+design plan (concept, paleta, estilo, composição, dimensões)
+      │
+      ▼
+create_image_from_prompt(...)      ← Tier 3
+      │
+      ▼
+gate interrupt_on: preview do plano + aprovar / editar / reprovar
+      │
+ ┌────┴────┐
+ ▼         ▼
+aprovar   reprovar ──► pergunte qual ajuste o usuário quer ──► novo plano ──► novo gate
+ │
+ ▼
+Gemini → PNG + sidecar JSON ──► save_design_style
 ```
 
-- **Quem delega:** o orquestrador unificado registra o `image_design_subagent` e
-  delega via `task(...)`. Outros subagentes/skills não chamam a tool de imagem
-  diretamente — sempre deferem ao `image_design_subagent`.
-- **Sem gate de aprovação:** `create_image_from_prompt` executa imediatamente.
-  O subagente apresenta o plan e chama a tool na mesma resposta; NÃO pede
-  confirmação em texto ("ok"/"sim"/"prossiga").
+- **O gate é obrigatório e você não o controla.** `create_image_from_prompt` é Tier 3 no
+  `TIER_REGISTRY`: o framework pausa sozinho e mostra o preview do design plan. Você NÃO
+  precisa (e não deve) pedir confirmação em texto do tipo "responda ok/sim/prossiga" — a
+  aprovação acontece nos botões do gate.
+- **Vale por qualquer caminho de chamada.** Se você isolar o planejamento num
+  `task(subagent_type="general-purpose")`, o mesmo gate se aplica — o `interrupt_on` é
+  herdado. Usar `task` é opcional; útil quando a conversa já está longa e você quer
+  contexto limpo para planejar.
 
-## Regra CRÍTICA — uma imagem por vez
+## Esclarecimento antes do plano
 
-NUNCA chame `create_image_from_prompt` mais de UMA vez na mesma resposta. Gere
-exatamente UMA imagem por resposta. Se o usuário pedir várias imagens/variações,
-gere a PRIMEIRA, aguarde o resultado, e só então proponha e gere as próximas.
+Se o pedido for **vago**, pergunte pelos essenciais que faltarem ANTES de montar qualquer
+design plan. Os essenciais são:
+
+- **Propósito / público-alvo** — para que serve e para quem.
+- **Formato de uso** — canal e proporção (post social, hero de site, ícone, impressão…).
+- **Restrições de marca** — paleta, tipografia, uso de logo.
+- **Texto específico** — a copy exata que deve aparecer, ou "sem texto".
+
+Regras:
+
+- **UMA rodada.** Faça as perguntas objetivas de uma vez só — não um questionário longo,
+  não várias idas e voltas. Pergunte só o que falta para produzir um plano de qualidade.
+- **Pedido já específico não exige perguntas.** Se o usuário já deu propósito, formato e
+  estilo, monte o design plan direto. Perguntar o óbvio é atrito.
+- Na dúvida entre perguntar e assumir um default seguro do catálogo de tipos, prefira o
+  default e diga qual assumiu — o usuário ainda pode corrigir no gate.
+
+## Regra CRÍTICA — uma imagem por aprovação
+
+NUNCA chame `create_image_from_prompt` mais de UMA vez na mesma resposta. Cada geração tem
+sua própria aprovação. Se o usuário pedir várias imagens/variações, gere a PRIMEIRA, aguarde
+o resultado, e só então proponha a próxima — uma de cada vez, um gate de cada vez.
+
+## Quando o usuário reprova (reject)
+
+O gate devolve o feedback da rejeição para você. Nesse caso:
+
+1. **Pergunte ao usuário qual ajuste ele quer** (o que não funcionou: conceito? estilo?
+   paleta? enquadramento? texto?).
+2. Só depois monte um **novo** design plan refletindo o ajuste e apresente de novo.
+
+NUNCA chame `create_image_from_prompt` de novo por conta própria após um reject — cada nova
+tentativa exige uma nova decisão humana explícita no gate. Re-tentar sozinho gasta chamadas
+do Gemini sem o usuário ter escolhido o novo prompt.
 
 ## Tool `create_image_from_prompt`
 
@@ -64,7 +105,7 @@ def create_image_from_prompt(design_input: Union[str, ImageDesignInput]) -> dict
 
 > **Nota importante:** hoje a tool envia apenas `prompt` ao Gemini; os demais campos vão só
 > para o sidecar de metadados. Para que estilo/paleta/composição afetem a imagem, o
-> `image_design_subagent` deve **fundir** esses parâmetros no texto do `prompt` final.
+> você deve **fundir** esses parâmetros no texto do `prompt` final.
 
 ### Retorno — `dict`
 
@@ -136,7 +177,7 @@ estes".
 
 ### Como aplicar o catálogo
 
-O `image_design_subagent` funde as convenções do tipo identificado exclusivamente nos campos
+Funda as convenções do tipo identificado exclusivamente nos campos
 JÁ EXISTENTES de `ImageDesignInput` — `prompt`, `art_style`, `composition` e `dimensions` (e,
 quando fizer sentido, `negative_prompt`). NUNCA introduza, referencie ou exija um campo novo
 (`type`, `asset_type` ou equivalente) — nem no schema de `ImageDesignInput`, nem na chamada a
@@ -229,7 +270,8 @@ Ferramentas em `backend/src/tools/style_memory_tools.py`, sobre o Store do LangG
 
 ## Referências
 
-- Subagente: `backend/src/agents/subagents/image_design.py`
 - Tool: `backend/src/tools/generate_image_tool.py`
+- Gate (Tier 3 + preview do plano): `backend/src/agents/unified/tier_config.py`
+  (`TIER_3_TOOLS`, `_preview_for_create_image_from_prompt`)
 - Memória de estilos: `backend/src/tools/style_memory_tools.py`
 - Schema: `backend/src/models/image_design.py`

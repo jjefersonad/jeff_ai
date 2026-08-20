@@ -40,8 +40,14 @@ def read_file(path: str) -> str:
     return f"read {path}"
 
 
-def _mock_mcp_tool(name: str) -> BaseTool:
-    """Cria uma tool MCP mockada."""
+def _mock_mcp_tool(name: str, *, origin: str | None = None) -> BaseTool:
+    """Cria uma tool MCP mockada.
+
+    Se `origin` for dado, estampa `metadata["mcp_server_origin"]` — a
+    convenção real que `list_mcp_tools` usa desde a change
+    `fix-mcp-multi-server-tool-attribution` (REQ-002 revisado). Sem
+    `origin`, mantém o comportamento antigo (nome cru, sem metadata) para
+    os testes que ainda exercitam o fallback de `_qualify_tool_names`."""
 
     @tool
     def mock_tool() -> str:
@@ -50,6 +56,8 @@ def _mock_mcp_tool(name: str) -> BaseTool:
 
     mock_tool.name = name
     mock_tool.description = f"Mock MCP tool: {name}"
+    if origin is not None:
+        mock_tool.metadata = {"mcp_server_origin": origin}
     return mock_tool
 
 
@@ -64,10 +72,14 @@ def _patch_resolve_user_id(user_id: str | None):
 # Core tests
 # --------------------------------------------------------------------------- #
 def test_qualify_tool_names():
-    """REQ-002: Qualifica tools MCP por servidor."""
+    """REQ-002: qualifica tools MCP por servidor, a partir da origem
+    explícita em `metadata["mcp_server_origin"]` — não mais fabricando um
+    nome cru no formato `"servidor/tool"` (formato que o
+    `langchain_mcp_adapters` real, via `client.get_tools(server_name=...)`,
+    nunca produz; ver `fix-mcp-multi-server-tool-attribution-proposal`)."""
     tools = [
-        _mock_mcp_tool("servidor1/read_db"),
-        _mock_mcp_tool("my-server/edit_file"),
+        _mock_mcp_tool("read_db", origin="servidor1"),
+        _mock_mcp_tool("edit_file", origin="my-server"),
     ]
     connections = {"servidor1": MagicMock(), "my-server": MagicMock()}
 
@@ -75,6 +87,106 @@ def test_qualify_tool_names():
 
     assert qualified[0].name == "mcp__servidor1__read_db"
     assert qualified[1].name == "mcp__my_server__edit_file"  # hífen → underscore
+
+
+def test_qualify_tool_names_uses_real_origin_regardless_of_dict_order():
+    """unit-1 (fix-mcp-multi-server-tool-attribution, task-middleware-1):
+    com 2+ servidores conectados, cada tool é qualificada com o servidor
+    que REALMENTE a expôs (via `metadata["mcp_server_origin"]`), nunca com
+    o primeiro servidor do dict `connections` — a condição exata que
+    causava o bug original (`_qualify_tool_names`'s antigo fallback "primeiro
+    servidor configurado")."""
+    zernio_tool = _mock_mcp_tool("posts_list", origin="zernio")
+    opensddrag_tool = _mock_mcp_tool("search_semantic", origin="opensddrag")
+
+    connections_zernio_first = {"zernio": MagicMock(), "opensddrag": MagicMock()}
+    connections_opensddrag_first = {"opensddrag": MagicMock(), "zernio": MagicMock()}
+
+    for connections in (connections_zernio_first, connections_opensddrag_first):
+        qualified = _qualify_tool_names([zernio_tool, opensddrag_tool], connections)
+        names = {t.name for t in qualified}
+        assert names == {"mcp__zernio__posts_list", "mcp__opensddrag__search_semantic"}
+
+
+def test_qualify_tool_names_disambiguates_same_base_name_across_servers():
+    """unit-2 (fix-mcp-multi-server-tool-attribution, task-middleware-1):
+    dois servidores expondo, cada um, uma tool chamada `search` não colidem
+    — cada qualificada mantém, depois de renomeada, a implementação do seu
+    próprio servidor (chamar uma não deve executar a outra)."""
+
+    @tool
+    def search_a() -> str:
+        """Search tool do server_a."""
+        return "result from server_a"
+
+    search_a.name = "search"
+    search_a.metadata = {"mcp_server_origin": "server_a"}
+
+    @tool
+    def search_b() -> str:
+        """Search tool do server_b."""
+        return "result from server_b"
+
+    search_b.name = "search"
+    search_b.metadata = {"mcp_server_origin": "server_b"}
+
+    connections = {"server_a": MagicMock(), "server_b": MagicMock()}
+    qualified = _qualify_tool_names([search_a, search_b], connections)
+
+    names = {t.name for t in qualified}
+    assert names == {"mcp__server_a__search", "mcp__server_b__search"}
+
+    by_name = {t.name: t for t in qualified}
+    assert by_name["mcp__server_a__search"].invoke({}) == "result from server_a"
+    assert by_name["mcp__server_b__search"].invoke({}) == "result from server_b"
+
+
+def test_qualify_tool_names_drops_tool_missing_origin_and_logs_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """unit-1 (fix-mcp-multi-server-tool-attribution, task-middleware-2):
+    uma tool sem `metadata["mcp_server_origin"]` é um bug interno (violação
+    de invariante — `list_mcp_tools` é o único ponto que produz tools MCP e
+    sempre estampa a origem) — nunca atribuída a um servidor por chute
+    ("primeiro servidor configurado"). A tool órfã é descartada do set
+    devolvido, e um erro auditável identifica seu nome cru."""
+    orphan_tool = _mock_mcp_tool("orphan_tool")  # sem origin — caso anômalo
+    well_formed = _mock_mcp_tool("posts_list", origin="zernio")
+    connections = {"zernio": MagicMock()}
+
+    with caplog.at_level("ERROR", logger="jeff_ai.mcp_tools_middleware"):
+        qualified = _qualify_tool_names([orphan_tool, well_formed], connections)
+
+    names = {t.name for t in qualified}
+    assert names == {"mcp__zernio__posts_list"}  # órfã descartada, não "adivinhada"
+    assert "orphan_tool" in caplog.text
+
+
+def test_build_status_reflects_real_origin_not_reparsed_qualified_name() -> None:
+    """unit-1 (fix-mcp-multi-server-tool-attribution, task-middleware-3):
+    `_build_status` lê a origem de `tool.metadata["mcp_server_origin"]`
+    (já resolvida por `_qualify_tool_names`), nunca re-parseando o nome
+    qualificado. Cobre o caso que o `_server_of` antigo errava: servidor
+    com hífen no nome (`my-server`) — o nome qualificado normaliza para
+    `mcp__my_server__...`, então re-parsear o nome devolve `"my_server"`
+    (com underscore), que NUNCA bate a chave crua `"my-server"` usada por
+    `connections`/`servers` — `tool_count` ficava sempre 0 para qualquer
+    servidor com hífen no nome."""
+    tool_a = _mock_mcp_tool("search_semantic", origin="opensddrag")
+    tool_b = _mock_mcp_tool("edit_file", origin="my-server")
+
+    # Servidor com hífen listado primeiro — não deve importar a ordem.
+    connections = {"my-server": MagicMock(), "opensddrag": MagicMock()}
+    qualified = _qualify_tool_names([tool_a, tool_b], connections)
+
+    status = McpToolsMiddleware._build_status(connections, qualified, [])
+
+    assert status["tools_by_name"] == {
+        "mcp__opensddrag__search_semantic": "opensddrag",
+        "mcp__my_server__edit_file": "my-server",
+    }
+    assert status["servers"]["opensddrag"]["tool_count"] == 1
+    assert status["servers"]["my-server"]["tool_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -86,7 +198,7 @@ async def test_mcp_tools_scoped_to_resolved_user() -> None:
         "user-a": {"srv-a": {"transport": "stdio", "command": "cmd-a"}},
         "user-b": {"srv-b": {"transport": "stdio", "command": "cmd-b"}},
     }
-    tool_a = _mock_mcp_tool("srv-a/tool_a")
+    tool_a = _mock_mcp_tool("tool_a", origin="srv-a")
 
     async def fake_load_mcp_server_config(user_id: str, **_kwargs: object) -> dict:
         return connections_by_user[user_id]
@@ -128,7 +240,7 @@ def test_wrap_model_call_sync_path_scopes_to_resolved_user() -> None:
     """Mesmo comportamento do teste acima, mas pela via síncrona
     (`wrap_model_call`/`_load_mcp_tools`), que faz a ponte pro loop async
     via `asyncio.run`."""
-    tool_a = _mock_mcp_tool("srv-a/tool_a")
+    tool_a = _mock_mcp_tool("tool_a", origin="srv-a")
 
     with (
         _patch_resolve_user_id("user-a"),
@@ -228,7 +340,7 @@ async def test_mcp_tools_subject_to_envelope(
     exigindo concessão do envelope como qualquer outra capability fora do
     piso."""
     # Tool MCP desconhecida, sem override → NETWORK (piso)
-    hostile_tool = _mock_mcp_tool("hostile/delete_everything")
+    hostile_tool = _mock_mcp_tool("delete_everything", origin="hostile")
 
     request = ModelRequest(
         model=None,  # type: ignore[arg-type]
@@ -351,8 +463,8 @@ async def test_last_load_status_records_successful_server() -> None:
     `last_load_status.servers[name]` com `{configured=True, connected=True,
     tool_count=N, last_error=None}` e cada tool qualificada em
     `tools_by_name[mcp__<server>__<tool>] = server_name`."""
-    zernio_tool_a = _mock_mcp_tool("zernio/posts_create")
-    zernio_tool_b = _mock_mcp_tool("zernio/posts_list")
+    zernio_tool_a = _mock_mcp_tool("posts_create", origin="zernio")
+    zernio_tool_b = _mock_mcp_tool("posts_list", origin="zernio")
 
     with (
         _patch_resolve_user_id("user-x"),
@@ -476,13 +588,8 @@ async def test_wrap_tool_call_injects_loaded_mcp_tool(
     from langchain.agents.middleware.types import ToolCallRequest
     from langchain_core.messages import ToolCall
 
-    mcp_tool = _mock_mcp_tool("zernio/accounts_list")
+    mcp_tool = _mock_mcp_tool("accounts_list", origin="zernio")
     # After qualification the name becomes mcp__zernio__accounts_list
-    qualified = MagicMock()
-    qualified.name = "mcp__zernio__accounts_list"
-    qualified.description = "list accounts"
-    qualified.model_copy = lambda **kw: qualified
-    # _qualify_tool_names will try model_copy — use a real-ish tool instead
     monkeypatch.setattr(
         "src.agents.unified.mcp_tools_middleware.resolve_user_id",
         AsyncMock(return_value="user-admin"),

@@ -1,11 +1,30 @@
 """`AgentProfileMiddleware` — overlay de perfil no grafo `unified` compilado.
 
 Resolve `configurable.profile_id` uma vez por run (`before_agent` /
-`abefore_agent`), publica o `AgentProfile` num contextvar, substitui o
-system prompt, filtra tools nativas (`tools_allowlist` ∩ teto de `tier` ∩
+`abefore_agent`), publica o `AgentProfile` num **cache em `self`** (chave
+`(user_id, profile_id)`, TTL `_SNAPSHOT_TTL_SECONDS`), substitui o system
+prompt, filtra tools nativas (`tools_allowlist` ∩ teto de `tier` ∩
 `tool_scope` da tarefa, o mais restritivo) e aplica `model_override` em
-`wrap_model_call` (catálogo de `unified_model`, fail-closed). Sem
-`profile_id` é no-op no prompt; `tool_scope=restricted` ainda omite
+`wrap_model_call` (catálogo de `unified_model`, fail-closed).
+
+## Por que cache em `self` (e não `ContextVar`)
+
+O langchain `factory.py:1511-1529` registra cada hook (`before_agent`,
+`wrap_model_call`, `after_agent`) como **nó separado do grafo**, e o
+LangGraph executa cada nó em uma `asyncio.Task` isolada. `ContextVar`
+**não atravessa tasks** — um valor setado em uma task não é visível em
+outra. Como `before_agent` e `wrap_model_call` rodam em tasks separadas
+na prática (cada `graph.add_node` vira um `RunnableCallable` agendado), o
+`ContextVar` zerava entre eles e o modelo recebia o `_SYSTEM_PROMPT`
+estático do `unified` em vez de `profile.system_prompt`.
+
+A correção é armazenar o snapshot em `self._profile_snapshot` — uma vez
+que o middleware é instanciado pelo `build_unified()`, ele vive durante
+toda a vida do processo, então o cache persiste entre tasks. TTL de
+60 segundos cobre uma run inteira (HITL pause + resume) sem custo
+adicional de I/O.
+
+Sem `profile_id` é no-op no prompt; `tool_scope=restricted` ainda omite
 nativas de tier 3+. Miss, cross-user, arquivado ou `user_id` irresolvível
 recusam o run — nunca chamam `get_default`. Não recompila `interrupt_on`
 e não anexa usage callback (o de `build_unified().with_config` permanece).
@@ -15,8 +34,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from collections.abc import Callable, Sequence
-from contextvars import ContextVar
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
@@ -44,16 +63,20 @@ except ImportError:  # pragma: no cover
 _INVALID_PROFILE_ID = "profile_id inválido"
 _MCP_TOOL_PREFIX = "mcp__"
 _RESTRICTED_MAX_TIER = 2
-
-_current_profile: ContextVar[AgentProfile | None] = ContextVar(
-    "agent_profile_snapshot",
-    default=None,
-)
+# Snapshot TTL: cobre uma run inteira (HITL pause + resume raramente
+# passa de 1 min). Após esse tempo, o cache miss é tratado como
+# no-op pelo `_overlay_request` (mesmo comportamento de `profile_id`
+# ausente) — não há crash, não há exception.
+_SNAPSHOT_TTL_SECONDS = 60
 
 
 def get_current_agent_profile() -> AgentProfile | None:
-    """Snapshot do perfil resolvido neste run, ou `None` se o overlay é no-op."""
-    return _current_profile.get()
+    """Compat: helper legado. Retorna `None` se chamado sem middleware ativo.
+    Use `AgentProfileMiddleware._lookup_snapshot(user_id, profile_id)` para
+    ler o cache de uma instância específica. Mantido apenas para não
+    quebrar imports de testes legados.
+    """
+    return None
 
 
 def _tool_name(tool: Any) -> str:
@@ -94,6 +117,15 @@ class AgentProfileMiddleware(AgentMiddleware[Any, Any, Any]):
         super().__init__()
         self._get_profile = get_profile
         self._resolve_model = resolve_model or _default_resolve_model
+        # Snapshot cache: chave `(user_id, profile_id)`, valor
+        # `(AgentProfile, resolved_at_monotonic)`. O middleware é
+        # instanciado uma vez no boot (`build_unified()`), então o
+        # dicionário vive durante toda a vida do processo e atravessa
+        # as fronteiras de `asyncio.Task` que o LangGraph cria entre
+        # os hooks do middleware.
+        self._profile_snapshot: dict[
+            tuple[str, str], tuple[AgentProfile, float]
+        ] = {}
 
     def _profile_use_case(self) -> GetAgentProfile:
         if self._get_profile is None:
@@ -108,11 +140,22 @@ class AgentProfileMiddleware(AgentMiddleware[Any, Any, Any]):
             )
         return self._get_profile
 
-    def _clear_snapshot(self) -> None:
-        _current_profile.set(None)
+    def _lookup_snapshot(
+        self, user_id: str, profile_id: str
+    ) -> AgentProfile | None:
+        """Lê o cache, considerando TTL. `None` se miss, stale ou ausente."""
+        entry = self._profile_snapshot.get((user_id, profile_id))
+        if entry is None:
+            return None
+        profile, resolved_at = entry
+        if (time.monotonic() - resolved_at) > _SNAPSHOT_TTL_SECONDS:
+            # Cache stale: evict sob demanda. Próximo `before_agent`
+            # repopula via `_apublish_snapshot`.
+            self._profile_snapshot.pop((user_id, profile_id), None)
+            return None
+        return profile
 
     async def _apublish_snapshot(self) -> None:
-        self._clear_snapshot()
         configurable = _configurable()
         raw_profile_id = configurable.get("profile_id")
         if raw_profile_id is None:
@@ -133,7 +176,7 @@ class AgentProfileMiddleware(AgentMiddleware[Any, Any, Any]):
         )
         if profile is None or profile.archived_at is not None:
             raise InvalidAgentProfileError(_INVALID_PROFILE_ID)
-        _current_profile.set(profile)
+        self._profile_snapshot[(user_id, profile_id)] = (profile, time.monotonic())
 
     def before_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
         """Resolve o snapshot de perfil via `asyncio.run` no caminho síncrono."""
@@ -145,15 +188,11 @@ class AgentProfileMiddleware(AgentMiddleware[Any, Any, Any]):
         await self._apublish_snapshot()
         return None
 
-    def after_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        """Zera o snapshot para o próximo run neste mesmo worker não o herdar."""
-        self._clear_snapshot()
-        return None
-
-    async def aafter_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        """Zera o snapshot no caminho assíncrono."""
-        self._clear_snapshot()
-        return None
+    # `after_agent` / `aafter_agent` foram removidos (`fix-agent-profile-
+    # middleware-contextvar-leak`): o snapshot vive no cache por
+    # `(user_id, profile_id)`, não por turn, então limpar no fim da run
+    # só adicionaria overhead sem valor. O TTL de 60s + cleanup on-read
+    # garante que entradas stale não persistam.
 
     def _filter_native_tools(
         self,
@@ -205,8 +244,26 @@ class AgentProfileMiddleware(AgentMiddleware[Any, Any, Any]):
             kept.append(tool)
         return kept
 
+    def _resolve_profile_from_configurable(self) -> AgentProfile | None:
+        """Lê o profile do cache usando `user_id` e `profile_id` do configurable.
+
+        Retorna `None` se faltar chave ou se o cache miss. O caller
+        (`_overlay_request`) trata `None` como "sem overlay".
+        """
+        configurable = _configurable()
+        user_id = sync_user_id_from_configurable(configurable)
+        if not user_id:
+            return None
+        raw_profile_id = configurable.get("profile_id")
+        if raw_profile_id is None:
+            return None
+        profile_id = str(raw_profile_id).strip()
+        if not profile_id:
+            return None
+        return self._lookup_snapshot(user_id, profile_id)
+
     def _overlay_request(self, request: ModelRequest) -> ModelRequest:
-        profile = get_current_agent_profile()
+        profile = self._resolve_profile_from_configurable()
         tools = list(request.tools)
         if profile is not None:
             tools = self._filter_native_tools(tools, profile)

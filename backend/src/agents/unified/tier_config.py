@@ -67,6 +67,9 @@ TIER_1_TOOLS: tuple[str, ...] = (
     # Imagens — leitura/referência.
     "fetch_reference_image",
     "check_reference_image",
+    # Memória de estilo da skill `image-generation` — leituras do store.
+    "load_design_style",
+    "list_design_styles",
     # SDD — leitura de estado/templates (não escrevem nada).
     "get_sdd_state",
     "get_next_feature_number",
@@ -109,6 +112,9 @@ TIER_2_TOOLS: tuple[str, ...] = (
     "create_pptx_presentation",
     "create_pdf_document",
     "preview_html_document",
+    # Grava uma versão NOVA de estilo no store (nunca sobrescreve).
+    # `image-design-approval-gate` foundation-1.
+    "save_design_style",
     "save_memory",
     "log_episode",
     "ingest_document",
@@ -180,6 +186,18 @@ TIER_3_TOOLS: tuple[str, ...] = (
     "delete_memory",
     # Email — envio (email-client-imap-mvp); phishing/spam risk, requires approval.
     "send_email",
+    # Geração de imagem (`image-design-approval-gate` foundation-1,
+    # approval-ux REQ-001/REQ-004). Antes desta change a tool vivia só no
+    # `image_design_subagent`, fora do registry: nenhuma imagem passava por
+    # decisão humana — o subagente montava o plano e gerava na MESMA
+    # resposta. Tier 3 põe o gate na BORDA da tool, e como o deepagents faz
+    # `spec.get("interrupt_on", interrupt_on)`, a pausa vale igual para o
+    # agente principal e para qualquer `general-purpose` spawnado via `task`
+    # (REQ-004 satisfeito por herança, sem config por caminho de chamada).
+    # As capabilities em `TOOL_EFFECTS` seguem no piso (network + write_new)
+    # de propósito: o gate humano é o `interrupt_on` com preview do design
+    # plan, não um segundo `propose_envelope` (evita fadiga de aprovação).
+    "create_image_from_prompt",
 )
 
 # Tier 4 — Shell com denylist (interrupt_on + gate de segurança prévio).
@@ -488,12 +506,78 @@ def _diff_for_send_email(args: Mapping[str, Any]) -> str | None:
 # momento da chamada (em vez de armazenar a referência no dict) permite
 # monkey-patching em testes e hot-reload em dev — o callable sempre
 # resolve o símbolo mais recente do módulo.
+def _preview_for_create_image_from_prompt(args: Mapping[str, Any]) -> str | None:
+    """`create_image_from_prompt(...)` — design plan antes de gerar.
+
+    Renderiza prompt final + estilo/paleta/composição/dimensões para que o
+    usuário revise o que será enviado ao Gemini ANTES de aprovar o
+    `interrupt_on` (approval-ux REQ-002).
+
+    A tool aceita `design_input` como string simples (modo legado) ou como
+    `ImageDesignInput` — que chega aqui já serializado em dict. Os dois
+    casos são cobertos.
+
+    Falha silenciosa: sem prompt utilizável devolve `None` e
+    `_interrupt_description_for` cai na descrição estática — o interrupt
+    NUNCA trava por causa do preview (mesma garantia dos `_diff_for_*`).
+    """
+    design_input = args.get("design_input")
+    if isinstance(design_input, str):
+        prompt, details = design_input, {}
+    elif isinstance(design_input, Mapping):
+        prompt = design_input.get("prompt")
+        details = design_input
+    else:
+        return None
+    if not isinstance(prompt, str) or not prompt.strip():
+        return None
+
+    lines = [
+        "Design plan — revise antes de gerar a imagem:",
+        "",
+        f"Prompt: {prompt.strip()}",
+    ]
+    for key, label in (
+        ("art_style", "Estilo"),
+        ("color_palette", "Paleta"),
+        ("composition", "Composição"),
+        ("dimensions", "Dimensões"),
+        ("negative_prompt", "Negative prompt"),
+    ):
+        value = details.get(key)
+        if isinstance(value, str) and value.strip():
+            lines.append(f"{label}: {value.strip()}")
+
+    references = details.get("references")
+    if isinstance(references, (list, tuple)) and references:
+        lines.append(f"Referências: {len(references)}")
+
+    lines.extend(
+        [
+            "",
+            "Aprovar gera UMA imagem. Reprovar não gera nada — o agente vai "
+            "perguntar qual ajuste você quer antes de propor um novo plano.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 _DIFF_HELPERS: Mapping[str, str] = {
     "edit_file": "_diff_for_edit_file",
     "patch_file": "_diff_for_patch_file",
     "multi_file_edit": "_diff_for_multi_file_edit",
     "git_commit": "_diff_for_git_commit",
     "send_email": "_diff_for_send_email",
+}
+
+# Helpers de PREVIEW (não-diff) — `image-design-approval-gate`
+# foundation-2. Mesmo mecanismo de resolução tardia dos `_DIFF_HELPERS`,
+# mas o texto devolvido NÃO leva `DIFF_MARKER`: um design plan de imagem
+# não é diff de código, então o frontend cai no `<pre>` padrão em vez de
+# tentar colorir como patch. Ficam num dict separado justamente para não
+# herdar o contrato de diff de `_DIFF_HELPERS`.
+_PREVIEW_HELPERS: Mapping[str, str] = {
+    "create_image_from_prompt": "_preview_for_create_image_from_prompt",
 }
 
 
@@ -512,7 +596,7 @@ def _interrupt_description_for(
     name = tool_call.get("name", "")
     args = tool_call.get("args") or {}
     tier = TIER_REGISTRY.get(name, UNKNOWN_TOOL_TIER)
-    helper_name = _DIFF_HELPERS.get(name)
+    helper_name = _DIFF_HELPERS.get(name) or _PREVIEW_HELPERS.get(name)
     if helper_name is not None and isinstance(args, Mapping):
         try:
             helper = globals().get(helper_name)
@@ -582,7 +666,7 @@ def build_interrupt_on(
         # Tools com helper de diff ganham `description` callable — o langchain
         # invoca no momento do interrupt com o `tool_call` real (com `args`).
         # Demais tools continuam com a string estática pré-avaliada.
-        if name in _DIFF_HELPERS:
+        if name in _DIFF_HELPERS or name in _PREVIEW_HELPERS:
             description: str | Callable[..., str] = _interrupt_description_for
         else:
             description = _description_for(name, tier)

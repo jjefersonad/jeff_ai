@@ -239,18 +239,25 @@ def test_wrap_model_call_sanitizes_user_prompt_without_repo() -> None:
     assert "não estão disponíveis" in prompt
 
 
-# --- Acceptance: REQ-004 image_design_subagent closed set -------------------
+# --- Acceptance: REQ-004 image tools closed set ------------------------------
+# Até `image-design-approval-gate` esta garantia era sobre o tool set isolado
+# do `image_design_subagent` (deletado). As tools de imagem agora vivem no
+# flat tool set (`_UNIFIED_TOOLS`), que POR NATUREZA inclui tools do
+# denylist (edit_file, run_shell_command...) — então a asserção precisa ser
+# sobre as 6 tools de imagem especificamente, não sobre o tool set inteiro.
 
 
-def test_image_design_subagent_has_no_denylist_tools() -> None:
-    """image_design_subagent tool set must not include USER_DEV_TOOL_DENYLIST."""
-    from src.agents.subagents.image_design import image_design_subagent
-
-    names = {
-        getattr(t, "name", None) or getattr(t, "__name__", "")
-        for t in image_design_subagent["tools"]
+def test_image_tools_have_no_denylist_overlap() -> None:
+    """As tools de imagem nunca são classificadas como dev tools restritas."""
+    image_tool_names = {
+        "create_image_from_prompt",
+        "fetch_reference_image",
+        "check_reference_image",
+        "load_design_style",
+        "list_design_styles",
+        "save_design_style",
     }
-    assert names.isdisjoint(USER_DEV_TOOL_DENYLIST)
+    assert image_tool_names.isdisjoint(USER_DEV_TOOL_DENYLIST)
 
 
 # --- Acceptance: D9 middleware order in build_unified -----------------------

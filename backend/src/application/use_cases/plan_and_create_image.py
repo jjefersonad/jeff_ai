@@ -9,10 +9,13 @@ from src.domain.imaging import ImageDesign, ImageReference, same_vibe
 class PlanAndCreateImage:
     """Orquestra a geração de imagem a partir de um `ImageDesign` já montado.
 
-    A execução é IMEDIATA: não há gate de aprovação (HITL/interrupt) nesta
-    camada nem em nenhuma outra do fluxo de imagem — o `image_design_subagent`
-    apresenta o design plan e chama esta execução na mesma resposta, sem esperar
-    confirmação do usuário (ver `backend/skills/image-generation/SKILL.md`).
+    Não há gate de aprovação NESTA camada — mas há um antes dela: desde
+    `image-design-approval-gate`, `create_image_from_prompt` é Tier 3 no
+    `TIER_REGISTRY`, então o `interrupt_on` pausa na BORDA da tool (com preview
+    do design plan) e este use case só roda depois da decisão humana. Quando o
+    controle chega aqui, a geração já foi aprovada — não reintroduza um segundo
+    gate (ver `backend/skills/image-generation/SKILL.md`).
+
     Depende apenas do domínio de imaging e dos ports; não conhece Gemini, o
     Store nem deepagents.
     """

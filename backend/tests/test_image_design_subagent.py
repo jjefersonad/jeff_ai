@@ -1,61 +1,58 @@
-"""Testes do image_design_subagent (image-design-planning).
+"""Testes do fluxo de geração de imagem (`image-design-approval-gate`).
 
-A geração de imagem roda sem gate de aprovação humana: `create_image_from_prompt`
-não está em `interrupt_on`. Validamos de forma DETERMINÍSTICA a configuração do
-subagente; o fluxo end-to-end com LLM real fica marcado para integração.
+Não existe mais um subagente dedicado (`image_design_subagent`, deletado por
+`image-design-approval-gate` cutover-1) — a especialização de planejamento
+vive em `backend/skills/image-generation/SKILL.md` e as tools no flat tool
+set do agente `unified`. Este arquivo cobre as garantias que antes viviam no
+`system_prompt` do subagente (uma string Python) e agora vivem no conteúdo
+da skill (um arquivo markdown): aprovação obrigatória, uma imagem por
+aprovação, salvar estilo após sucesso, e reject pedindo ajuste em vez de
+retry automático.
+
+Cobertura de tier/gate (`create_image_from_prompt` é Tier 3 e entra no
+`interrupt_on`) já está em `test_tier_config.py` e `test_effects.py` — não
+duplicada aqui, exceto por uma checagem-ponte mínima para este arquivo não
+voltar a afirmar "sem gate".
 """
-import os
+from pathlib import Path
 
-import pytest
-
-from src.agents.subagents.image_design import image_design_subagent
-
-
-def _tool_names(subagent):
-    return {getattr(t, "name", None) for t in subagent["tools"]}
-
-
-def test_no_interrupt_gate_on_generation_tool():
-    """create_image_from_prompt NÃO pausa o grafo — geração imediata."""
-    interrupt_on = image_design_subagent.get("interrupt_on") or {}
-    assert "create_image_from_prompt" not in interrupt_on
-
-
-def test_subagent_has_generation_and_style_tools():
-    """O subagente expõe a tool de geração e as tools de memória de estilo."""
-    names = _tool_names(image_design_subagent)
-    assert "create_image_from_prompt" in names
-    assert {"save_design_style", "load_design_style", "list_design_styles"} <= names
-
-
-def test_system_prompt_does_not_require_approval_gate():
-    """O system prompt orienta geração imediata, sem gate de botões."""
-    prompt = image_design_subagent["system_prompt"].lower()
-    description = image_design_subagent["description"].lower()
-    assert "sem gate" in prompt or "imediatamente" in prompt
-    assert "interrupt_on" not in prompt
-    assert "aprovação obrigatória" not in description
-
-
-def test_system_prompt_limits_one_image_and_saves_style_after_success():
-    """REQ-003/REQ-004: uma imagem por resposta; save_design_style após sucesso."""
-    prompt = image_design_subagent["system_prompt"].lower()
-    assert "uma" in prompt and "imagem" in prompt
-    assert "save_design_style" in prompt
-    assert "após a geração bem-sucedida" in prompt or "após sucesso" in prompt
-
-
-# --- Fluxo end-to-end (requer Ollama + Gemini reais) -------------------------
-# Estes testes exercitam o loop real design plan -> geração. Rodam apenas quando
-# RUN_LLM_E2E=1 e as credenciais estão presentes.
-
-_run_e2e = os.getenv("RUN_LLM_E2E") == "1"
-e2e = pytest.mark.skipif(
-    not _run_e2e, reason="requer Ollama + Gemini reais (defina RUN_LLM_E2E=1)"
+_SKILL_PATH = (
+    Path(__file__).resolve().parent.parent / "skills" / "image-generation" / "SKILL.md"
 )
 
 
-@e2e
-def test_e2e_plan_then_generates_image():
-    """Pedido -> design plan -> geração da imagem (sem aprovação)."""
-    pytest.skip("Cenário de integração: implementar com langgraph dev + credenciais.")
+def _skill_text() -> str:
+    return _SKILL_PATH.read_text(encoding="utf-8").lower()
+
+
+def test_skill_requires_approval_gate_not_immediate_generation() -> None:
+    """A skill não instrui geração imediata nem confirmação textual — o
+    gate é o `interrupt_on` (approval-ux REQ-001)."""
+    text = _skill_text()
+    assert "interrupt_on" in text
+    assert "geração imediata" not in text
+    assert "sem gate de aprovação" not in text
+
+
+def test_skill_limits_one_image_per_approval() -> None:
+    """approval-ux REQ-003: uma imagem por aprovação."""
+    assert "uma imagem por aprovação" in _skill_text()
+
+
+def test_skill_instructs_saving_style_after_success() -> None:
+    assert "save_design_style" in _skill_text()
+
+
+def test_skill_instructs_asking_for_adjustment_on_reject() -> None:
+    """approval-ux REQ-005: reject pede ajuste, não retry automático."""
+    text = _skill_text()
+    assert "reject" in text
+    assert "ajuste" in text
+
+
+def test_create_image_from_prompt_is_still_gated() -> None:
+    """Checagem-ponte: este arquivo (herdeiro dos testes do subagente
+    deletado) não pode voltar a assumir 'sem gate'."""
+    from src.agents.unified.tier_config import get_tier
+
+    assert get_tier("create_image_from_prompt") == 3

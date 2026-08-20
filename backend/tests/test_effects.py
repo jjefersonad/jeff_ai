@@ -110,12 +110,6 @@ EXPECTED_AGENT_TOOLS: frozenset[str] = frozenset(
         "multi_file_edit",
         "grep_project",
         "run_tests",
-        # Git (Tier 3)
-        "git_status",
-        "git_diff",
-        "git_commit",
-        "git_apply_commit",
-        "git_branch",
         # Envelope (plano de controle, task envelope-7)
         "propose_envelope",
         # Email (Tier 1 read / Tier 3 send; `email-client-imap-mvp`) —
@@ -151,8 +145,8 @@ def test_every_agent_tool_has_an_effect_entry() -> None:
     # tool nova e atualizou `EXPECTED_AGENT_TOOLS` MAS esqueceu o
     # registry, o teste (1) pega. Se esqueceu AMBOS, este teste
     # falha por "agent snapshot desatualizado".
-    assert len(EXPECTED_AGENT_TOOLS) == 49, (
-        f"EXPECTED_AGENT_TOOLS deveria ter 49 tools; tem "
+    assert len(EXPECTED_AGENT_TOOLS) == 44, (
+        f"EXPECTED_AGENT_TOOLS deveria ter 44 tools; tem "
         f"{len(EXPECTED_AGENT_TOOLS)}. Atualize o snapshot ao adicionar "
         "ou remover tools do agente."
     )
@@ -446,3 +440,99 @@ def test_registry_entries_are_immutable_tuples() -> None:
         assert isinstance(entry, tuple), (
             f"entrada de {name} deveria ser tuple, é {type(entry).__name__}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Tools de imagem: registry + gate (`image-design-approval-gate`)
+# --------------------------------------------------------------------------- #
+_IMAGE_TOOLS = (
+    "create_image_from_prompt",
+    "fetch_reference_image",
+    "check_reference_image",
+    "load_design_style",
+    "list_design_styles",
+    "save_design_style",
+)
+
+
+def test_image_tools_are_classified_and_visible_with_empty_envelope() -> None:
+    """As 6 tools de imagem têm entrada em `TOOL_EFFECTS` e passam com
+    envelope VAZIO.
+
+    Regressão: enquanto viviam só no `image_design_subagent` (deletado por
+    `image-design-approval-gate`), elas escapavam do audit
+    `test_every_agent_tool_has_an_effect_entry`, que varre apenas
+    `_UNIFIED_TOOLS`. Sem entrada, `classify()` devolvia `UNKNOWN` (fora do
+    `FLOOR_CAPABILITIES`) e o `EnvelopeMiddleware` bloqueava a geração com
+    "exige a capacidade 'unknown'".
+
+    Visíveis sem concessão é o comportamento correto: a aprovação humana da
+    geração é o `interrupt_on` de Tier 3 (ver teste abaixo), não um segundo
+    gate de envelope.
+    """
+    from src.agents.unified.envelope_middleware import _tool_allowed_in_envelope
+
+    for name in _IMAGE_TOOLS:
+        assert not is_unknown(name), (
+            f"tool de imagem sem classificação de efeito: {name}. "
+            "Adicione a entrada em src/agents/unified/effects.py:TOOL_EFFECTS."
+        )
+        assert _tool_allowed_in_envelope(name, set()), (
+            f"{name} é invisível com envelope vazio — o gate de imagem é o "
+            "`interrupt_on`, não o envelope."
+        )
+
+
+def test_create_image_from_prompt_is_gated_by_interrupt_on() -> None:
+    """approval-ux REQ-001/REQ-004: a geração pausa para decisão humana.
+
+    Antes de `image-design-approval-gate` a tool estava fora do
+    `TIER_REGISTRY` e vivia num subagente sem `interrupt_on` — nenhuma
+    imagem passava por aprovação. Agora é Tier 3 e entra no dict do
+    `build_interrupt_on()`, que qualquer subagente herda por
+    `spec.get("interrupt_on", interrupt_on)`.
+    """
+    from src.agents.unified.tier_config import build_interrupt_on, get_tier
+
+    assert get_tier("create_image_from_prompt") == 3
+    assert "create_image_from_prompt" in build_interrupt_on()
+
+
+def test_image_preview_shows_design_plan_without_diff_marker() -> None:
+    """approval-ux REQ-002: o interrupt mostra o design plan antes de gerar.
+
+    E o texto NÃO leva `DIFF_MARKER` — plano de imagem não é diff de
+    código, então o frontend cai no `<pre>` padrão (foundation-2).
+    """
+    from src.agents.unified.tier_config import (
+        DIFF_MARKER,
+        _interrupt_description_for,
+    )
+
+    desc = _interrupt_description_for(
+        {
+            "name": "create_image_from_prompt",
+            "args": {
+                "design_input": {
+                    "prompt": "Um gato astronauta",
+                    "art_style": "realista",
+                    "dimensions": "1024x1024",
+                }
+            },
+        }
+    )
+    assert not desc.startswith(DIFF_MARKER)
+    assert "Um gato astronauta" in desc
+    assert "realista" in desc
+    assert "1024x1024" in desc
+
+
+def test_image_preview_falls_back_when_args_are_unusable() -> None:
+    """Preview quebrado NUNCA trava o interrupt — cai na description estática."""
+    from src.agents.unified.tier_config import _interrupt_description_for
+
+    desc = _interrupt_description_for(
+        {"name": "create_image_from_prompt", "args": {"design_input": 123}}
+    )
+    assert isinstance(desc, str) and desc.strip()
+    assert "Design plan" not in desc

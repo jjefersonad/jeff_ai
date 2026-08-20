@@ -314,13 +314,23 @@ class McpToolsMiddleware(AgentMiddleware[Any, Any, Any]):
         # estão conectados; servidores COM erro estão desconectados.
         connected_failed = {err.server_name: err for err in errors}
 
-        # Conta tools por servidor (qualificados).
-        for tool in tools:
-            tools_by_name[tool.name] = _server_of(tool.name, connections)
-
+        # Conta tools por servidor (qualificados) e mapeia cada nome
+        # qualificado à sua origem real em uma só passada. A origem é lida
+        # do `metadata["mcp_server_origin"]` que `_qualify_tool_names` (e
+        # portanto `list_mcp_tools`) já estampou — nunca re-derivada por
+        # re-parse do nome qualificado, que errava dois casos:
+        # (1) `connections` com hífen (`my-server`) cujo nome qualificado
+        # normaliza para `mcp__my_server__...` — re-parse devolve
+        # `"my_server"` (underscore), que nunca bate a chave `"my-server"`
+        # usada em `servers`/`tool_counts`, deixando `tool_count=0`;
+        # (2) dict ordering — o fallback antigo de `_server_of`
+        # ("primeiro servidor configurado") era exatamente o bug que a
+        # change `fix-mcp-multi-server-tool-attribution` veio corrigir.
         tool_counts: dict[str, int] = {}
-        for qname, server_name in tools_by_name.items():
-            tool_counts[server_name] = tool_counts.get(server_name, 0) + 1
+        for tool in tools:
+            origin = (tool.metadata or {})["mcp_server_origin"]
+            tools_by_name[tool.name] = origin
+            tool_counts[origin] = tool_counts.get(origin, 0) + 1
 
         for server_name in connections:
             if server_name in connected_failed:
@@ -491,44 +501,52 @@ def _qualify_tool_names(
 ) -> list[BaseTool]:
     """Qualifica os nomes das tools MCP por servidor de origem.
 
-    Formato: `mcp__<servidor>__<tool>` (REQ-002 anti-colisão).
+    Formato: `mcp__<servidor>__<tool>` (REQ-002 anti-colisão, revisado pela
+    change `fix-mcp-multi-server-tool-attribution`).
 
-    O `MultiServerMCPClient` do `langchain_mcp_adapters` já qualifica
-    as tools internamente quando há múltiplos servidores — mas o formato
-    é `<servidor>/<tool>`, não `mcp__<servidor>__<tool>`. Para manter a
-    convenção usada em outros lugares do Jeff AI (ex.: o padrão
-    `mcp__opensddrag__*` do OpenSddRag MCP server), re-nomeamos aqui.
+    A origem vem de `tool.metadata["mcp_server_origin"]`, estampada por
+    `mcp_client.list_mcp_tools()` no único ponto do sistema que sabe com
+    certeza qual servidor produziu qual tool — nunca inferida aqui por
+    parsing de nome. (Um comentário anterior deste módulo afirmava que o
+    `MultiServerMCPClient` do `langchain_mcp_adapters` já qualificava tools
+    como `"servidor/tool"` quando há múltiplos servidores — verificado como
+    falso no caminho de código real: `list_mcp_tools` chama
+    `client.get_tools(server_name=...)` por servidor, sem `tool_name_prefix`,
+    então `tool.name` chega sempre cru, nunca com "/". Essa suposição
+    incorreta causava o bug: com 2+ servidores, toda tool era atribuída ao
+    primeiro do dict `connections`.)
+
+    Uma tool sem `mcp_server_origin` é uma violação de invariante interna
+    (decisão de design 2, change `fix-mcp-multi-server-tool-attribution`) —
+    não um caso ambíguo a resolver por heurística. `list_mcp_tools` é o
+    único produtor de tools MCP e sempre estampa a origem; se ela faltar,
+    é um bug em código nosso, não um sinal legítimo para "adivinhar" o
+    servidor. A tool é descartada do set devolvido (nunca chega ao modelo
+    com atribuição incorreta) e um erro é logado identificando seu nome
+    cru, para investigação.
 
     Args:
         tools: Tools devolvidas por `list_mcp_tools()`.
-        connections: Dict `{servidor: StdioConnection}`, usado para
-            descobrir a qual servidor cada tool pertence.
+        connections: Não usado por esta função — mantido na assinatura por
+            estabilidade do único call site (`_aload_mcp_tools`).
 
     Returns:
-        Lista de tools com nomes qualificados. A tool é clonada (via
-        `tool.copy()`) para não mutar o objeto original.
+        Lista de tools com nomes qualificados (tools sem origem estampada
+        são omitidas). A tool é clonada (via `tool.copy()`) para não mutar
+        o objeto original.
     """
     qualified: list[BaseTool] = []
     for tool in tools:
-        # O `MultiServerMCPClient` já qualifica como `servidor/tool`.
-        # Detectamos isso e re-qualificamos no padrão `mcp__servidor__tool`.
-        original_name = tool.name
-        if "/" in original_name:
-            # Ex.: "meu-servidor/edit_file" → "mcp__meu_servidor__edit_file"
-            server, _, tool_name = original_name.partition("/")
-            # Normaliza o nome do servidor: hífens → underscores (válido em Python).
-            safe_server = server.replace("-", "_")
-            new_name = f"mcp__{safe_server}__{tool_name}"
-        else:
-            # Tool sem servidor no nome (não deveria acontecer com
-            # `MultiServerMCPClient`, mas fail-safe).
-            # Tenta inferir do primeiro servidor configurado (heurística fraca).
-            if connections:
-                first_server = next(iter(connections))
-                safe_server = first_server.replace("-", "_")
-                new_name = f"mcp__{safe_server}__{original_name}"
-            else:
-                new_name = f"mcp__unknown__{original_name}"
+        origin = (tool.metadata or {}).get("mcp_server_origin")
+        if origin is None:
+            _audit_log.error(
+                "mcp_tools_middleware event=tool_missing_origin tool_name=%r",
+                tool.name,
+            )
+            continue
+
+        safe_server = origin.replace("-", "_")
+        new_name = f"mcp__{safe_server}__{tool.name}"
 
         # Clona a tool com o nome novo. Usa `model_copy` (Pydantic v2).
         try:
@@ -609,25 +627,6 @@ def redact_credentials(err: McpServerConnectionError) -> str:
         if redacted
         else type(err).__name__
     )
-
-
-def _server_of(qualified_name: str, connections: dict[str, Any]) -> str:
-    """Inferência simples do servidor de origem a partir do nome qualificado.
-
-    O `MultiServerMCPClient` qualifica ferramentas como `mcp__<server>__<tool>`
-    (após a re-qualificação em `_qualify_tool_names`). Quando o nome está fora
-    desse padrão (ex.: ferramenta upstream mal-comportada que retornou nome
-    cru), inferimos a partir do `connections` disponível — primeiro servidor
-    configurado é a heurística fraca já usada pelo `_qualify_tool_names`.
-    """
-    if qualified_name.startswith("mcp__"):
-        parts = qualified_name.split("__", 2)
-        if len(parts) == 3:
-            return parts[1]
-    if connections:
-        first_server = next(iter(connections))
-        return str(first_server)
-    return "unknown"
 
 
 __all__ = ["McpToolsMiddleware"]    
